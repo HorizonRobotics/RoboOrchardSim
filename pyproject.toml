@@ -1,0 +1,112 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robo_orchard_sim"
+dynamic = ["version"]
+description = "Isaac Sim backend package for the RoboOrchard project"
+readme = "README.md"
+authors = [{ name = "The RoboOrchard Team" }]
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "deprecated",
+    "pillow>=11.0.0",
+    "pyvirtualdisplay",
+    "scipy>=1.15.0",
+    "numpy<2.0.0,>=1.26.4",
+    "pydantic==2.9.2",
+    "torch>=2.5.1",
+    "torchvision>=0.20.1",
+    "isaacsim[all,extscache]==4.5.0",
+    "isaaclab==2.0.2",
+    "protobuf<5.0.0,>=3.20.2",
+    "h5py",
+    "robo_orchard_core>=0.0.3.dev20250425200726",
+]
+
+[project.optional-dependencies]
+dwh = ["robo_orchard_dwh"]
+
+[project.scripts]
+RoboOrchard-SimLauncher = "robo_orchard_sim.launcher:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["robo_orchard_sim*"]
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+line-length = 79
+indent-width = 4
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "TID", "D", "Q", "W"]
+ignore = [
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D107",
+    "D202",
+    "D301",
+    "D417",
+    "B904",
+]
+
+[tool.ruff.lint.isort]
+known-third-party = []
+no-lines-before = ["future", "standard-library"]
+combine-as-imports = true
+force-wrap-aliases = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-quotes]
+avoid-escape = false
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["TID252", "F401"]
+"robo_orchard_sim/cfg_wrappers/*.py" = ["F403"]
+"robo_orchard_sim/cfg_wrappers/**/*.py" = ["F403"]
+"robo_orchard_sim/envs/__init__.py" = ["F403"]
+"robo_orchard_sim/models/spawners/__init__.py" = ["F403"]
+"robo_orchard_sim/sim/*.py" = ["F403"]
+"robo_orchard_sim/sim/**/*.py" = ["F403"]
+"robo_orchard_sim/sim_ctx.py" = ["F403"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.pyright]
+typeCheckingMode = "basic"
+reportRedeclaration = false
+include = ["robo_orchard_sim", "tests"]

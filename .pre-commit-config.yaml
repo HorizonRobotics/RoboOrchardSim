@@ -1,0 +1,63 @@
+repos:
+  - repo: local
+    hooks:
+      - id: trailing-whitespace
+        name: Trailing whitespace
+        entry: trailing-whitespace-fixer
+        language: system
+        types: [text]
+
+  - repo: local
+    hooks:
+      - id: check-added-large-files
+        name: Check for added large files
+        entry: check-added-large-files
+        language: python
+        args: ["--maxkb=1024"]
+
+  - repo: local
+    hooks:
+      - id: check-merge-conflict
+        name: Check merge conflict
+        description: Prevent unresolve conflict
+        entry: check-merge-conflict
+        language: system
+        args: [--assume-in-merge]
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --fix
+        language: system
+        files: \.(py)$
+        types: [file, python]
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format
+        language: system
+        files: \.(py)$
+        types: [file, python]
+
+  - repo: local
+    hooks:
+      - id: nbstripout
+        name: nbstripout notebook output
+        description: trip
+        entry: nbstripout
+        language: system
+        exclude: (?x)(^3rdparty/)
+        files: \.(ipynb)$
+        types: [file]
+
+  - repo: local
+    hooks:
+      - id: check-license-header
+        name: Check Python file license header
+        entry: python3 scm/qac/check_license_header.py
+        language: python
+        types: [python]
+        exclude: (?x)(^3rdparty/|^docs/|^scm/)

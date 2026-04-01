@@ -1,0 +1,20 @@
+# test
+pytest==8.0.2
+pytest-xdist>=3.6.1
+pytest-cov>=6.0.0
+pytest-html
+pytest-timeout
+pytest-asyncio
+pytest-mock
+allure-pytest
+packaging>=24.0
+
+# pre-commit
+pre-commit
+pre-commit-hooks
+
+# lint
+ruff>=0.9.9
+
+# type check
+pyright[nodejs]

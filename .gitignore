@@ -1,0 +1,77 @@
+# local worktrees
+.worktrees/
+
+# packaging and build outputs
+build/
+dist/
+*.egg-info/
+*.whl
+
+# python cache
+__pycache__/
+*.py[cdo]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# generated package metadata
+*__git_hash__.py
+FULL_VERSION
+VERSION_POSTFIX
+
+# runtime logs and pid files
+logs/
+*.pid
+*.log*
+eval_result/
+configs/
+
+# editor and notebook state
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings_recommended.json
+*.swp
+*.swo
+*~
+.ipynb_checkpoints
+*.virtual_documents
+
+# data and archives
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.zip
+*.tar
+*.gz
+*.mcap
+rosbag2*
+
+# torch
+*.pth*
+*.pt
+*.safetensors
+torchelastic*
+
+# native and generated artifacts
+*.so
+*.o
+*.lib
+*.bin
+*.html
+*.xml
+*.pdf
+*.css
+*.map
+*.js
+*.woff
+*.woff2
+*.ply
+*.csv
+*.svg
+*_pb2.py
+
+#agent doc
+
