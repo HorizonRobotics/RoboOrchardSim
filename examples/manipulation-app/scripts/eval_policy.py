@@ -27,6 +27,12 @@ from dataclasses import asdict
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--task-name",
+        type=str,
+        required=True,
+        help="Registered task name to evaluate.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=0,
@@ -64,7 +70,7 @@ def main() -> None:
     policy = DummyPolicyCfg()
 
     evaluator_cfg = EvaluatorCfg(
-        task_name="place_a2b",
+        task_name=args.task_name,
         launch=LaunchConfig(
             headless=True,
             enable_cameras=True,
