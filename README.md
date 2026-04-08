@@ -82,18 +82,7 @@ Pull the prebuilt image from Docker Hub:
 docker pull horizonrobotics/robo_orchard_sim:cuda11.8-ubuntu22.04-py3.10-isaacsim4.5.0-isaaclab2.0.2-curobo-gui
 ```
 
-##### Option 2: Build From Dockerfile
-
-Build the image locally from the Dockerfile:
-
-```bash
-docker build \
-  --target full \
-  -t hub.hobot.cc/auto/robo_orchard_sim:cuda11.8-ubuntu22.04-py3.10-isaacsim4.5.0-isaaclab2.0.2-curobo-gui \
-  -f Dockerfile .
-```
-
-##### Option 3: Load From TAR
+##### Option 2: Load From TAR
 
 If you receive a prebuilt TAR package, load it into the local Docker daemon:
 
