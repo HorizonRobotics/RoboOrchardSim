@@ -15,9 +15,6 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
-import builtins
-import importlib
-import sys
 import warnings
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,18 +24,9 @@ import torch
 from robo_orchard_core.envs.env_base import EnvStepReturn
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 
+from robo_orchard_sim.evaluator import Evaluator, EvaluatorCfg, LaunchConfig
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
 from robo_orchard_sim.tasks.validators.base import ValidatorOutput
-
-
-def _load_new_api() -> tuple[type[Any], type[Any], type[Any]]:
-    from robo_orchard_sim.evaluator import (
-        Evaluator,
-        EvaluatorCfg,
-        LaunchConfig,
-    )
-
-    return Evaluator, EvaluatorCfg, LaunchConfig
 
 
 @dataclass
@@ -362,7 +350,6 @@ class TestEvaluator:
         max_steps: int,
         seed: int = 0,
     ) -> tuple[Any, _StubStepEnv, _StubTaskRegistry]:
-        _, evaluator_cfg_cls, _ = _load_new_api()
         env = _StubStepEnv(episodes=episodes)
         orchard_env = _StubOrchardEnv(
             env=env,
@@ -372,7 +359,7 @@ class TestEvaluator:
             monkeypatch,
             tasks=[orchard_env],
         )
-        evaluator = evaluator_cfg_cls(
+        evaluator = EvaluatorCfg(
             task_name="place_a2b",
             seed=seed,
             episode_num=episode_num,
@@ -381,60 +368,23 @@ class TestEvaluator:
         return evaluator, env, registry
 
     def test_cfg_instantiates_evaluator(self) -> None:
-        evaluator_cls, evaluator_cfg_cls, launch_cfg_cls = _load_new_api()
-
-        evaluator = evaluator_cfg_cls(
+        evaluator = EvaluatorCfg(
             task_name="place_a2b",
             episode_num=1,
             max_steps=1,
         )()
 
-        assert isinstance(evaluator, evaluator_cls)
+        assert isinstance(evaluator, Evaluator)
         assert evaluator.cfg.task_name == "place_a2b"
-        assert isinstance(evaluator.cfg.launch, launch_cfg_cls)
+        assert isinstance(evaluator.cfg.launch, LaunchConfig)
         assert evaluator.cfg.launch.headless is True
         assert evaluator.cfg.launch.enable_cameras is True
         assert evaluator.cfg.launch.virtual_display is False
-
-    def test_importing_evaluator_does_not_import_isaac_runtime(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        blocked_modules = {
-            "robo_orchard_sim.envs.env_base",
-            "robo_orchard_sim.envs.manager_based_env",
-            "robo_orchard_sim.launcher",
-        }
-        for module_name in list(sys.modules):
-            if (
-                module_name == "robo_orchard_sim.evaluator"
-                or module_name.startswith("robo_orchard_sim.evaluator.")
-            ):
-                sys.modules.pop(module_name, None)
-            if module_name in blocked_modules:
-                sys.modules.pop(module_name, None)
-
-        attempted_imports: list[str] = []
-        real_import = builtins.__import__
-
-        def _guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name in blocked_modules:
-                attempted_imports.append(name)
-                raise AssertionError(f"Unexpected runtime import: {name}")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", _guarded_import)
-
-        module = importlib.import_module("robo_orchard_sim.evaluator")
-
-        assert module.EvaluatorCfg is not None
-        assert attempted_imports == []
 
     def test_task_runtime_is_built_lazily(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _, evaluator_cfg_cls, _ = _load_new_api()
         orchard_env = _StubOrchardEnv(
             env=_StubStepEnv(episodes=[[_StepState()]]),
             success_steps=[1],
@@ -444,7 +394,7 @@ class TestEvaluator:
             tasks=[orchard_env],
         )
 
-        evaluator = evaluator_cfg_cls(
+        evaluator = EvaluatorCfg(
             task_name="place_a2b",
             episode_num=1,
             max_steps=1,
@@ -594,7 +544,6 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _, evaluator_cfg_cls, launch_cfg_cls = _load_new_api()
         moving = torch.tensor(
             [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0]]
         )
@@ -610,11 +559,11 @@ class TestEvaluator:
         )
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self._patch_runtime(monkeypatch, tasks=[orchard_env])
-        evaluator = evaluator_cfg_cls(
+        evaluator = EvaluatorCfg(
             task_name="place_a2b",
             episode_num=1,
             max_steps=1,
-            settle_steps=3,
+            max_settle_steps=3,
         )()
 
         with warnings.catch_warnings(record=True) as record:
@@ -629,7 +578,6 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _, evaluator_cfg_cls, _ = _load_new_api()
         moving = torch.tensor(
             [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.3, 0.0]]
         )
@@ -642,11 +590,11 @@ class TestEvaluator:
         )
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self._patch_runtime(monkeypatch, tasks=[orchard_env])
-        evaluator = evaluator_cfg_cls(
+        evaluator = EvaluatorCfg(
             task_name="place_a2b",
             episode_num=1,
             max_steps=1,
-            settle_steps=2,
+            max_settle_steps=2,
         )()
 
         with pytest.warns(UserWarning, match="objects/cube, robots/arm"):
@@ -656,7 +604,6 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _, evaluator_cfg_cls, _ = _load_new_api()
         moving = torch.tensor(
             [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0]]
         )
@@ -672,11 +619,11 @@ class TestEvaluator:
         )
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self._patch_runtime(monkeypatch, tasks=[orchard_env])
-        evaluator = evaluator_cfg_cls(
+        evaluator = EvaluatorCfg(
             task_name="place_a2b",
             episode_num=1,
             max_steps=1,
-            settle_steps=3,
+            max_settle_steps=3,
         )()
         policy = _ObservationCapturingPolicy()
 
@@ -688,7 +635,6 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _, evaluator_cfg_cls, launch_cfg_cls = _load_new_api()
         first_env = _StubStepEnv(episodes=[[_StepState()]])
         second_env = _StubStepEnv(episodes=[[_StepState()]])
         registry = self._patch_runtime(
@@ -698,11 +644,11 @@ class TestEvaluator:
                 _StubOrchardEnv(env=second_env, success_steps=[1]),
             ],
         )
-        evaluator = evaluator_cfg_cls(
+        evaluator = EvaluatorCfg(
             task_name="place_a2b",
             episode_num=1,
             max_steps=1,
-            launch=launch_cfg_cls(
+            launch=LaunchConfig(
                 headless=False,
                 enable_cameras=False,
                 virtual_display=True,

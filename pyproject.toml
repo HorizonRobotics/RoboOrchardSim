@@ -27,7 +27,7 @@ dependencies = [
     "isaaclab==2.0.2",
     "protobuf<5.0.0,>=3.20.2",
     "h5py",
-    "robo_orchard_core>=0.0.3.dev20250425200726",
+    "robo_orchard_core==0.4.0",
 ]
 
 [project.optional-dependencies]
