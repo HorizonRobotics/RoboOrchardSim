@@ -18,6 +18,7 @@
 import os
 import subprocess
 import sys
+import types
 from typing import Any
 
 import pytest
@@ -142,6 +143,112 @@ class TestLauncher:
 
         assert stub_context.exit_calls == 1
         assert not hasattr(launcher_module.SimpleIsaacAppLauncher, "_instance")
+
+    def test_configure_torch_cuda_arch_list_uses_env_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import robo_orchard_sim.launcher as launcher_module
+
+        monkeypatch.setenv("ROBO_ORCHARD_TORCH_CUDA_ARCH_LIST", "12.0+PTX")
+        monkeypatch.setenv("TORCH_CUDA_ARCH_LIST", "9.0;9.0a;9.0+PTX")
+
+        launcher_module._configure_torch_cuda_arch_list()
+
+        assert os.environ["TORCH_CUDA_ARCH_LIST"] == "12.0+PTX"
+
+    def test_configure_torch_cuda_arch_list_auto_detects_gpu_capability(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import robo_orchard_sim.launcher as launcher_module
+
+        monkeypatch.delenv("ROBO_ORCHARD_TORCH_CUDA_ARCH_LIST", raising=False)
+        monkeypatch.setenv("TORCH_CUDA_ARCH_LIST", "9.0;9.0a;9.0+PTX")
+
+        class _Result:
+            stdout = "12.0\n12.0\n"
+
+        monkeypatch.setattr(
+            launcher_module.subprocess,
+            "run",
+            lambda *args, **kwargs: _Result(),
+        )
+
+        launcher_module._configure_torch_cuda_arch_list()
+
+        assert os.environ["TORCH_CUDA_ARCH_LIST"] == "12.0+PTX"
+
+    def test_disable_torch_jit_gpu_fusion_configures_runtime_flags(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On Blackwell (compute >= 12), all four JIT flags are disabled."""
+        import robo_orchard_sim.launcher as launcher_module
+
+        _Result = types.SimpleNamespace(stdout="12.0\n")
+        monkeypatch.setattr(
+            launcher_module.subprocess,
+            "run",
+            lambda *args, **kwargs: _Result,
+        )
+
+        calls: list[tuple[str, bool]] = []
+
+        for name in (
+            "_jit_override_can_fuse_on_gpu",
+            "_jit_set_texpr_fuser_enabled",
+            "_jit_set_profiling_executor",
+            "_jit_set_profiling_mode",
+        ):
+            monkeypatch.setattr(
+                launcher_module.torch._C,
+                name,
+                lambda value, _name=name: calls.append((_name, value)),
+            )
+
+        launcher_module._disable_torch_jit_gpu_fusion()
+
+        assert calls == [
+            ("_jit_override_can_fuse_on_gpu", False),
+            ("_jit_set_texpr_fuser_enabled", False),
+            ("_jit_set_profiling_executor", False),
+            ("_jit_set_profiling_mode", False),
+        ]
+
+    def test_disable_torch_jit_gpu_fusion_skipped_on_pre_blackwell(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On pre-Blackwell GPUs (compute < 12), JIT flags are not touched."""
+        import robo_orchard_sim.launcher as launcher_module
+
+        _Result = types.SimpleNamespace(stdout="8.9\n")
+        monkeypatch.setattr(
+            launcher_module.subprocess,
+            "run",
+            lambda *args, **kwargs: _Result,
+        )
+
+        calls: list[tuple[str, bool]] = []
+
+        for name in (
+            "_jit_override_can_fuse_on_gpu",
+            "_jit_set_texpr_fuser_enabled",
+            "_jit_set_profiling_executor",
+            "_jit_set_profiling_mode",
+        ):
+            monkeypatch.setattr(
+                launcher_module.torch._C,
+                name,
+                lambda value, _name=name: calls.append((_name, value)),
+            )
+
+        launcher_module._disable_torch_jit_gpu_fusion()
+
+        assert calls == [], (
+            "JIT flags must not be modified on pre-Blackwell GPUs"
+        )
 
 
 if __name__ == "__main__":
