@@ -200,9 +200,12 @@ make test-cluster
 
 #### Run `simple_orchard_env_example.py`
 
-The example below assembles a `place_a2b` orchard environment, serializes the
-generated environment config, resets the runtime environment, and steps the
-simulation for a few frames.
+The example below builds the default `place_a2b` task via
+`PlaceA2BTaskDefinition.build()`, serializes the generated environment config,
+resets the runtime environment, and steps the simulation for a few frames.
+For the current implementation, scene and embodiment are resolved from
+`place_a2b.yaml`, while task assets are defined in
+`PlaceA2BTaskDefinition.build()`.
 
 ```bash
 python3 examples/manipulation-app/scripts/simple_orchard_env_example.py
@@ -214,17 +217,11 @@ By default, the script writes the generated config to:
 configs/place_a2b_orchard_env_example.json
 ```
 
-You can also override runtime parameters such as output path, number of
-environments, and simulation frequencies:
+You can override the output path:
 
 ```bash
 python3 examples/manipulation-app/scripts/simple_orchard_env_example.py \
-  --output configs/place_a2b_orchard_env_example.json \
-  --num_envs 1 \
-  --env_spacing 2.5 \
-  --physics_fps 600 \
-  --render_fps 30 \
-  --action_fps 30
+  --output configs/place_a2b_orchard_env_example.json
 ```
 
 #### Run `eval_policy.py`

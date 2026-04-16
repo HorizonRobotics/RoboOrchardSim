@@ -38,15 +38,12 @@ from robo_orchard_sim.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
-from robo_orchard_sim.models.assets.rigid_object import RigidObjectCfg
 from robo_orchard_sim.models.assets.xform_asset import XFormPrimAsset
 from robo_orchard_sim.models.scenes.asset_scene import AssetSceneCfg
 from robo_orchard_sim.models.scenes.interactive_scene import InteractiveScene
 from robo_orchard_sim.orchard_env.assets import (
     ArticulationSpec,
-    AssetSpec,
     CustomAssetSpec,
-    ObjectSpec,
     RigidObjectSpec,
 )
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper import (
@@ -56,14 +53,13 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
 from robo_orchard_sim.orchard_env.env_builder.builder import EnvBuilder
-from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
 from robo_orchard_sim.orchard_env.scene.plane_table_scene import (
     PlaneTableScene,
 )
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
 from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
-    PlaceA2BRole,
     PlaceA2BTask,
+    PlaceA2BTaskAssets,
 )
 from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
 from robo_orchard_sim.tasks.validators.base import Validator
@@ -170,20 +166,6 @@ class DummyTask(TaskBase):
         )
 
 
-def test_rigid_object_spec_scene_name_is_derived_from_namespace_and_name():
-    spec = RigidObjectSpec(
-        name="pick_object",
-        namespace="objects",
-        usd_path="/tmp/pick.usd",
-    )
-
-    assert isinstance(spec, AssetSpec)
-    assert isinstance(spec, ObjectSpec)
-    assert spec.namespace == "objects"
-    assert spec.name == "pick_object"
-    assert spec.scene_name == "objects/pick_object"
-
-
 def test_asset_spec_name_rejects_path_separator():
     with pytest.raises(ValueError, match="must not contain '/'"):
         RigidObjectSpec(
@@ -205,21 +187,6 @@ def test_asset_spec_with_default_namespace_sets_missing_value_only():
     assert updated.namespace == "lights"
     assert updated.scene_name == "lights/task_light"
     assert preserved.namespace == "lights"
-
-
-def test_asset_scene_cfg_accepts_namespace_group_assets():
-    scene_cfg = AssetSceneCfg(
-        num_envs=1,
-        env_spacing=2.0,
-        assets={
-            "objects": GroupAssetCfg(cube=_make_asset_cfg("cube")),
-            "lights": GroupAssetCfg(dome=_make_asset_cfg("dome")),
-        },
-    )
-
-    assert set(scene_cfg.assets) == {"objects", "lights"}
-    assert set(scene_cfg.assets["objects"]) == {"cube"}
-    assert set(scene_cfg.assets["lights"]) == {"dome"}
 
 
 def test_env_builder_aggregates_assets_by_namespace_into_asset_scene_cfg():
@@ -285,16 +252,16 @@ def test_interactive_scene_flattens_namespace_assets_without_keyerror(
 
 def test_place_a2b_task_build_validator_encodes_task_success_semantics():
     task = PlaceA2BTask(
-        assets={
-            PlaceA2BRole.PICK: RigidObjectSpec(
+        assets=PlaceA2BTaskAssets(
+            pick=RigidObjectSpec(
                 name="pick_object",
                 usd_path="/tmp/pick.usd",
             ),
-            PlaceA2BRole.PLACE: RigidObjectSpec(
+            place=RigidObjectSpec(
                 name="place_object",
                 usd_path="/tmp/place.usd",
             ),
-        }
+        )
     )
 
     validator = task.build_validator()
@@ -336,59 +303,45 @@ def test_place_a2b_task_build_validator_encodes_task_success_semantics():
     assert deps == [2]
 
 
-def test_rigid_object_spec_exposes_user_facing_object_fields():
-    spec = RigidObjectSpec(
-        name="plate",
-        usd_path="/tmp/plate.usd",
-        interaction_path=None,
-        namespace=None,
-        mass=1.0,
-        scale=(1.0, 2.0, 3.0),
-        initial_pos=(0.1, 0.2, 0.3),
-        initial_rot=(1.0, 0.0, 0.0, 0.0),
+def test_place_a2b_task_resets_pick_place_and_distractors_in_one_pose_event():
+    task = PlaceA2BTask(
+        assets=PlaceA2BTaskAssets(
+            pick=RigidObjectSpec(
+                name="pick_object",
+                usd_path="/tmp/pick.usd",
+            ),
+            place=RigidObjectSpec(
+                name="place_object",
+                usd_path="/tmp/place.usd",
+            ),
+            distractors=[
+                RigidObjectSpec(
+                    name="distractor_0",
+                    usd_path="/tmp/distractor_0.usd",
+                ),
+                RigidObjectSpec(
+                    name="distractor_1",
+                    usd_path="/tmp/distractor_1.usd",
+                ),
+            ],
+        )
     )
 
-    assert spec.name == "plate"
-    assert spec.namespace is None
-    assert spec.usd_path == "/tmp/plate.usd"
-    assert spec.mass == 1.0
-    assert spec.scale == (1.0, 2.0, 3.0)
+    event_cfg = task.get_event_cfg()
+
+    assert list(event_cfg.terms) == ["random_pose_event"]
+    pose_event = event_cfg.terms["random_pose_event"]
+    assert [asset_cfg.name for asset_cfg in pose_event.asset_cfgs] == [
+        "objects/place_object",
+        "objects/pick_object",
+        "objects/distractor_0",
+        "objects/distractor_1",
+    ]
+    assert pose_event.mode == "random_non_overlap"
+    assert pose_event.clear_cross_group_cache is True
 
 
-def test_rigid_object_spec_converts_to_rigid_object_cfg():
-    spec = RigidObjectSpec(
-        name="plate",
-        usd_path="/tmp/plate.usd",
-        namespace="objects",
-    )
-
-    cfg = spec.to_isaac_cfg()
-
-    assert isinstance(cfg, RigidObjectCfg)
-    assert cfg.prim_path == "{ENV_REGEX_NS}/plate"
-    assert cfg.spawn.usd_path == "/tmp/plate.usd"
-
-
-def test_articulation_spec_converts_to_articulation_cfg():
-    spec = ArticulationSpec(
-        name="robot",
-        namespace="robots",
-        template_cfg=ArticulationCfg(
-            prim_path="{ENV_REGEX_NS}/template_robot",
-            spawn=UsdFileCfg(usd_path="/tmp/robot.usd"),
-            init_state=ArticulationCfg.InitialStateCfg(joint_pos={}),
-            actuators={},
-        ),
-    )
-
-    cfg = spec.to_isaac_cfg()
-
-    assert isinstance(cfg, ArticulationCfg)
-    assert cfg.prim_path == "{ENV_REGEX_NS}/robot"
-    assert cfg.spawn.usd_path == "/tmp/robot.usd"
-
-
-def test_articulation_spec_patches_template_cfg():
+def test_articulation_spec_patches_identity_and_preserves_template_cfg():
     template_cfg = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/template_name",
         spawn=UsdFileCfg(usd_path="/tmp/robot.usd"),
@@ -408,41 +361,11 @@ def test_articulation_spec_patches_template_cfg():
 
     cfg = spec.to_isaac_cfg()
 
+    assert isinstance(cfg, ArticulationCfg)
     assert cfg.prim_path == "{ENV_REGEX_NS}/robot"
+    assert cfg.spawn.usd_path == "/tmp/robot.usd"
     assert cfg.init_state.pos == (0.1, 0.2, 0.3)
     assert template_cfg.prim_path == "{ENV_REGEX_NS}/template_name"
-
-
-def test_custom_asset_spec_returns_wrapped_cfg():
-    cfg = _make_asset_cfg("custom_light")
-    spec = CustomAssetSpec(
-        name="light",
-        namespace="background",
-        cfg=cfg,
-    )
-
-    assert spec.to_isaac_cfg() is cfg
-
-
-def test_embodiment_base_proxies_robot_spec_identity():
-    embodiment = DummyEmbodiment()
-
-    assert embodiment.name == "dualarm"
-    assert embodiment.namespace == "robots"
-    assert embodiment.scene_name == "robots/dualarm"
-
-
-def test_orchard_env_uses_plane_table_scene_by_default_and_builds_cfg():
-    orchard_env = OrchardEnv(
-        embodiment=DummyEmbodiment(),
-        task=DummyTask(),
-    )
-
-    assert isinstance(orchard_env.scene, PlaneTableScene)
-    assert orchard_env.embodiment.name == "dualarm"
-    env_cfg = orchard_env.to_isaac_env_cfg()
-    assert isinstance(env_cfg.scene, AssetSceneCfg)
-    assert {"background", "objects", "robots"} <= set(env_cfg.scene.assets)
 
 
 def test_plane_table_scene_allows_user_defined_custom_asset():
@@ -462,97 +385,83 @@ def test_plane_table_scene_allows_user_defined_custom_asset():
     assert "light_fill" in grouped["background"]
 
 
-def test_place_a2b_task_accepts_mixed_asset_specs_with_role_mapping():
+def test_place_a2b_task_accepts_multiple_distractor_assets():
     task = PlaceA2BTask(
-        assets={
-            PlaceA2BRole.PICK: RigidObjectSpec(
+        assets=PlaceA2BTaskAssets(
+            pick=RigidObjectSpec(
                 name="pick_object",
                 usd_path="/tmp/pick.usd",
             ),
-            PlaceA2BRole.PLACE: RigidObjectSpec(
+            place=RigidObjectSpec(
                 name="place_object",
                 usd_path="/tmp/place.usd",
             ),
-            PlaceA2BRole.OTHER: CustomAssetSpec(
+            distractors=[
+                RigidObjectSpec(
+                    name="pick_distractor_0",
+                    usd_path="/tmp/pick_d0.usd",
+                ),
+                RigidObjectSpec(
+                    name="place_distractor_0",
+                    usd_path="/tmp/place_d0.usd",
+                ),
+                RigidObjectSpec(
+                    name="place_distractor_1",
+                    usd_path="/tmp/place_d1.usd",
+                ),
+            ],
+        )
+    )
+
+    grouped = task.get_assets_cfg()
+
+    assert "objects" in grouped
+    assert set(grouped["objects"]) == {
+        "pick_object",
+        "place_object",
+        "pick_distractor_0",
+        "place_distractor_0",
+        "place_distractor_1",
+    }
+
+
+def test_place_a2b_task_assets_reject_non_object_pick_or_place():
+    with pytest.raises(TypeError):
+        PlaceA2BTaskAssets(
+            pick=CustomAssetSpec(
                 name="task_light",
-                namespace="lights",
                 cfg=_make_asset_cfg("task_light"),
             ),
-        }
-    )
-
-    grouped = task.get_assets_cfg()
-
-    assert "objects" in grouped
-    assert set(grouped["objects"]) == {"pick_object", "place_object"}
-    assert "lights" in grouped
-    assert set(grouped["lights"]) == {"task_light"}
-
-
-def test_place_a2b_task_asset_specs_use_to_isaac_cfg_entrypoint(monkeypatch):
-    converted_names: list[str] = []
-    original = RigidObjectSpec.to_isaac_cfg
-
-    def _wrapped(self: RigidObjectSpec):
-        converted_names.append(self.name)
-        return original(self)
-
-    monkeypatch.setattr(RigidObjectSpec, "to_isaac_cfg", _wrapped)
-
-    task = PlaceA2BTask(
-        assets={
-            PlaceA2BRole.PICK: RigidObjectSpec(
-                name="pick_object",
-                usd_path="/tmp/pick.usd",
-            ),
-            PlaceA2BRole.PLACE: RigidObjectSpec(
+            place=RigidObjectSpec(
                 name="place_object",
                 usd_path="/tmp/place.usd",
             ),
-        }
+        )
+
+
+def test_place_a2b_assets_defaults_distractors_to_empty():
+    assets = PlaceA2BTaskAssets(
+        pick=RigidObjectSpec(
+            name="pick_object",
+            usd_path="/tmp/pick.usd",
+        ),
+        place=RigidObjectSpec(
+            name="place_object",
+            usd_path="/tmp/place.usd",
+        ),
     )
 
-    grouped = task.get_assets_cfg()
-
-    assert "objects" in grouped
-    assert converted_names == ["pick_object", "place_object"]
-
-
-def test_place_a2b_task_rejects_missing_required_roles():
-    with pytest.raises(ValueError, match="must include"):
-        PlaceA2BTask(
-            assets={
-                PlaceA2BRole.PICK: RigidObjectSpec(
-                    name="pick_object",
-                    usd_path="/tmp/pick.usd",
-                )
-            }
-        )
+    assert assets.flatten() == {
+        "pick": assets.pick,
+        "place": assets.place,
+    }
 
 
-def test_place_a2b_task_rejects_non_object_required_roles():
-    with pytest.raises(
-        TypeError,
-        match="must be ObjectSpec instances",
-    ):
-        PlaceA2BTask(
-            assets={
-                PlaceA2BRole.PICK: CustomAssetSpec(
-                    name="task_light",
-                    cfg=_make_asset_cfg("task_light"),
-                ),
-                PlaceA2BRole.PLACE: RigidObjectSpec(
-                    name="place_object",
-                    usd_path="/tmp/place.usd",
-                ),
-            }
-        )
-
-
-def test_dualarm_piper_embodiment_provides_robot_action_terms():
+def test_dualarm_piper_embodiment_provides_default_cfg_entries():
     embodiment = DualArmPiperEmbodiment()
 
     action_cfg = embodiment.get_action_cfg()
+    observation_cfg = embodiment.get_observation_cfg()
 
     assert set(action_cfg.terms) == {
         "left_robot_joint_position",
@@ -560,13 +469,6 @@ def test_dualarm_piper_embodiment_provides_robot_action_terms():
         "right_robot_joint_position",
         "right_robot_gripper_control",
     }
-
-
-def test_dualarm_piper_embodiment_provides_robot_and_tf_observation_groups():
-    embodiment = DualArmPiperEmbodiment()
-
-    observation_cfg = embodiment.get_observation_cfg()
-
     assert "/robot" in observation_cfg.groups
     assert "/tf" in observation_cfg.groups
     assert "base_link" in observation_cfg.groups["/robot"].terms

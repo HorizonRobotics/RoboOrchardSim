@@ -15,3 +15,19 @@
 # permissions and limitations under the License.
 
 """Instruction helpers for task definitions."""
+
+from robo_orchard_sim.tasks.instructions.base import (  # noqa: F401
+    InstructionWrapper,
+)
+from robo_orchard_sim.tasks.instructions.registry import (  # noqa: F401
+    INSTRUCTION_TEMPLATE_REGISTRY,
+    build_instruction_wrapper,
+    register_instruction_template,
+)
+
+__all__ = [
+    "InstructionWrapper",
+    "INSTRUCTION_TEMPLATE_REGISTRY",
+    "build_instruction_wrapper",
+    "register_instruction_template",
+]

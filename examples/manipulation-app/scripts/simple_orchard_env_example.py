@@ -50,24 +50,13 @@ def main() -> None:
         help="Output json path for serialized env cfg.",
     )
 
-    parser.add_argument("--num_envs", type=int, default=1)
-    parser.add_argument("--env_spacing", type=float, default=2.5)
-    parser.add_argument("--physics_fps", type=int, default=600)
-    parser.add_argument("--render_fps", type=int, default=30)
-    parser.add_argument("--action_fps", type=int, default=30)
     args = parser.parse_args()
 
     from robo_orchard_sim.task_suite.manipulation.place_a2b import (
         PlaceA2BTaskDefinition,
     )
 
-    place_a2b_env = PlaceA2BTaskDefinition.get_env(
-        num_envs=args.num_envs,
-        env_spacing=args.env_spacing,
-        physics_fps=args.physics_fps,
-        render_fps=args.render_fps,
-        step_fps=args.action_fps,
-    )
+    place_a2b_env = PlaceA2BTaskDefinition.build()
 
     env_cfg = place_a2b_env.to_isaac_env_cfg()
 

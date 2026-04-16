@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from robo_orchard_core.envs.managers.actions.action_manager import (
@@ -43,7 +44,7 @@ class TaskBase(ABC):
     cfg fragments via the ``get_*`` methods.
     """
 
-    def __init__(self, assets: dict[str, AssetSpec]):
+    def __init__(self, assets: Mapping[str, AssetSpec]):
         self._assets = {
             role: spec.with_default_namespace("objects")
             for role, spec in assets.items()

@@ -18,9 +18,12 @@
 
 from __future__ import annotations
 import math
-from enum import Enum
+from collections.abc import Sequence
+from typing import Any
 
+from pydantic import field_validator, model_validator
 from robo_orchard_core.envs.managers.events import EventManagerCfg
+from robo_orchard_core.utils.config import Config
 
 from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
@@ -28,7 +31,7 @@ from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
 from robo_orchard_sim.envs.managers.events.pose_reset import (
     PoseResetTermCfg,
 )
-from robo_orchard_sim.orchard_env.assets import AssetSpec, ObjectSpec
+from robo_orchard_sim.orchard_env.assets import ObjectSpec
 from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
 from robo_orchard_sim.tasks.validators.base import Validator
 from robo_orchard_sim.tasks.validators.checkers import (
@@ -38,83 +41,105 @@ from robo_orchard_sim.tasks.validators.checkers import (
 )
 
 
-class PlaceA2BRole(str, Enum):
-    """Supported asset roles for the place-a2b task."""
+class PlaceA2BTaskAssets(Config):
+    """Task-specific asset schema for place-a2b scenes."""
 
-    PICK = "pick"
-    PLACE = "place"
-    OTHER = "other"
+    pick: ObjectSpec
+    place: ObjectSpec
+    distractors: ObjectSpec | Sequence[ObjectSpec] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_required_objects(cls, value: Any) -> Any:
+        """Reject non-object required assets with a task-specific error."""
+        if not isinstance(value, dict):
+            return value
+        for field_name in ("pick", "place"):
+            if field_name in value and not isinstance(
+                value[field_name], ObjectSpec
+            ):
+                raise TypeError(
+                    "PlaceA2BTaskAssets pick and place must be ObjectSpec "
+                    "instances."
+                )
+        return value
+
+    @field_validator("distractors")
+    @classmethod
+    def validate_distractors(
+        cls, value: ObjectSpec | Sequence[ObjectSpec] | None
+    ) -> ObjectSpec | Sequence[ObjectSpec] | None:
+        """Accept zero, one, or many distractor objects."""
+        if value is None:
+            return value
+        if isinstance(value, ObjectSpec):
+            return value
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for spec in value:
+                if not isinstance(spec, ObjectSpec):
+                    raise TypeError(
+                        "PlaceA2BTaskAssets distractors must contain "
+                        "ObjectSpec "
+                        "instances."
+                    )
+            return value
+        raise TypeError(
+            "PlaceA2BTaskAssets distractors must be an ObjectSpec, a "
+            "sequence of ObjectSpec instances, or None."
+        )
+
+    def flatten(self) -> dict[str, ObjectSpec]:
+        """Return task assets in the flattened shape expected by TaskBase."""
+        flattened: dict[str, ObjectSpec] = {
+            "pick": self.pick,
+            "place": self.place,
+        }
+        distractors = self.distractors
+        if distractors is None:
+            return flattened
+        if isinstance(distractors, ObjectSpec):
+            flattened["distractor_0"] = distractors
+            return flattened
+        for index, spec in enumerate(distractors):
+            flattened[f"distractor_{index}"] = spec
+        return flattened
 
 
 class PlaceA2BTask(TaskBase):
     """A generic place-a2b task with one pick object and one place object."""
 
-    def __init__(
-        self,
-        assets: dict[PlaceA2BRole, AssetSpec] | None = None,
-    ):
-        if assets is None:
-            raise ValueError(
-                "PlaceA2BTask requires an assets dict mapping roles to "
-                "AssetSpec instances."
-            )
-        self._validate_assets(assets)
-        super().__init__(assets)
-        self.pick_object = self._assets[PlaceA2BRole.PICK]
-        self.place_object = self._assets[PlaceA2BRole.PLACE]
+    def __init__(self, assets: PlaceA2BTaskAssets):
+        self.assets = assets
+        flattened_assets = assets.flatten()
+        super().__init__(flattened_assets)
 
-    def _validate_assets(self, assets: dict[PlaceA2BRole, AssetSpec]) -> None:
-        """Require ``PICK`` and ``PLACE`` keys; other roles are allowed."""
-        required = {PlaceA2BRole.PICK, PlaceA2BRole.PLACE}
-        missing = required - set(assets)
-        if missing:
-            raise ValueError(
-                "PlaceA2BTask assets must include "
-                f"{PlaceA2BRole.PICK!r} and {PlaceA2BRole.PLACE!r}; "
-                f"missing: {sorted(missing, key=lambda r: r.value)}."
-            )
-        for role in (PlaceA2BRole.PICK, PlaceA2BRole.PLACE):
-            if not isinstance(assets[role], ObjectSpec):
-                raise TypeError(
-                    "PlaceA2BTask pick/place assets must be ObjectSpec "
-                    "instances."
-                )
+        self.pick_object = self._assets["pick"]
+        self.place_object = self._assets["place"]
+        self.distractors = [
+            self._assets[role]
+            for role in flattened_assets
+            if role.startswith("distractor_")
+        ]
 
     def get_event_cfg(self) -> EventManagerCfg:
-        """Return pose-reset events for place and pick objects."""
+        """Return a shared pose-reset event for task objects."""
+        asset_cfgs = [
+            SceneEntityCfg(name=self.place_object.scene_name),
+            SceneEntityCfg(name=self.pick_object.scene_name),
+        ]
+        asset_cfgs.extend(
+            SceneEntityCfg(name=spec.scene_name) for spec in self.distractors
+        )
         return EventManagerCfg(
             terms={
-                "random_place_pose_event": PoseResetTermCfg(
-                    asset_cfgs=[
-                        SceneEntityCfg(name=self.place_object.scene_name)
-                    ],
+                "random_pose_event": PoseResetTermCfg(
+                    asset_cfgs=asset_cfgs,
                     trigger_topic="reset",
                     mode="random_non_overlap",
                     pose_range={
-                        "x": [0.5, 0.55],
-                        "y": [-0.05, 0.05],
-                        "z": [0.0, 0.0],
-                        "roll": [0.0, 0.0],
-                        "pitch": [0.0, 0.0],
-                        "yaw": [math.radians(-5.0), math.radians(5.0)],
-                    },
-                    absolute_sampling=True,
-                    min_separation=0.03,
-                    max_retries=256,
-                    group_key="manipulation_objects",
-                    clear_cross_group_cache=True,
-                ),
-                "random_pick_pose_event": PoseResetTermCfg(
-                    asset_cfgs=[
-                        SceneEntityCfg(name=self.pick_object.scene_name)
-                    ],
-                    trigger_topic="reset",
-                    # mode="drop",
-                    mode="random_non_overlap",
-                    pose_range={
-                        "x": [0.25, 0.4],
+                        "x": [0.25, 0.55],
                         "y": [-0.35, 0.35],
-                        "z": [0.0, 0.5],
+                        "z": [0.0, 0.0],
                         "roll": [0.0, 0.0],
                         "pitch": [0.0, 0.0],
                         "yaw": [math.radians(-180.0), math.radians(180.0)],
@@ -123,7 +148,7 @@ class PlaceA2BTask(TaskBase):
                     min_separation=0.03,
                     max_retries=256,
                     group_key="manipulation_objects",
-                    clear_cross_group_cache=False,
+                    clear_cross_group_cache=True,
                 ),
             }
         )

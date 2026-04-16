@@ -24,14 +24,14 @@ From a user point of view, a runnable `env_task` needs four pieces:
 
 The reference files are:
 
-- task entry: [place_a2b_env.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py)
-- task registration: [registration.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/task_suite/registration.py)
-- runtime bootstrap: [registry.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/task_suite/registry.py)
-- evaluator entry: [eval_policy.py](/home/users/ziang.li-labs/robo_orchard_sim/examples/manipulation-app/scripts/eval_policy.py)
+- task entry: [place_a2b_env.py](../robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py)
+- task registration: [registration.py](../robo_orchard_sim/task_suite/registration.py)
+- runtime bootstrap: [registry.py](../robo_orchard_sim/task_suite/registry.py)
+- evaluator entry: [eval_policy.py](../examples/manipulation-app/scripts/eval_policy.py)
 
 ## Part 1: Define a New `env_task`
 
-Start by adding a new task definition under `robo_orchard_sim/task_suite/...`. The repository already does this for `place_a2b`, which is registered with `@register_task` and built from a scene, an embodiment, and a task object in [place_a2b_env.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py#L39).
+Start by adding a new task definition under `robo_orchard_sim/task_suite/...`. The repository already does this for `place_a2b`, which is registered with `@register_task` and builds an `OrchardEnv` explicitly in [place_a2b_env.py](../robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py).
 
 ### Step 1: Create a `TaskDefinition`
 
@@ -46,15 +46,14 @@ from robo_orchard_sim.task_suite.registration import register_task
 @register_task
 class MyTaskDefinition(TaskDefinition):
     namespace = "my_task"
+    config_path = "my_task.yaml"
 
     @classmethod
     def build(cls) -> OrchardEnv:
-        scene = ...
-        embodiment = ...
         task = ...
         return OrchardEnv(
-            scene=scene,
-            embodiment=embodiment,
+            scene=cls.resolve_scene(),
+            embodiment=cls.resolve_embodiment(),
             task=task,
         )
 ```
@@ -62,8 +61,39 @@ class MyTaskDefinition(TaskDefinition):
 What matters here:
 
 - `namespace` is the task name users pass into evaluation
-- `build()` must return a fresh `OrchardEnv`
-- `@register_task` adds the class to the task registry in [registration.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/task_suite/registration.py#L24)
+- `build()` is required; `TaskDefinition` does not provide a default implementation
+- `resolve_scene()` and `resolve_embodiment()` are helper methods you can call inside `build()`
+- `config_path` can point to a YAML file that provides `scene`, `embodiment`, and optional `instruction` config
+- the task object you construct inside `build()` must be a `TaskBase` with task-specific assets and logic
+- `@register_task` adds the class to the task registry in [registration.py](../robo_orchard_sim/task_suite/registration.py)
+- `scene` supports either a registered string name or a `SceneBase` instance; `embodiment` supports either a registered string name or an `EmbodimentBase` instance
+
+Note: `TaskDefinition` currently parses `instruction` config, but the current
+`place_a2b` build path does not pass instruction into `OrchardEnv`, so treat it
+as optional task-definition metadata unless your own task wires it through
+explicitly.
+
+The current `TaskDefinition` YAML shape is:
+
+```yaml
+scene:
+  type: plane_table
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+  params: {}
+
+embodiment:
+  type: dualarm_piper
+  initial_pos: [0.0, 0.3, 0.0]
+  params: {}
+
+instruction:
+  template: place_a2b_default
+  template_mode: raw
+```
 
 ### Step 2: Assemble the `OrchardEnv`
 
@@ -73,11 +103,11 @@ An `OrchardEnv` is built from:
 - `embodiment`: robot definition
 - `task`: task-specific assets, reset logic, and validator
 
-The reference composition is in [place_a2b_env.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py#L50). For your first custom task, the safest path is to reuse an existing scene and embodiment, and only change the task-specific assets and validator logic.
+The reference composition is in [place_a2b_env.py](../robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py). For your first custom task, the safest path is to reuse an existing scene and embodiment, and only change the task-specific assets and validator logic.
 
 ### Step 3: Implement Reset and Validation Logic
 
-The task object is where evaluation becomes meaningful. In the `place_a2b` example, [place_a2b_task.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/orchard_env/tasks/place_a2b_task.py) defines:
+The task object is where evaluation becomes meaningful. In the `place_a2b` example, [place_a2b_task.py](../robo_orchard_sim/orchard_env/tasks/place_a2b_task.py) defines:
 
 - `get_event_cfg()`: how objects are reset at episode start
 - `build_validator()`: how success and progress are measured
@@ -111,7 +141,7 @@ If `build_validator()` is missing or too weak, the evaluator can still run, but 
 
 Defining the class is not enough. The evaluator resolves tasks by name at runtime, so your module must also be imported during bootstrap.
 
-Update [_bootstrap_task_definitions()](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/task_suite/registry.py#L25) in [registry.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/task_suite/registry.py):
+Update [_bootstrap_task_definitions()](../robo_orchard_sim/task_suite/registry.py) in [registry.py](../robo_orchard_sim/task_suite/registry.py):
 
 ```python
 def _bootstrap_task_definitions() -> None:
@@ -133,7 +163,7 @@ If you forget this import, evaluation will fail with `Unknown task name`.
 
 ### Step 5: Do a Quick Env Sanity Check
 
-Before running a full evaluation, make sure your task can at least build, reset, and step. The reference script is [simple_orchard_env_example.py](/home/users/ziang.li-labs/robo_orchard_sim/examples/manipulation-app/scripts/simple_orchard_env_example.py).
+Before running a full evaluation, make sure your task can at least build, reset, and step. The reference script is the `place_a2b` example [simple_orchard_env_example.py](../examples/manipulation-app/scripts/simple_orchard_env_example.py).
 
 ```bash
 python3 examples/manipulation-app/scripts/simple_orchard_env_example.py
@@ -149,9 +179,13 @@ For your own task, the equivalent local sanity check is:
 
 Do this before evaluation. It is much easier to debug env construction failures here than inside a rollout loop.
 
+For the current `place_a2b` reference, the example script simply calls
+`PlaceA2BTaskDefinition.build()`. It does not override scene/task parameters in
+the script itself.
+
 ## Part 2: Plug In Your Own Model
 
-Once the task side is ready, the next question is how to run evaluation with your own policy instead of the built-in dummy policy. The repository already shows the expected interface in [DummyPolicy.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/policy/DummyPolicy.py).
+Once the task side is ready, the next question is how to run evaluation with your own policy instead of the built-in dummy policy. The repository already shows the expected interface in [DummyPolicy.py](../robo_orchard_sim/policy/DummyPolicy.py).
 
 ### Step 1: Implement a Policy Class
 
@@ -204,6 +238,9 @@ class MyPolicyCfg(PolicyConfig[MyPolicy]):
 
 Use `PolicyConfig` when you want the evaluator to construct your policy from a config object. This is the same pattern used by `DummyPolicyCfg`.
 
+At runtime, the evaluator calls `policy.reset()` at the start of each episode,
+so any recurrent state or cached rollout state should be cleared there.
+
 ### Step 2: Match the Observation Interface
 
 Your `act(obs)` implementation receives the environment observation dictionary. In the current dual-arm example, the robot observation group includes keys such as:
@@ -213,11 +250,11 @@ Your `act(obs)` implementation receives the environment observation dictionary. 
 - `obs["/tf"][...]`
 - optionally `obs["/camera"][...]` when cameras are enabled
 
-The exact observation groups come from the embodiment and task config. For the reference dual-arm robot, they are defined in [dualarm_piper/embodiment.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/orchard_env/embodiments/dualarm_piper/embodiment.py#L148).
+The exact observation groups come from the embodiment and task config. For the reference dual-arm robot, they are defined in [dualarm_piper/embodiment.py](../robo_orchard_sim/orchard_env/embodiments/dualarm_piper/embodiment.py).
 
 ### Step 3: Match the Action Interface
 
-The action payload must match the environment action terms. For the current `DualArmPiperEmbodiment`, [get_action_cfg()](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/orchard_env/embodiments/dualarm_piper/embodiment.py#L250) defines four action keys:
+The action payload must match the environment action terms. For the current `DualArmPiperEmbodiment`, [get_action_cfg()](../robo_orchard_sim/orchard_env/embodiments/dualarm_piper/embodiment.py) defines four action keys:
 
 - `left_robot_joint_position`: shape `(batch, 6)`
 - `left_robot_gripper_control`: shape `(batch, 2)`
@@ -269,7 +306,7 @@ Once your task can build and step, and your policy interface is ready, evaluatio
 
 ### Step 1: Point the Evaluator at Your Task
 
-The example script [eval_policy.py](/home/users/ziang.li-labs/robo_orchard_sim/examples/manipulation-app/scripts/eval_policy.py#L56) builds an evaluator like this:
+The example script [eval_policy.py](../examples/manipulation-app/scripts/eval_policy.py) builds an evaluator like this:
 
 ```python
 evaluator_cfg = EvaluatorCfg(
@@ -289,7 +326,7 @@ The main field you must change is `task_name`. It must match the `namespace` you
 
 ### Step 2: Run the Evaluation Loop
 
-The evaluator implementation is in [evaluator.py](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/evaluator/evaluator.py). At runtime it will:
+The evaluator implementation is in [evaluator.py](../robo_orchard_sim/evaluator/evaluator.py). At runtime it will:
 
 1. resolve your task by `task_name`
 2. build the `OrchardEnv`
@@ -299,7 +336,7 @@ The evaluator implementation is in [evaluator.py](/home/users/ziang.li-labs/robo
 6. call the task validator every step
 7. aggregate the final `EvaluationResult`
 
-The per-episode loop in [_run_episode()](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/evaluator/evaluator.py#L278) stops when one of these happens:
+The per-episode loop in [_run_episode()](../robo_orchard_sim/evaluator/evaluator.py) stops when one of these happens:
 
 - validator reports success
 - environment terminates
@@ -328,7 +365,7 @@ By default, the example script uses `DummyPolicyCfg`, so this is best treated as
 
 ### Step 4: Read the Output
 
-The script writes a serialized `EvaluationResult` JSON. The evaluator computes these top-level fields in [evaluate()](/home/users/ziang.li-labs/robo_orchard_sim/robo_orchard_sim/evaluator/evaluator.py#L103):
+The script writes a serialized `EvaluationResult` JSON. The evaluator computes these top-level fields in [evaluate()](../robo_orchard_sim/evaluator/evaluator.py):
 
 - `episode_num`
 - `seed_start`
