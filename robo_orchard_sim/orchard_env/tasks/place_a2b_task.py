@@ -18,12 +18,8 @@
 
 from __future__ import annotations
 import math
-from collections.abc import Sequence
-from typing import Any
 
-from pydantic import field_validator, model_validator
 from robo_orchard_core.envs.managers.events import EventManagerCfg
-from robo_orchard_core.utils.config import Config
 
 from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
@@ -32,7 +28,10 @@ from robo_orchard_sim.envs.managers.events.pose_reset import (
     PoseResetTermCfg,
 )
 from robo_orchard_sim.orchard_env.assets import ObjectSpec
-from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
+from robo_orchard_sim.orchard_env.tasks.task_base import (
+    TaskAssetsBase,
+    TaskBase,
+)
 from robo_orchard_sim.tasks.validators.base import Validator
 from robo_orchard_sim.tasks.validators.checkers import (
     is_within_xy,
@@ -41,52 +40,13 @@ from robo_orchard_sim.tasks.validators.checkers import (
 )
 
 
-class PlaceA2BTaskAssets(Config):
+class PlaceA2BTaskAssets(TaskAssetsBase):
     """Task-specific asset schema for place-a2b scenes."""
+
+    required_object_fields = ("pick", "place")
 
     pick: ObjectSpec
     place: ObjectSpec
-    distractors: ObjectSpec | Sequence[ObjectSpec] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def validate_required_objects(cls, value: Any) -> Any:
-        """Reject non-object required assets with a task-specific error."""
-        if not isinstance(value, dict):
-            return value
-        for field_name in ("pick", "place"):
-            if field_name in value and not isinstance(
-                value[field_name], ObjectSpec
-            ):
-                raise TypeError(
-                    "PlaceA2BTaskAssets pick and place must be ObjectSpec "
-                    "instances."
-                )
-        return value
-
-    @field_validator("distractors")
-    @classmethod
-    def validate_distractors(
-        cls, value: ObjectSpec | Sequence[ObjectSpec] | None
-    ) -> ObjectSpec | Sequence[ObjectSpec] | None:
-        """Accept zero, one, or many distractor objects."""
-        if value is None:
-            return value
-        if isinstance(value, ObjectSpec):
-            return value
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            for spec in value:
-                if not isinstance(spec, ObjectSpec):
-                    raise TypeError(
-                        "PlaceA2BTaskAssets distractors must contain "
-                        "ObjectSpec "
-                        "instances."
-                    )
-            return value
-        raise TypeError(
-            "PlaceA2BTaskAssets distractors must be an ObjectSpec, a "
-            "sequence of ObjectSpec instances, or None."
-        )
 
     def flatten(self) -> dict[str, ObjectSpec]:
         """Return task assets in the flattened shape expected by TaskBase."""
@@ -94,14 +54,7 @@ class PlaceA2BTaskAssets(Config):
             "pick": self.pick,
             "place": self.place,
         }
-        distractors = self.distractors
-        if distractors is None:
-            return flattened
-        if isinstance(distractors, ObjectSpec):
-            flattened["distractor_0"] = distractors
-            return flattened
-        for index, spec in enumerate(distractors):
-            flattened[f"distractor_{index}"] = spec
+        flattened.update(self.flatten_distractors())
         return flattened
 
 

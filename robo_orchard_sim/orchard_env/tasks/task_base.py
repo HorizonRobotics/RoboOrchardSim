@@ -18,9 +18,10 @@
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, ClassVar
 
+from pydantic import field_validator, model_validator
 from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
@@ -28,12 +29,77 @@ from robo_orchard_core.envs.managers.events import EventManagerCfg
 from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
+from robo_orchard_core.utils.config import Config
 
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
-from robo_orchard_sim.orchard_env.assets import AssetSpec
+from robo_orchard_sim.orchard_env.assets import AssetSpec, ObjectSpec
 
 if TYPE_CHECKING:
     from robo_orchard_sim.tasks.validators.base import Validator
+
+
+class TaskAssetsBase(Config):
+    """Base schema for tasks with required object assets and distractors."""
+
+    required_object_fields: ClassVar[tuple[str, ...]] = ()
+
+    distractors: ObjectSpec | Sequence[ObjectSpec] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_required_objects(cls, value: Any) -> Any:
+        """Reject non-object required assets with a task-specific error."""
+        if not isinstance(value, dict):
+            return value
+
+        invalid_fields = [
+            field_name
+            for field_name in cls.required_object_fields
+            if field_name in value
+            and not isinstance(value[field_name], ObjectSpec)
+        ]
+        if invalid_fields:
+            field_list = ", ".join(invalid_fields)
+            raise TypeError(
+                f"{cls.__name__} {field_list} must be ObjectSpec instances."
+            )
+        return value
+
+    @field_validator("distractors")
+    @classmethod
+    def validate_distractors(
+        cls, value: ObjectSpec | Sequence[ObjectSpec] | None
+    ) -> ObjectSpec | Sequence[ObjectSpec] | None:
+        """Accept zero, one, or many distractor objects."""
+        if value is None:
+            return value
+        if isinstance(value, ObjectSpec):
+            return value
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for spec in value:
+                if not isinstance(spec, ObjectSpec):
+                    raise TypeError(
+                        f"{cls.__name__} distractors must contain ObjectSpec "
+                        "instances."
+                    )
+            return value
+        raise TypeError(
+            f"{cls.__name__} distractors must be an ObjectSpec, a sequence "
+            "of ObjectSpec instances, or None."
+        )
+
+    def flatten_distractors(self) -> dict[str, ObjectSpec]:
+        """Return distractors in the flattened shape expected by TaskBase."""
+        flattened: dict[str, ObjectSpec] = {}
+        distractors = self.distractors
+        if distractors is None:
+            return flattened
+        if isinstance(distractors, ObjectSpec):
+            flattened["distractor_0"] = distractors
+            return flattened
+        for index, spec in enumerate(distractors):
+            flattened[f"distractor_{index}"] = spec
+        return flattened
 
 
 class TaskBase(ABC):

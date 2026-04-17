@@ -21,4 +21,7 @@ from robo_orchard_sim.task_suite.manipulation.place_a2b.place_a2b_env import (  
     PlaceA2BTaskDefinition,
 )
 
-__all__ = ["PlaceA2BEnv", "PlaceA2BTaskDefinition"]
+__all__ = [
+    "PlaceA2BEnv",
+    "PlaceA2BTaskDefinition",
+]
