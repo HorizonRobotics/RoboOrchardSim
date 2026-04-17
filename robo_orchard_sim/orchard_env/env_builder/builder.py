@@ -17,6 +17,7 @@
 """Env builder that composes scene + embodiment + task configs."""
 
 from __future__ import annotations
+from collections.abc import Mapping
 from typing import Any
 
 from robo_orchard_core.envs.managers.actions.action_manager import (
@@ -30,6 +31,12 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
 from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
 from robo_orchard_sim.cfg_wrappers.sim.simulation_cfg import SimulationCfg
 from robo_orchard_sim.envs.manager_based_env import IsaacManagerBasedEnvCfg
+from robo_orchard_sim.envs.managers.record import (
+    NoOpRecordControllerCfg,
+    RecordControllerCfg,
+    RecordManagerCfg,
+    RecordTermBaseCfg,
+)
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.models.scenes.asset_scene import AssetSceneCfg
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
@@ -47,10 +54,14 @@ class EnvBuilder:
         scene: SceneBase,
         embodiment: EmbodimentBase,
         task: TaskBase,
+        record_file_path: str = "logs/records",
+        record_controller: RecordControllerCfg | None = None,
     ):
         self.scene = scene
         self.embodiment = embodiment
         self.task = task
+        self.record_file_path = record_file_path
+        self.record_controller = record_controller or NoOpRecordControllerCfg()
 
     def build(self) -> IsaacManagerBasedEnvCfg:
         """Build the final ``IsaacManagerBasedEnvCfg``."""
@@ -85,6 +96,11 @@ class EnvBuilder:
             self.scene.get_event_cfg(),
             self.embodiment.get_event_cfg(),
             self.task.get_event_cfg(),
+        )
+        env_cfg.records = self._build_record_cfg(
+            self.scene.get_record_terms(),
+            self.embodiment.get_record_terms(),
+            self.task.get_record_terms(),
         )
         return env_cfg
 
@@ -186,3 +202,21 @@ class EnvBuilder:
                     raise ValueError(f"Duplicate event term '{key}'.")
                 terms[key] = value
         return EventManagerCfg(terms=terms)
+
+    def _build_record_cfg(
+        self,
+        *fragments: Mapping[str, RecordTermBaseCfg],
+    ) -> RecordManagerCfg:
+        terms: dict[str, RecordTermBaseCfg] = {}
+
+        for fragment in fragments:
+            for key, value in fragment.items():
+                if key in terms:
+                    raise ValueError(f"Duplicate record term '{key}'.")
+                terms[key] = value
+
+        return RecordManagerCfg(
+            file_path=self.record_file_path,
+            controller=self.record_controller,
+            terms=terms,
+        )

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from robo_orchard_sim.envs.manager_based_env import (
         IsaacManagerBasedEnvCfg,
     )
+    from robo_orchard_sim.envs.managers.record import RecordControllerCfg
     from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
         EmbodimentBase,
     )
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
 
 class OrchardEnv:
     """Top-level orchard env description used by downstream callers."""
+
+    DEFAULT_RECORD_FILE_PATH = "logs/records"
 
     def __init__(
         self,
@@ -48,6 +51,38 @@ class OrchardEnv:
         self.scene = scene
         self.embodiment = embodiment
         self.task = task
+        from robo_orchard_sim.envs.managers.record import (
+            NoOpRecordControllerCfg,
+        )
+
+        self._record_file_path = self.DEFAULT_RECORD_FILE_PATH
+        self._record_controller: RecordControllerCfg = (
+            NoOpRecordControllerCfg()
+        )
+
+    def configure_recording(
+        self,
+        file_path: str | None = None,
+        controller: RecordControllerCfg | None = None,
+    ) -> "OrchardEnv":
+        """Enable recording with optional file path and controller."""
+        from robo_orchard_sim.envs.managers.record import (
+            EpisodeRecordControllerCfg,
+        )
+
+        if file_path is not None:
+            self._record_file_path = file_path
+        self._record_controller = controller or EpisodeRecordControllerCfg()
+        return self
+
+    def disable_recording(self) -> "OrchardEnv":
+        """Disable recording while keeping the current file path."""
+        from robo_orchard_sim.envs.managers.record import (
+            NoOpRecordControllerCfg,
+        )
+
+        self._record_controller = NoOpRecordControllerCfg()
+        return self
 
     def to_isaac_env_cfg(self) -> IsaacManagerBasedEnvCfg:
         """Build an Isaac-compatible env cfg from the orchard env."""
@@ -59,4 +94,6 @@ class OrchardEnv:
             scene=self.scene,
             embodiment=self.embodiment,
             task=self.task,
+            record_file_path=self._record_file_path,
+            record_controller=self._record_controller,
         ).build()

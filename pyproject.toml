@@ -26,9 +26,9 @@ dependencies = [
     "torchvision>=0.20.1",
     "isaacsim[all,extscache]==4.5.0",
     "isaaclab==2.0.2",
-    "protobuf<5.0.0,>=3.20.2",
     "h5py",
     "robo_orchard_core==0.4.0",
+    "mcap-protobuf-support"
 ]
 
 [project.optional-dependencies]
@@ -39,6 +39,9 @@ RoboOrchard-SimLauncher = "robo_orchard_sim.launcher:main"
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.package-data]
+"robo_orchard_sim" = ["**/*.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["."]

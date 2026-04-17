@@ -31,6 +31,7 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
 )
 from robo_orchard_core.utils.config import Config
 
+from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import AssetSpec, ObjectSpec
 
@@ -110,6 +111,8 @@ class TaskBase(ABC):
     cfg fragments via the ``get_*`` methods.
     """
 
+    EPISODE_META_RECORD_KEY = "episode/meta_dict"
+
     def __init__(self, assets: Mapping[str, AssetSpec]):
         self._assets = {
             role: spec.with_default_namespace("objects")
@@ -149,6 +152,10 @@ class TaskBase(ABC):
     def get_action_cfg(self) -> ActionManagerCfg:
         """Return task-specific action cfg fragment (default empty)."""
         return ActionManagerCfg(terms={})
+
+    def get_record_terms(self) -> Mapping[str, RecordTermBaseCfg]:
+        """Return task-specific record term fragments."""
+        return {}
 
     # ---------------------------------------------------------
     # Events

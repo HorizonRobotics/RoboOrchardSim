@@ -17,6 +17,7 @@
 """Evaluator implementation with explicit per-step episode loop."""
 
 from __future__ import annotations
+import copy
 import warnings
 from typing import TYPE_CHECKING, Any
 
@@ -282,6 +283,69 @@ class Evaluator:
             )
         return latest_step_return
 
+    def _build_episode_metadata(
+        self,
+        validator: Validator,
+        validator_output: ValidatorOutput,
+    ) -> dict[str, Any]:
+        # TODO：user can add meata data here
+
+        actors = validator.actors
+        if not actors:
+            return {}
+
+        meta_data = {
+            "init_position": {
+                validator.actor_category[actor]: validator.init_state[
+                    actor
+                ].tolist()
+                for actor in actors
+            },
+            "final_position": {
+                validator.actor_category[actor]: validator.final_state[
+                    actor
+                ].tolist()
+                for actor in actors
+            },
+            "actor_type": {
+                validator.actor_category[actor]: validator.actor_type[actor]
+                for actor in actors
+            },
+            "actor_uuid": {
+                validator.actor_category[actor]: validator.actor_uuid[actor]
+                for actor in actors
+            },
+            "task_success": float(validator_output.success),
+            "task_progress": float(validator_output.progress),
+        }
+
+        return meta_data
+
+    def _record_episode_metadata(
+        self,
+        env: IsaacManagerBasedEnv,
+        validator: Validator,
+        validator_output: ValidatorOutput,
+    ) -> None:
+        record_manager = getattr(env, "record_manager", None)
+        if record_manager is None:
+            return
+
+        meta_data = self._build_episode_metadata(validator, validator_output)
+        if not meta_data:
+            return
+
+        num_envs = getattr(env, "num_envs", 1)
+        meta_dict: dict[str, Any] | list[dict[str, Any]]
+        if num_envs > 1:
+            # TODO: support meta_data for multi env
+            meta_dict = [copy.deepcopy(meta_data) for _ in range(num_envs)]
+        else:
+            meta_dict = meta_data
+
+        record_manager.set_episode_user_data({"meta_dict": meta_dict})
+        record_manager.record_pre_reset()
+
     def _run_episode(
         self,
         env: IsaacManagerBasedEnv,
@@ -324,6 +388,7 @@ class Evaluator:
                 break
 
         validator.set_final_state(env.scene)
+        self._record_episode_metadata(env, validator, validator_output)
 
         return EpisodeResult(
             seed=seed,

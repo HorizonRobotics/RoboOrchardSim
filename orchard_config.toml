@@ -1,2 +1,2 @@
 [build]
-dependencies = ["robo_orchard_core"]
+dependencies = ["robo_orchard_core", "robo_orchard_schemas"]

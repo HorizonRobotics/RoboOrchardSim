@@ -27,6 +27,10 @@ from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
 from robo_orchard_sim.envs.managers.events.pose_reset import (
     PoseResetTermCfg,
 )
+from robo_orchard_sim.envs.managers.record import (
+    RecordTermBaseCfg,
+)
+from robo_orchard_sim.envs.managers.record.mcap import McapDictTermCfg
 from robo_orchard_sim.orchard_env.assets import ObjectSpec
 from robo_orchard_sim.orchard_env.tasks.task_base import (
     TaskAssetsBase,
@@ -105,6 +109,17 @@ class PlaceA2BTask(TaskBase):
                 ),
             }
         )
+
+    def get_record_terms(self) -> dict[str, RecordTermBaseCfg]:
+        return {
+            "meta_dict_term": McapDictTermCfg(
+                topic="/meta_data",
+                fps=1.0,
+                # Use the task-level metadata record key contract.
+                key=TaskBase.EPISODE_META_RECORD_KEY,
+                record_mode="once",
+            )
+        }
 
     def build_validator(self) -> Validator:
         """Build the task validator for place-a2b evaluation.

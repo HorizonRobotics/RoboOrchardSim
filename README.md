@@ -29,7 +29,7 @@ Installation consists of four steps:
 1. **Prepare assets** — download simulation data from Hugging Face
 2. **Set up environment** — pull/build the Docker image, or install prerequisites locally
 3. **Launch container** — start with GPU and X11 forwarding, then register the Vulkan ICD
-4. **Install package** — install `robo_orchard_sim` in editable mode and pin the protobuf version
+4. **Install package** — install `robo_orchard_sim` in editable mode with the repository bootstrap flow
 
 #### Prepare Assets
 
@@ -154,24 +154,26 @@ chmod +x /usr/local/bin/base64
 - The image includes Isaac Sim, Isaac Lab, and cuRobo, so users must follow the
   applicable NVIDIA software terms.
 
-After cloning the repository, install the package from the repository root:
+After cloning the repository, install the package from the repository root
+with the repository `Makefile`:
 
 ```bash
 git clone <your-repo-url> robo_orchard_sim
 cd robo_orchard_sim
-python3 -m pip install -e .
-```
-
-You can also install it with the repository `Makefile`:
-
-```bash
 make install-editable
 ```
 
-Reinstall protobuf with the compatible version:
+The `make install-editable` target first bootstraps the runtime dependency
+combination required by this repository: it installs `robo_orchard_sim` with
+normal dependency resolution first, then reapplies the explicit versions from
+[`scm/install_constraints.txt`](scm/install_constraints.txt) so that
+`robo_orchard_schemas==0.2.0` and `protobuf==5.29.5` are present in the final
+runtime environment.
+
+If you need a non-editable install, use:
 
 ```bash
-pip install protobuf==5.29.5
+make install
 ```
 
 ### 2. Development Workflow

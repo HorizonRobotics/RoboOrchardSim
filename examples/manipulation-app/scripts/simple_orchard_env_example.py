@@ -74,6 +74,9 @@ def main() -> None:
     print(f"Task type: {type(place_a2b_env.task).__name__}")
     print(f"Scene asset: {sorted(env_cfg.scene.assets.keys())}")
     print(f"Event terms: {sorted(env_cfg.events.terms.keys())}")
+    if env_cfg.records is not None:
+        print(f"Record terms: {sorted(env_cfg.records.terms.keys())}")
+        print(f"Record dir: {env_cfg.records.file_path}")
 
     env_manager = IsaacEnvContextManager(
         env_cfg,

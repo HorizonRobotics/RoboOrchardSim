@@ -17,6 +17,7 @@
 """Base class for robot embodiment providers."""
 
 from __future__ import annotations
+from collections.abc import Mapping
 
 from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
@@ -26,6 +27,7 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
+from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 
@@ -72,3 +74,7 @@ class EmbodimentBase:
     def get_event_cfg(self) -> EventManagerCfg:
         """Return embodiment event cfg fragment."""
         return EventManagerCfg(terms={})
+
+    def get_record_terms(self) -> Mapping[str, RecordTermBaseCfg]:
+        """Return embodiment record term fragments."""
+        return {}

@@ -45,6 +45,12 @@ from robo_orchard_sim.envs.managers.observations.camera import (
 from robo_orchard_sim.envs.managers.observations.transform_frame import (
     FrameTransformTermCfg,
 )
+from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
+from robo_orchard_sim.envs.managers.record.mcap import (
+    McapImageTermCfg,
+    McapJointsTermCfg,
+    McapTFTermCfg,
+)
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.cfg import (
@@ -54,13 +60,16 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
 
+RENDER_FPS = 30
+ACTION_FPS = 30
+
 
 class DualArmPiperEmbodiment(EmbodimentBase):
     """Dual-arm Piper embodiment for phase0 minimal build path."""
 
     @staticmethod
-    def _get_camera_assets() -> GroupAssetCfg:
-        """Build fresh camera cfgs for each scene assembly."""
+    def _get_camera_asset_map() -> GroupAssetCfg:
+        """Build the camera asset mapping used across the embodiment."""
         from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.camera_cfgs import (  # noqa: E501
             DUALARM_PIPER_LEFT_HAND_CAMERA_CFG,
             DUALARM_PIPER_RIGHT_HAND_CAMERA_CFG,
@@ -68,12 +77,17 @@ class DualArmPiperEmbodiment(EmbodimentBase):
             DUALARM_PIPER_VIS_CAMERA_CFG,
         )
 
-        return GroupAssetCfg(
-            static_camera=DUALARM_PIPER_STATIC_CAMERA_CFG,
-            left_hand_camera=DUALARM_PIPER_LEFT_HAND_CAMERA_CFG,
-            right_hand_camera=DUALARM_PIPER_RIGHT_HAND_CAMERA_CFG,
-            vis_camera=DUALARM_PIPER_VIS_CAMERA_CFG,
-        )
+        return {
+            "static_camera": DUALARM_PIPER_STATIC_CAMERA_CFG,
+            "left_hand_camera": DUALARM_PIPER_LEFT_HAND_CAMERA_CFG,
+            "right_hand_camera": DUALARM_PIPER_RIGHT_HAND_CAMERA_CFG,
+            "vis_camera": DUALARM_PIPER_VIS_CAMERA_CFG,
+        }
+
+    @staticmethod
+    def _get_camera_assets() -> GroupAssetCfg:
+        """Build fresh camera cfgs for each scene assembly."""
+        return GroupAssetCfg(**DualArmPiperEmbodiment._get_camera_asset_map())
 
     @staticmethod
     def _generate_arm_tf_terms(
@@ -118,6 +132,98 @@ class DualArmPiperEmbodiment(EmbodimentBase):
                 ),
             ),
         }
+
+    @staticmethod
+    def _generate_arm_tf_record_terms(
+        arm_prefix: str,
+    ) -> dict[str, McapTFTermCfg]:
+        link_key = f"{arm_prefix}_robot_tf"
+        base_link_key = f"{arm_prefix}_baselink_tf"
+        return {
+            f"{link_key}_term": McapTFTermCfg(
+                topic=(
+                    f"/observation/robot_state/link/{arm_prefix}_link{{id}}/tf"
+                ),
+                fps=ACTION_FPS,
+                key=f"/tf/{link_key}",
+            ),
+            f"{base_link_key}_term": McapTFTermCfg(
+                topic=(
+                    f"/observation/robot_state/link/{arm_prefix}_base_link/tf"
+                ),
+                fps=ACTION_FPS,
+                key=f"/tf/{base_link_key}",
+            ),
+        }
+
+    @classmethod
+    def _generate_camera_tf_terms(
+        cls, robot_scene_name: str
+    ) -> dict[str, FrameTransformTermCfg]:
+        return {
+            f"{camera_name}_tf": FrameTransformTermCfg(
+                asset_cfg=SceneEntityCfg(
+                    name=robot_scene_name,
+                    body_names=["left_base_link"],
+                ),
+                child_asset_cfg=SceneEntityCfg(name=f"cameras/{camera_name}"),
+            )
+            for camera_name in cls._get_camera_asset_map()
+        }
+
+    def _generate_camera_tf_record_terms(self) -> dict[str, McapTFTermCfg]:
+        return {
+            f"{camera_name}_tf": McapTFTermCfg(
+                topic=f"/observation/cameras/{camera_name}/color_image/tf",
+                fps=RENDER_FPS,
+                key=f"/tf/{camera_name}_tf",
+            )
+            for camera_name in self._get_camera_asset_map()
+        }
+
+    def _generate_camera_image_record_terms(
+        self,
+    ) -> dict[str, McapImageTermCfg]:
+        terms: dict[str, McapImageTermCfg] = {}
+        for camera_name in self._get_camera_asset_map():
+            frame_id = f"cameras/{camera_name}"
+            rgb_term_name = f"{camera_name}_rgb"
+            depth_term_name = f"{camera_name}_depth"
+            color_calibration_term_name = f"{camera_name}_color_calib"
+            depth_calibration_term_name = f"{camera_name}_depth_calib"
+            key = f"/camera/{camera_name}_term"
+            topic_base = f"/observation/cameras/{camera_name}"
+
+            terms[rgb_term_name] = McapImageTermCfg(
+                topic=f"{topic_base}/color_image/image_raw",
+                fps=RENDER_FPS,
+                key=key,
+                frame_id=frame_id,
+                mode="rgb",
+            )
+            terms[depth_term_name] = McapImageTermCfg(
+                topic=f"{topic_base}/depth_image/image_raw",
+                fps=RENDER_FPS,
+                key=key,
+                frame_id=frame_id,
+                mode="depth",
+            )
+            terms[color_calibration_term_name] = McapImageTermCfg(
+                topic=f"{topic_base}/color_image/camera_info",
+                fps=RENDER_FPS,
+                key=key,
+                frame_id=frame_id,
+                mode="calibration",
+            )
+            terms[depth_calibration_term_name] = McapImageTermCfg(
+                topic=f"{topic_base}/depth_image/camera_info",
+                fps=RENDER_FPS,
+                key=key,
+                frame_id=frame_id,
+                mode="calibration",
+            )
+
+        return terms
 
     def __init__(
         self,
@@ -225,17 +331,22 @@ class DualArmPiperEmbodiment(EmbodimentBase):
             ),
         }
         if self.enable_cameras:
+            groups["/tf"].terms.update(
+                self._generate_camera_tf_terms(
+                    robot_scene_name=robot_scene_name
+                )
+            )
             groups["/camera"] = ObservationGroupCfg(
                 terms=dict(
-                    rgb_camera_term=CameraObservationTermCfg(
+                    static_camera_term=CameraObservationTermCfg(
                         asset_cfg=SceneEntityCfg(name="cameras/static_camera")
                     ),
-                    left_rgb_hand_camera_term=CameraObservationTermCfg(
+                    left_hand_camera_term=CameraObservationTermCfg(
                         asset_cfg=SceneEntityCfg(
                             name="cameras/left_hand_camera"
                         )
                     ),
-                    right_rgb_hand_camera_term=CameraObservationTermCfg(
+                    right_hand_camera_term=CameraObservationTermCfg(
                         asset_cfg=SceneEntityCfg(
                             name="cameras/right_hand_camera"
                         )
@@ -306,3 +417,36 @@ class DualArmPiperEmbodiment(EmbodimentBase):
                 ),
             }
         )
+
+    def get_record_terms(self) -> dict[str, RecordTermBaseCfg]:
+        terms: dict[str, RecordTermBaseCfg] = {
+            "left_joint_term": McapJointsTermCfg(
+                topic="/robot/left/joint_states",
+                fps=ACTION_FPS,
+                position_key="/robot/left_joint_position",
+                velocity_key="/robot/left_joint_velocity",
+                effort_key="/robot/left_joint_effort",
+                joint_name_prefix="left_joint",
+            ),
+            "right_joint_term": McapJointsTermCfg(
+                topic="/robot/right/joint_states",
+                fps=ACTION_FPS,
+                position_key="/robot/right_joint_position",
+                velocity_key="/robot/right_joint_velocity",
+                effort_key="/robot/right_joint_effort",
+                joint_name_prefix="right_joint",
+            ),
+            **self._generate_arm_tf_record_terms(arm_prefix="left"),
+            **self._generate_arm_tf_record_terms(arm_prefix="right"),
+        }
+
+        if not self.enable_cameras:
+            return terms
+
+        terms.update(
+            {
+                **self._generate_camera_tf_record_terms(),
+                **self._generate_camera_image_record_terms(),
+            }
+        )
+        return terms
