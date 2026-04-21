@@ -28,6 +28,9 @@ from robo_orchard_core.utils.config import Config
 from typing_extensions import Literal
 
 if TYPE_CHECKING:
+    from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
+        AssetResolver,
+    )
     from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
         EmbodimentBase,
     )
@@ -75,6 +78,7 @@ class TaskDefinitionConfig(Config):
     scene: SceneConfig | None = None
     embodiment: EmbodimentConfig | None = None
     instruction: InstructionConfig | None = None
+    asset_configs: dict[str, dict[str, Any]] | None = None
 
 
 def register_scene(
@@ -257,6 +261,33 @@ class TaskDefinition(ABC):
         return cls.instruction
 
     @classmethod
+    def resolve_asset_configs(cls) -> dict[str, dict[str, Any]] | None:
+        """Resolve per-role asset configs from YAML, or None if unset.
+
+        When the task YAML contains an ``asset_configs:`` block, return
+        it as the payload to pass to ``AssetResolver.resolve()``. The
+        dict shape is: ``{role: {filter: ..., name: ..., ...}}``.
+
+        Returning None means the caller must either supply
+        ``asset_configs`` explicitly or fall through to whatever default
+        asset path the concrete ``build()`` defines.
+        """
+        return cls._load_config().asset_configs
+
+    @classmethod
     @abstractmethod
-    def build(cls) -> OrchardEnv:
-        """Build a fresh default orchard env for this task."""
+    def build(
+        cls,
+        resolver: "AssetResolver | None" = None,
+        asset_configs: dict[str, Any] | None = None,
+    ) -> OrchardEnv:
+        """Build a fresh orchard env for this task.
+
+        Args:
+            resolver: Optional ``AssetResolver`` instance. When
+                provided along with ``asset_configs``, subclasses
+                should sample task assets via the resolver instead
+                of constructing hardcoded specs.
+            asset_configs: Optional per-role config dicts consumed
+                by the resolver. See ``AssetResolver.resolve``.
+        """

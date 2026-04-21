@@ -17,9 +17,15 @@
 """Shared task-definition registration helpers."""
 
 from __future__ import annotations
+from typing import TYPE_CHECKING, Any
 
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
 from robo_orchard_sim.task_suite.base import TaskDefinition
+
+if TYPE_CHECKING:
+    from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
+        AssetResolver,
+    )
 
 _TASK_REGISTRY: dict[str, type[TaskDefinition]] = {}
 
@@ -38,8 +44,19 @@ def register_task(
     return task_definition
 
 
-def build_task(task_name: str) -> OrchardEnv:
-    """Build a fresh orchard task lazily from its registered name."""
+def build_task(
+    task_name: str,
+    resolver: "AssetResolver | None" = None,
+    asset_configs: dict[str, Any] | None = None,
+) -> OrchardEnv:
+    """Build a fresh orchard task lazily from its registered name.
+
+    When both ``resolver`` and ``asset_configs`` are provided, the
+    task definition's ``build()`` method is expected to sample assets
+    via the resolver. Pass both or neither — passing only one is
+    equivalent to passing neither (the subclass falls back to its
+    default hardcoded assets).
+    """
     try:
         task_definition = _TASK_REGISTRY[task_name]
     except KeyError as exc:
@@ -47,4 +64,6 @@ def build_task(task_name: str) -> OrchardEnv:
         raise KeyError(
             f"Unknown task name {task_name!r}. Known tasks: {known_tasks}."
         ) from exc
-    return task_definition.build()
+    return task_definition.build(
+        resolver=resolver, asset_configs=asset_configs
+    )

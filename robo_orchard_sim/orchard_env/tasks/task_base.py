@@ -1,6 +1,6 @@
 # Project RoboOrchard
 #
-# Copyright (c) 2024 Horizon Robotics. All Rights Reserved.
+# Copyright (c) 2026 Horizon Robotics. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import field_validator, model_validator
+from pydantic import ConfigDict, field_validator, model_validator
 from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
@@ -40,7 +40,20 @@ if TYPE_CHECKING:
 
 
 class TaskAssetsBase(Config):
-    """Base schema for tasks with required object assets and distractors."""
+    """Base schema for tasks with required object assets and distractors.
+
+    Subclasses declare per-role ObjectSpec fields and list the required
+    ones in ``required_object_fields``. Pydantic enforces presence of
+    required fields and rejects unknown role names (``extra="forbid"``);
+    the upstream resolver only produces ``dict[role, AssetSpec]`` and
+    is unaware of which roles a given task expects.
+    """
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        protected_namespaces=(),
+        extra="forbid",
+    )
 
     required_object_fields: ClassVar[tuple[str, ...]] = ()
 

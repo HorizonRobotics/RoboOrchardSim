@@ -692,7 +692,15 @@ def test_orchard_env_disable_recording_restores_noop_controller(tmp_path):
 
 
 def test_place_a2b_task_definition_builds_record_cfg_when_enabled(tmp_path):
-    orchard_env = PlaceA2BTaskDefinition.build().configure_recording(
+    # PlaceA2BTaskDefinition.build() requires an AssetResolver, which in
+    # turn needs a real asset library. This test only exercises the
+    # recording cfg path, so compose the env manually with fake asset
+    # specs (same scene + embodiment resolution that build() would use).
+    orchard_env = OrchardEnv(
+        scene=PlaceA2BTaskDefinition.resolve_scene(),
+        embodiment=PlaceA2BTaskDefinition.resolve_embodiment(),
+        task=_make_place_a2b_task(),
+    ).configure_recording(
         file_path=str(tmp_path),
         controller=StationaryEpisodeRecordControllerCfg(),
     )

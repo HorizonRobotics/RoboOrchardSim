@@ -14,10 +14,16 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""Public runtime helpers for the task suite."""
+"""Asset resolution layer: registry + splits -> concrete AssetSpec dicts."""
 
-from robo_orchard_sim.task_suite.registry import (
-    build_task,
+from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
+    AssetResolutionError,
+    AssetResolver,
+    AssetResolverError,
 )
 
-__all__ = ["build_task"]
+__all__ = (
+    "AssetResolutionError",
+    "AssetResolver",
+    "AssetResolverError",
+)

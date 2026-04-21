@@ -10,7 +10,40 @@ embodiment:
   type: dualarm_piper
   initial_pos: [0.0, 0.3, 0.0]
 
-
 instruction:
   template: place_a2b_default
   template_mode: raw
+
+# Template consumed by AssetResolver. Top-level keys = role names
+# (must match PlaceA2BTaskAssets fields). Entries with an `anchor`
+# key are distractors; others are targets.
+asset_configs:
+
+  pick:
+    filter:
+      # tags: [graspable]           # AND-match; requires URDF <tags>
+      super_category: ware          # ware / tableware / ornaments / ...
+      category: mug                 # mug / bowl / toothbrush / ...
+      # color: white
+      # shape: cylinder
+      # material: ceramic
+      # size_bucket: medium         # small / medium / large
+    prim_name: pick_object          # runtime scene/prim name
+    # split: seen                   # seen / unseen_category / unseen_instance
+
+  place:
+    filter:
+      super_category: tableware
+      category: bowl
+    prim_name: place_object
+
+  distractors:
+    anchor: pick                    # anchor role (must be a target above)
+    match: [super_category]         # fields equal to anchor's
+    differ: [category]              # fields differing from anchor's
+    # filter:                       # optional absolute filter
+    #   tags: [graspable]
+    min_count: 1                    # fail if pool < min_count
+    max_count: 3                    # sample min(len(pool), max_count)
+    prim_name_prefix: distractor
+    # split: seen

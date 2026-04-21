@@ -27,6 +27,7 @@ dependencies = [
     "isaacsim[all,extscache]==4.5.0",
     "isaaclab==2.0.2",
     "h5py",
+    "pyarrow>=14.0.0",
     "robo_orchard_core==0.4.0",
     "mcap-protobuf-support"
 ]
@@ -95,11 +96,9 @@ avoid-escape = false
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["TID252", "F401"]
-"robo_orchard_sim/cfg_wrappers/*.py" = ["F403"]
 "robo_orchard_sim/cfg_wrappers/**/*.py" = ["F403"]
 "robo_orchard_sim/envs/__init__.py" = ["F403"]
 "robo_orchard_sim/models/spawners/__init__.py" = ["F403"]
-"robo_orchard_sim/sim/*.py" = ["F403"]
 "robo_orchard_sim/sim/**/*.py" = ["F403"]
 "robo_orchard_sim/sim_ctx.py" = ["F403"]
 "robo_orchard_sim/tasks/instructions/registry.py" = ["E501"]
