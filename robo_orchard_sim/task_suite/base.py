@@ -72,6 +72,12 @@ class InstructionConfig(Config):
     template_mode: Literal["raw", "seen", "unseen"] = "raw"
 
 
+class TaskConfig(Config):
+    """Strongly typed task-level configuration loaded from task YAML."""
+
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class TaskDefinitionConfig(Config):
     """Typed task-definition YAML payload."""
 
@@ -79,6 +85,7 @@ class TaskDefinitionConfig(Config):
     embodiment: EmbodimentConfig | None = None
     instruction: InstructionConfig | None = None
     asset_configs: dict[str, dict[str, Any]] | None = None
+    task: TaskConfig | None = None
 
 
 def register_scene(
@@ -197,26 +204,35 @@ class TaskDefinition(ABC):
     scene: ClassVar[str | SceneBase] = "plane_table"
     embodiment: ClassVar[str | EmbodimentBase] = "dualarm_piper"
     instruction: ClassVar[str | InstructionWrapper | None] = None
+    asset: None  # TODO
 
     @classmethod
-    def _load_config(cls) -> TaskDefinitionConfig:
+    def _load_config(
+        cls,
+        config_path: str | None = None,
+    ) -> TaskDefinitionConfig:
         """Load and validate task-definition YAML config."""
-        if cls.config_path is None:
+        path_str = cls.config_path if config_path is None else config_path
+        if path_str is None:
             return TaskDefinitionConfig()
-        path = cls._resolve_config_path()
+        path = cls._resolve_config_path(path_str)
         with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         return TaskDefinitionConfig(**raw)
 
     @classmethod
-    def _config_dir(cls) -> Path | None:
-        if cls.config_path is None:
+    def _config_dir(cls, config_path: str | None = None) -> Path | None:
+        path_str = cls.config_path if config_path is None else config_path
+        if path_str is None:
             return None
-        return cls._resolve_config_path().parent
+        return cls._resolve_config_path(path_str).parent
 
     @classmethod
-    def _resolve_config_path(cls) -> Path:
-        path = Path(cls.config_path)
+    def _resolve_config_path(cls, config_path: str | None = None) -> Path:
+        path_str = cls.config_path if config_path is None else config_path
+        if path_str is None:
+            raise ValueError("config_path is not set.")
+        path = Path(path_str)
         if path.is_absolute():
             return path
         module = sys.modules.get(cls.__module__)
@@ -226,9 +242,9 @@ class TaskDefinition(ABC):
         return path.resolve()
 
     @classmethod
-    def resolve_scene(cls) -> SceneBase:
+    def resolve_scene(cls, config_path: str | None = None) -> SceneBase:
         """Resolve scene from YAML config, falling back to class default."""
-        cfg = cls._load_config().scene
+        cfg = cls._load_config(config_path=config_path).scene
         if cfg is not None:
             return build_scene(cfg)
         if isinstance(cls.scene, str):
@@ -236,9 +252,12 @@ class TaskDefinition(ABC):
         return cls.scene
 
     @classmethod
-    def resolve_embodiment(cls) -> EmbodimentBase:
+    def resolve_embodiment(
+        cls,
+        config_path: str | None = None,
+    ) -> EmbodimentBase:
         """Resolve embodiment from YAML config, falling back to default."""
-        cfg = cls._load_config().embodiment
+        cfg = cls._load_config(config_path=config_path).embodiment
         if cfg is not None:
             return build_embodiment(cfg)
         if isinstance(cls.embodiment, str):
@@ -246,9 +265,12 @@ class TaskDefinition(ABC):
         return cls.embodiment
 
     @classmethod
-    def resolve_instruction(cls) -> InstructionWrapper | None:
+    def resolve_instruction(
+        cls,
+        config_path: str | None = None,
+    ) -> InstructionWrapper | None:
         """Resolve instruction from YAML config (or class attribute)."""
-        cfg = cls._load_config()
+        cfg = cls._load_config(config_path=config_path)
         if cfg.instruction is not None:
             return build_instruction_wrapper(
                 cfg.instruction.template,
@@ -261,7 +283,10 @@ class TaskDefinition(ABC):
         return cls.instruction
 
     @classmethod
-    def resolve_asset_configs(cls) -> dict[str, dict[str, Any]] | None:
+    def resolve_asset_configs(
+        cls,
+        config_path: str | None = None,
+    ) -> dict[str, dict[str, Any]] | None:
         """Resolve per-role asset configs from YAML, or None if unset.
 
         When the task YAML contains an ``asset_configs:`` block, return
@@ -272,22 +297,31 @@ class TaskDefinition(ABC):
         ``asset_configs`` explicitly or fall through to whatever default
         asset path the concrete ``build()`` defines.
         """
-        return cls._load_config().asset_configs
+        return cls._load_config(config_path=config_path).asset_configs
+
+    @classmethod
+    def resolve_task_params(
+        cls,
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Resolve task-level params from YAML config."""
+        cfg = cls._load_config(config_path=config_path).task
+        if cfg is None:
+            return {}
+        return dict(cfg.params)
 
     @classmethod
     @abstractmethod
     def build(
         cls,
         resolver: "AssetResolver | None" = None,
-        asset_configs: dict[str, Any] | None = None,
+        config_path: str | None = None,
     ) -> OrchardEnv:
         """Build a fresh orchard env for this task.
 
         Args:
-            resolver: Optional ``AssetResolver`` instance. When
-                provided along with ``asset_configs``, subclasses
-                should sample task assets via the resolver instead
-                of constructing hardcoded specs.
-            asset_configs: Optional per-role config dicts consumed
-                by the resolver. See ``AssetResolver.resolve``.
+            resolver: Optional ``AssetResolver`` instance used to sample
+                task assets from the task configuration.
+            config_path: Optional YAML path overriding ``cls.config_path``
+                for this build only.
         """

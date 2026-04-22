@@ -17,7 +17,8 @@
 """Tests for TaskDefinition YAML config (asset_configs block).
 
 Covers the resolve_asset_configs() classmethod and sanity-checks the
-shipped place_a2b.yaml so its asset_configs block stays well-formed.
+shipped place-a2b YAML variants so their asset_configs blocks stay
+well-formed.
 """
 
 from __future__ import annotations
@@ -28,6 +29,10 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from robo_orchard_sim.task_suite import (
+    registration as task_registration,
+    registry as task_registry,
+)
 from robo_orchard_sim.task_suite.base import TaskDefinition
 
 
@@ -39,7 +44,7 @@ def _stub_task_def_with_config(yaml_path: str) -> type[TaskDefinition]:
         config_path = yaml_path
 
         @classmethod
-        def build(cls, resolver=None, asset_configs=None):  # pragma: no cover
+        def build(cls, resolver=None, config_path=None):  # pragma: no cover
             raise NotImplementedError
 
     return _Stub
@@ -92,17 +97,24 @@ def test_resolve_asset_configs_returns_none_when_config_path_unset():
         # config_path intentionally left as base class default (None)
 
         @classmethod
-        def build(cls, resolver=None, asset_configs=None):  # pragma: no cover
+        def build(cls, resolver=None, config_path=None):  # pragma: no cover
             raise NotImplementedError
 
     assert _NoConfigTask.resolve_asset_configs() is None
 
 
-def test_place_a2b_yaml_ships_valid_asset_configs():
-    """The shipped place_a2b.yaml must carry a working asset_configs block.
+@pytest.mark.parametrize(
+    "yaml_name",
+    [
+        "place_a2b_easy.yaml",
+        "place_a2b_hard.yaml",
+    ],
+)
+def test_place_a2b_yaml_ships_valid_asset_configs(yaml_name: str):
+    """The shipped place-a2b YAML variants must carry asset_configs.
 
     This test guards against accidental regressions to the YAML shape that
-    `PlaceA2BTaskDefinition.build(resolver=...)` falls back to.
+    `PlaceA2BEasyTaskDefinition.build(resolver=...)` falls back to.
     """
     yaml_path = (
         Path(__file__).resolve().parents[4]
@@ -110,11 +122,12 @@ def test_place_a2b_yaml_ships_valid_asset_configs():
         / "task_suite"
         / "manipulation"
         / "place_a2b"
-        / "place_a2b.yaml"
+        / "configs"
+        / yaml_name
     )
     raw = yaml.safe_load(yaml_path.read_text())
     assert "asset_configs" in raw, (
-        f"place_a2b.yaml at {yaml_path} is missing the asset_configs block"
+        f"{yaml_name} at {yaml_path} is missing the asset_configs block"
     )
     asset_configs = raw["asset_configs"]
     # Keys must match PlaceA2BTaskAssets.required_object_fields
@@ -125,6 +138,41 @@ def test_place_a2b_yaml_ships_valid_asset_configs():
         assert "filter" in entry, f"{role} entry is missing 'filter'"
         assert "prim_name" in entry, f"{role} entry is missing 'prim_name'"
         assert isinstance(entry["filter"], dict)
+
+
+@pytest.mark.parametrize(
+    "yaml_name",
+    [
+        "place_a2b_easy.yaml",
+        "place_a2b_hard.yaml",
+    ],
+)
+def test_place_a2b_yaml_ships_valid_task_pose_range(yaml_name: str):
+    yaml_path = (
+        Path(__file__).resolve().parents[4]
+        / "robo_orchard_sim"
+        / "task_suite"
+        / "manipulation"
+        / "place_a2b"
+        / "configs"
+        / yaml_name
+    )
+    raw = yaml.safe_load(yaml_path.read_text())
+
+    assert "task" in raw, (
+        f"{yaml_name} at {yaml_path} is missing the task block"
+    )
+    params = raw["task"]["params"]
+    assert "pose_range" in params
+    assert "min_separation" in params
+    assert "mode" in params
+    assert params["mode"] == "random_non_overlap"
+    assert params["min_separation"] == 0.03
+    pose_range = params["pose_range"]
+    assert set(pose_range) == {"x", "y", "z", "roll", "pitch", "yaw"}
+    for axis in pose_range.values():
+        assert isinstance(axis, list)
+        assert len(axis) == 2
 
 
 @pytest.mark.parametrize(
@@ -144,3 +192,72 @@ def test_resolve_asset_configs_rejects_malformed_shape(
     cls = _stub_task_def_with_config(str(yaml_path))
     with pytest.raises(ValidationError):
         cls.resolve_asset_configs()
+
+
+def test_registration_build_task_forwards_config_path(monkeypatch) -> None:
+    class _Stub(TaskDefinition):
+        namespace = "_stub_build_task"
+
+        @classmethod
+        def build(cls, resolver=None, config_path=None):  # pragma: no cover
+            del cls, resolver, config_path
+            raise NotImplementedError
+
+    resolver = object()
+    recorded: list[tuple[object, str | None]] = []
+    monkeypatch.setitem(
+        task_registration._TASK_REGISTRY,
+        _Stub.namespace,
+        _Stub,
+    )
+    monkeypatch.setattr(
+        _Stub,
+        "build",
+        classmethod(
+            lambda cls, resolver=None, config_path=None: (
+                recorded.append((resolver, config_path)) or cls
+            )
+        ),
+    )
+
+    built = task_registration.build_task(
+        _Stub.namespace,
+        resolver=resolver,
+        config_path="/tmp/custom.yaml",
+    )
+
+    assert built is _Stub
+    assert recorded == [(resolver, "/tmp/custom.yaml")]
+
+
+def test_registry_build_task_bootstraps_and_forwards_config_path(
+    monkeypatch,
+) -> None:
+    bootstrap_calls: list[str] = []
+    forwarded_calls: list[tuple[str, object, str | None]] = []
+    resolver = object()
+
+    monkeypatch.setattr(
+        task_registry,
+        "_bootstrap_task_definitions",
+        lambda: bootstrap_calls.append("bootstrapped"),
+    )
+    monkeypatch.setattr(
+        task_registry,
+        "_build_task",
+        lambda task_name, resolver=None, config_path=None: (
+            forwarded_calls.append((task_name, resolver, config_path)) or "env"
+        ),
+    )
+
+    built = task_registry.build_task(
+        "place_a2b_easy",
+        resolver=resolver,
+        config_path="/tmp/custom.yaml",
+    )
+
+    assert built == "env"
+    assert bootstrap_calls == ["bootstrapped"]
+    assert forwarded_calls == [
+        ("place_a2b_easy", resolver, "/tmp/custom.yaml")
+    ]

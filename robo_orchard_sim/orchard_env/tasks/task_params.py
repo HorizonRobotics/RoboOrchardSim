@@ -14,14 +14,20 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""Public builders for the place-a2b task suite."""
+"""Reusable task parameter models."""
 
-from robo_orchard_sim.task_suite.manipulation.place_a2b.place_a2b_env import (  # noqa: E501
-    PlaceA2BEasyTaskDefinition,
-    PlaceA2BHardTaskDefinition,
-)
+from __future__ import annotations
+import math
 
-__all__ = [
-    "PlaceA2BEasyTaskDefinition",
-    "PlaceA2BHardTaskDefinition",
-]
+from robo_orchard_core.utils.config import Config
+
+
+class PoseRangeConfig(Config):
+    """Pose sampling ranges shared by manipulation tasks."""
+
+    x: tuple[float, float] = (0.25, 0.55)
+    y: tuple[float, float] = (-0.35, 0.35)
+    z: tuple[float, float] = (0.0, 0.0)
+    roll: tuple[float, float] = (0.0, 0.0)
+    pitch: tuple[float, float] = (0.0, 0.0)
+    yaw: tuple[float, float] = (-math.pi, math.pi)

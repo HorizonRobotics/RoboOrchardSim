@@ -403,7 +403,7 @@ class TestEvaluator:
             tasks=[orchard_env],
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b",
+            task_name="place_a2b_easy",
             seed=seed,
             episode_num=episode_num,
             max_steps=max_steps,
@@ -412,13 +412,13 @@ class TestEvaluator:
 
     def test_cfg_instantiates_evaluator(self) -> None:
         evaluator = EvaluatorCfg(
-            task_name="place_a2b",
+            task_name="place_a2b_easy",
             episode_num=1,
             max_steps=1,
         )()
 
         assert isinstance(evaluator, Evaluator)
-        assert evaluator.cfg.task_name == "place_a2b"
+        assert evaluator.cfg.task_name == "place_a2b_easy"
         assert isinstance(evaluator.cfg.launch, LaunchConfig)
         assert evaluator.cfg.launch.headless is True
         assert evaluator.cfg.launch.enable_cameras is True
@@ -438,7 +438,7 @@ class TestEvaluator:
         )
 
         evaluator = EvaluatorCfg(
-            task_name="place_a2b",
+            task_name="place_a2b_easy",
             episode_num=1,
             max_steps=1,
         )()
@@ -449,7 +449,7 @@ class TestEvaluator:
 
         evaluator._ensure_env()
 
-        assert registry.build_calls == ["place_a2b"]
+        assert registry.build_calls == ["place_a2b_easy"]
         assert _StubLauncher.created[0].kwargs == {
             "headless": True,
             "enable_cameras": True,
@@ -581,7 +581,7 @@ class TestEvaluator:
         assert policy_a.reset_calls == 1
         assert policy_b.reset_calls == 1
         assert len(env.reset_calls) == 2
-        assert registry.build_calls == ["place_a2b"]
+        assert registry.build_calls == ["place_a2b_easy"]
 
     def test_episode_waits_for_scene_to_settle_before_evaluation(
         self,
@@ -603,7 +603,7 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self._patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b",
+            task_name="place_a2b_easy",
             episode_num=1,
             max_steps=1,
             max_settle_steps=3,
@@ -634,7 +634,7 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self._patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b",
+            task_name="place_a2b_easy",
             episode_num=1,
             max_steps=1,
             max_settle_steps=2,
@@ -663,7 +663,7 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self._patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b",
+            task_name="place_a2b_easy",
             episode_num=1,
             max_steps=1,
             max_settle_steps=3,
@@ -688,7 +688,7 @@ class TestEvaluator:
             ],
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b",
+            task_name="place_a2b_easy",
             episode_num=1,
             max_steps=1,
             launch=LaunchConfig(
@@ -713,7 +713,7 @@ class TestEvaluator:
             "enable_cameras": False,
             "virtual_display": True,
         }
-        assert registry.build_calls == ["place_a2b", "place_a2b"]
+        assert registry.build_calls == ["place_a2b_easy", "place_a2b_easy"]
         assert len(_StubLauncher.created) == 1
 
         evaluator.close()
@@ -771,7 +771,7 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self._patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b",
+            task_name="place_a2b_easy",
             episode_num=1,
             max_steps=1,
             seed=7,

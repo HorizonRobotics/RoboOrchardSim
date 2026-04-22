@@ -25,7 +25,7 @@ logs/
 *.pid
 *.log*
 eval_result/
-configs/
+/configs/
 
 # editor and notebook state
 .idea/
@@ -74,4 +74,3 @@ torchelastic*
 *_pb2.py
 
 #agent doc
-

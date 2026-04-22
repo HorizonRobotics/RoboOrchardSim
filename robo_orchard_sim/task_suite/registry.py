@@ -17,7 +17,7 @@
 """Task-suite runtime registry helpers."""
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
 from robo_orchard_sim.task_suite.registration import (
@@ -42,10 +42,8 @@ def _bootstrap_task_definitions() -> None:
 def build_task(
     task_name: str,
     resolver: "AssetResolver | None" = None,
-    asset_configs: dict[str, Any] | None = None,
+    config_path: str | None = None,
 ) -> OrchardEnv:
     """Build a fresh orchard task lazily from its registered name."""
     _bootstrap_task_definitions()
-    return _build_task(
-        task_name, resolver=resolver, asset_configs=asset_configs
-    )
+    return _build_task(task_name, resolver=resolver, config_path=config_path)

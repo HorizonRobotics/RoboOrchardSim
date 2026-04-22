@@ -17,9 +17,10 @@
 """Place-a2b task definition built on ``TaskBase``."""
 
 from __future__ import annotations
-import math
 
 from robo_orchard_core.envs.managers.events import EventManagerCfg
+from robo_orchard_core.utils.config import Config
+from typing_extensions import Literal
 
 from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
@@ -36,12 +37,27 @@ from robo_orchard_sim.orchard_env.tasks.task_base import (
     TaskAssetsBase,
     TaskBase,
 )
+from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
 from robo_orchard_sim.tasks.validators.base import Validator
 from robo_orchard_sim.tasks.validators.checkers import (
     is_within_xy,
     lift,
     reach,
 )
+
+
+class PlaceA2BTaskParams(Config):
+    """Task-level parameters for place-a2b."""
+
+    mode: Literal[
+        "random",
+        "random_non_overlap",
+        "orderly",
+        "default",
+        "drop",
+    ] = "random_non_overlap"
+    pose_range: PoseRangeConfig = PoseRangeConfig()
+    min_separation: float = 0.03
 
 
 class PlaceA2BTaskAssets(TaskAssetsBase):
@@ -65,8 +81,13 @@ class PlaceA2BTaskAssets(TaskAssetsBase):
 class PlaceA2BTask(TaskBase):
     """A generic place-a2b task with one pick object and one place object."""
 
-    def __init__(self, assets: PlaceA2BTaskAssets):
+    def __init__(
+        self,
+        assets: PlaceA2BTaskAssets,
+        params: PlaceA2BTaskParams | None = None,
+    ):
         self.assets = assets
+        self.params = params or PlaceA2BTaskParams()
         flattened_assets = assets.flatten()
         super().__init__(flattened_assets)
 
@@ -92,17 +113,10 @@ class PlaceA2BTask(TaskBase):
                 "random_pose_event": PoseResetTermCfg(
                     asset_cfgs=asset_cfgs,
                     trigger_topic="reset",
-                    mode="random_non_overlap",
-                    pose_range={
-                        "x": [0.25, 0.55],
-                        "y": [-0.35, 0.35],
-                        "z": [0.0, 0.0],
-                        "roll": [0.0, 0.0],
-                        "pitch": [0.0, 0.0],
-                        "yaw": [math.radians(-180.0), math.radians(180.0)],
-                    },
+                    mode=self.params.mode,
+                    pose_range=dict(self.params.pose_range),
                     absolute_sampling=True,
-                    min_separation=0.03,
+                    min_separation=self.params.min_separation,
                     max_retries=256,
                     group_key="manipulation_objects",
                     clear_cross_group_cache=True,

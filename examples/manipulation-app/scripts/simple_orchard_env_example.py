@@ -15,31 +15,36 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""Example: assemble a registry-driven PlaceA2B ``OrchardEnv``.
+"""Example: assemble any registered task as an ``OrchardEnv`` from YAML.
 
-Builds an ``OrchardEnv`` where task assets are sampled from an
-``AssetRegistry`` via an ``AssetResolver``. The task's scene /
-embodiment / instruction and its default ``asset_configs`` live in
-``place_a2b.yaml`` next to the task definition; this script only
-constructs the registry + resolver and delegates to
-``PlaceA2BTaskDefinition.build``.
+Selects the task definition from the task-suite registry by ``--task``
+namespace (e.g. ``place_a2b_easy``, ``place_a2b_hard``, ``pick_category``,
+``pick_attribute``, ``pick_disambiguation``) and builds it through
+``build_task(...)``. The selected task definition reads scene, embodiment,
+instruction, ``asset_configs``, and task params from its default YAML.
+
+``--config`` optionally overrides that YAML for this build only. It does not
+change which task definition is selected, and it does not mutate the
+registered task definition class.
 
 Usage::
 
     # Via env var
     export ORCHARD_ASSET_LIBRARY=test_assets/wuwen_0411_labelled_usd
-    python examples/manipulation-app/scripts/simple_orchard_env_example.py
-
-    # Or via CLI flag
     python examples/manipulation-app/scripts/simple_orchard_env_example.py \\
-        --asset-root test_assets/wuwen_0411_labelled_usd
+        --task place_a2b_easy
+
+    # Use a different registered task
+    python examples/manipulation-app/scripts/simple_orchard_env_example.py \\
+        --task pick_category --asset-root test_assets/wuwen_0411_labelled_usd
+
+    # Override the task's default YAML with a custom one
+    python examples/manipulation-app/scripts/simple_orchard_env_example.py \\
+        --task place_a2b_easy \\
+        --config path/to/my_place_a2b.yaml
 
 First run on a fresh asset root auto-builds ``asset_index.parquet`` in
 the library directory; subsequent runs reuse it.
-
-To customize which assets are sampled, edit the ``asset_configs:``
-block in the task YAML (``robo_orchard_sim/task_suite/manipulation/
-place_a2b/place_a2b.yaml``) — no Python change required.
 """
 
 from __future__ import annotations
@@ -64,17 +69,36 @@ from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
     AssetResolverError,
 )
 from robo_orchard_sim.envs.env_base import IsaacEnvContextManager
-from robo_orchard_sim.task_suite.manipulation.place_a2b import (
-    PlaceA2BTaskDefinition,
+from robo_orchard_sim.task_suite.registry import (
+    build_task,
 )
 
 _ASSET_ROOT_ENV = "ORCHARD_ASSET_LIBRARY"
 
 
-def main() -> None:
-    """Build a registry-driven PlaceA2B env and run reset + a few steps."""
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Create the CLI parser for the task-agnostic orchard env example."""
     env_default = os.environ.get(_ASSET_ROOT_ENV)
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--task",
+        type=str,
+        required=True,
+        help=(
+            "Registered task namespace to build (e.g. pick_category, "
+            "pick_attribute, pick_disambiguation)."
+        ),
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help=(
+            "Optional YAML path overriding the selected task's default "
+            "config_path. Does NOT change which task class is used; "
+            "that is always determined by --task."
+        ),
+    )
     parser.add_argument(
         "--asset-root",
         type=str,
@@ -95,9 +119,27 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=str,
-        default="configs/place_a2b_orchard_env_example.json",
+        default="configs/orchard_env_example.json",
         help="Output JSON path for serialized env cfg.",
     )
+    parser.add_argument(
+        "--enable-recording",
+        action="store_true",
+        help="Enable MCAP recording for the example run.",
+    )
+    parser.add_argument(
+        "--record-dir",
+        type=str,
+        default="logs/records",
+        help="Output directory for MCAP recording files.",
+    )
+    return parser
+
+
+def main() -> None:
+    """Build the OrchardEnv example and optionally validate it at runtime."""
+    parser = build_arg_parser()
+
     args = parser.parse_args()
 
     registry = AssetRegistry(args.asset_root)
@@ -107,16 +149,33 @@ def main() -> None:
         rng=np.random.default_rng(args.seed),
     )
 
+    config_path = None
+    if args.config is not None:
+        config_path = os.path.abspath(args.config)
+        if not os.path.isfile(config_path):
+            raise SystemExit(
+                f"\nERROR: --config path does not exist: {config_path}"
+            )
+
     try:
-        place_a2b_env = PlaceA2BTaskDefinition.build(resolver=resolver)
+        # TODO: Decouple build_task from resolver
+        env = build_task(
+            task_name=args.task,
+            resolver=resolver,
+            config_path=config_path,
+        )
+    except KeyError as exc:
+        raise SystemExit(f"\nERROR: {exc}") from exc
     except AssetResolverError as exc:
         raise SystemExit(
             f"\nERROR resolving assets from registry: {exc}\n"
             f"Check the asset_configs: block in the task YAML, or pass "
-            f"asset_configs=... explicitly."
+            f"a different --config."
         )
+    if args.enable_recording:
+        env.configure_recording(file_path=args.record_dir)
 
-    env_cfg = place_a2b_env.to_isaac_env_cfg()
+    env_cfg = env.to_isaac_env_cfg()
 
     output_dir = os.path.dirname(args.output)
     if output_dir:
@@ -125,11 +184,12 @@ def main() -> None:
     with open(args.output, "w", encoding="utf-8") as f:
         f.write(env_cfg.to_str(format="json", indent=4))
 
-    print("placeA2B OrchardEnv assembled successfully.")
+    print(f"OrchardEnv for task {args.task!r} assembled successfully.")
     print(f"Output: {args.output}")
-    print(f"Scene type: {type(place_a2b_env.scene).__name__}")
-    print(f"Embodiment: {place_a2b_env.embodiment.scene_name}")
-    print(f"Task type: {type(place_a2b_env.task).__name__}")
+    print(f"Config YAML: {config_path or 'task default'}")
+    print(f"Scene type: {type(env.scene).__name__}")
+    print(f"Embodiment: {env.embodiment.scene_name}")
+    print(f"Task type: {type(env.task).__name__}")
     print(f"Scene assets: {sorted(env_cfg.scene.assets.keys())}")
     print(f"Event terms: {sorted(env_cfg.events.terms.keys())}")
     if env_cfg.records is not None:

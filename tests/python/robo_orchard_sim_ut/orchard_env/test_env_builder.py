@@ -70,10 +70,12 @@ from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
 from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
     PlaceA2BTask,
     PlaceA2BTaskAssets,
+    PlaceA2BTaskParams,
 )
 from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
+from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
 from robo_orchard_sim.task_suite.manipulation.place_a2b import (
-    PlaceA2BTaskDefinition,
+    PlaceA2BEasyTaskDefinition,
 )
 from robo_orchard_sim.tasks.validators.base import Validator
 
@@ -328,7 +330,7 @@ def test_asset_spec_with_default_namespace_existing_namespace_preserved():
     assert preserved.namespace == "lights"
 
 
-def test_env_builder_build_with_dummy_components_returns_asset_scene_cfg():
+def test_env_builder_build_groups_assets_by_namespace():
     env_cfg = EnvBuilder(
         scene=DummyScene(),
         embodiment=DummyEmbodiment(),
@@ -338,15 +340,6 @@ def test_env_builder_build_with_dummy_components_returns_asset_scene_cfg():
     assert isinstance(env_cfg.scene, AssetSceneCfg)
     assert env_cfg.scene.num_envs == 4
     assert env_cfg.scene.env_spacing == 3.0
-
-
-def test_env_builder_build_with_dummy_components_groups_assets_by_namespace():
-    env_cfg = EnvBuilder(
-        scene=DummyScene(),
-        embodiment=DummyEmbodiment(),
-        task=DummyTask(),
-    ).build()
-
     assert set(env_cfg.scene.assets) == {
         "lights",
         "objects",
@@ -386,15 +379,6 @@ def _make_place_a2b_task() -> PlaceA2BTask:
     )
 
 
-def test_place_a2b_task_build_validator_returns_pick_and_place_actor_names():
-    validator = _make_place_a2b_task().build_validator()
-
-    assert validator.actors == [
-        "objects/pick_object",
-        "objects/place_object",
-    ]
-
-
 def test_place_a2b_task_build_validator_reports_task_progress_order(
     monkeypatch,
 ):
@@ -417,6 +401,10 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
     robot.set_gripper_positions(left=0.05, right=0.05)
     completed = validator.evaluate(env)
 
+    assert validator.actors == [
+        "objects/pick_object",
+        "objects/place_object",
+    ]
     assert list(initial.metrics["criteria_reached"]) == [
         "reach_pick",
         "lift_pick",
@@ -465,24 +453,6 @@ def test_place_a2b_task_event_cfg_resets_all_objects_via_single_pose_event():
         "objects/distractor_0",
         "objects/distractor_1",
     }
-
-
-def test_place_a2b_task_pose_event_uses_random_non_overlap_placement_mode():
-    task = PlaceA2BTask(
-        assets=PlaceA2BTaskAssets(
-            pick=RigidObjectSpec(
-                name="pick_object",
-                usd_path="/tmp/pick.usd",
-            ),
-            place=RigidObjectSpec(
-                name="place_object",
-                usd_path="/tmp/place.usd",
-            ),
-        )
-    )
-
-    pose_event = task.get_event_cfg().terms["random_pose_event"]
-
     assert pose_event.mode == "random_non_overlap"
 
 
@@ -585,6 +555,47 @@ def test_place_a2b_task_accepts_multiple_distractor_assets():
         "place_distractor_0",
         "place_distractor_1",
     }
+
+
+def test_place_a2b_task_uses_injected_pose_range_for_pose_reset():
+    task = PlaceA2BTask(
+        assets=PlaceA2BTaskAssets(
+            pick=RigidObjectSpec(
+                name="pick_object",
+                usd_path="/tmp/pick.usd",
+            ),
+            place=RigidObjectSpec(
+                name="place_object",
+                usd_path="/tmp/place.usd",
+            ),
+        ),
+        params=PlaceA2BTaskParams(
+            mode="drop",
+            pose_range=PoseRangeConfig(
+                x=(0.1, 0.2),
+                y=(-0.2, 0.4),
+                z=(0.01, 0.02),
+                roll=(0.0, 0.1),
+                pitch=(-0.1, 0.1),
+                yaw=(-1.0, 1.5),
+            ),
+            min_separation=0.07,
+        ),
+    )
+
+    event_cfg = task.get_event_cfg()
+
+    pose_event = event_cfg.terms["random_pose_event"]
+    assert pose_event.mode == "drop"
+    assert pose_event.pose_range == {
+        "x": (0.1, 0.2),
+        "y": (-0.2, 0.4),
+        "z": (0.01, 0.02),
+        "roll": (0.0, 0.1),
+        "pitch": (-0.1, 0.1),
+        "yaw": (-1.0, 1.5),
+    }
+    assert pose_event.min_separation == 0.07
 
 
 def test_place_a2b_task_assets_reject_non_object_pick_or_place():
@@ -692,13 +703,13 @@ def test_orchard_env_disable_recording_restores_noop_controller(tmp_path):
 
 
 def test_place_a2b_task_definition_builds_record_cfg_when_enabled(tmp_path):
-    # PlaceA2BTaskDefinition.build() requires an AssetResolver, which in
+    # PlaceA2BEasyTaskDefinition.build() requires an AssetResolver, which in
     # turn needs a real asset library. This test only exercises the
     # recording cfg path, so compose the env manually with fake asset
     # specs (same scene + embodiment resolution that build() would use).
     orchard_env = OrchardEnv(
-        scene=PlaceA2BTaskDefinition.resolve_scene(),
-        embodiment=PlaceA2BTaskDefinition.resolve_embodiment(),
+        scene=PlaceA2BEasyTaskDefinition.resolve_scene(),
+        embodiment=PlaceA2BEasyTaskDefinition.resolve_embodiment(),
         task=_make_place_a2b_task(),
     ).configure_recording(
         file_path=str(tmp_path),

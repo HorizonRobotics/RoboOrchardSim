@@ -195,3 +195,52 @@ def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
 
     assert isinstance(instruction, InstructionWrapper)
     assert instruction.template_mode == "seen"
+
+
+def test_place_a2b_task_definitions_register_easy_and_hard_namespaces() -> (
+    None
+):
+    from robo_orchard_sim.task_suite.manipulation.place_a2b import (
+        place_a2b_env,
+    )
+
+    assert (
+        place_a2b_env.PlaceA2BEasyTaskDefinition.namespace == "place_a2b_easy"
+    )
+    assert (
+        place_a2b_env.PlaceA2BHardTaskDefinition.namespace == "place_a2b_hard"
+    )
+    assert place_a2b_env.PlaceA2BEasyTaskDefinition.config_path.endswith(
+        "place_a2b_easy.yaml"
+    )
+    assert place_a2b_env.PlaceA2BHardTaskDefinition.config_path.endswith(
+        "place_a2b_hard.yaml"
+    )
+
+
+def test_resolve_task_params_reads_yaml_task_section(
+    tmp_path: Path,
+) -> None:
+    class YamlTaskParamsDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {
+                "task": {
+                    "params": {
+                        "distractor": {
+                            "name": "distractor_object",
+                            "uuid": "toy_001",
+                        }
+                    }
+                }
+            },
+        )
+
+    params = YamlTaskParamsDefinition.resolve_task_params()
+
+    assert params == {
+        "distractor": {
+            "name": "distractor_object",
+            "uuid": "toy_001",
+        }
+    }

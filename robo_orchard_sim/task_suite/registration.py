@@ -17,7 +17,7 @@
 """Shared task-definition registration helpers."""
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
 from robo_orchard_sim.task_suite.base import TaskDefinition
@@ -47,15 +47,12 @@ def register_task(
 def build_task(
     task_name: str,
     resolver: "AssetResolver | None" = None,
-    asset_configs: dict[str, Any] | None = None,
+    config_path: str | None = None,
 ) -> OrchardEnv:
     """Build a fresh orchard task lazily from its registered name.
 
-    When both ``resolver`` and ``asset_configs`` are provided, the
-    task definition's ``build()`` method is expected to sample assets
-    via the resolver. Pass both or neither — passing only one is
-    equivalent to passing neither (the subclass falls back to its
-    default hardcoded assets).
+    ``config_path`` optionally overrides the task definition's default
+    YAML path for this build only.
     """
     try:
         task_definition = _TASK_REGISTRY[task_name]
@@ -64,6 +61,4 @@ def build_task(
         raise KeyError(
             f"Unknown task name {task_name!r}. Known tasks: {known_tasks}."
         ) from exc
-    return task_definition.build(
-        resolver=resolver, asset_configs=asset_configs
-    )
+    return task_definition.build(resolver=resolver, config_path=config_path)
