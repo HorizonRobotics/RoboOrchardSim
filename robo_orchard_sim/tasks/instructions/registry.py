@@ -131,3 +131,22 @@ register_instruction_template(
         ],
     },
 )
+
+register_instruction_template(
+    "pick_default",
+    {
+        "raw": "Pick up {actor1.description}",
+        "seen": [
+            "Pick up {actor1.description}.",
+            "Grab {actor1.description}.",
+            "Lift {actor1.description}.",
+            "Pick {actor1.description} up.",
+            "Grasp {actor1.description}.",
+        ],
+        "unseen": [
+            "Take {actor1.description}.",
+            "Lift the {actor1.description}.",
+            "Pick up the {actor1.description}.",
+        ],
+    },
+)

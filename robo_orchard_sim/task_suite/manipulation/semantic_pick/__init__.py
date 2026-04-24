@@ -1,6 +1,6 @@
 # Project RoboOrchard
 #
-# Copyright (c) 2024 Horizon Robotics. All Rights Reserved.
+# Copyright (c) 2026 Horizon Robotics. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,22 +14,16 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-from robo_orchard_sim.orchard_env.tasks.pick_task import (  # noqa: F401
-    PickAssets,
-    PickTask,
-)
-from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (  # noqa: F401
-    PlaceA2BTask,
-    PlaceA2BTaskAssets,
-)
-from robo_orchard_sim.orchard_env.tasks.task_base import (  # noqa: F401
-    TaskBase,
+"""Public builders for the semantic pick task suite."""
+
+from robo_orchard_sim.task_suite.manipulation.semantic_pick.pick_env import (  # noqa: E501
+    PickAttributeTaskDefinition,
+    PickCategoryTaskDefinition,
+    PickDisambiguationTaskDefinition,
 )
 
 __all__ = [
-    "TaskBase",
-    "PickAssets",
-    "PickTask",
-    "PlaceA2BTaskAssets",
-    "PlaceA2BTask",
+    "PickCategoryTaskDefinition",
+    "PickAttributeTaskDefinition",
+    "PickDisambiguationTaskDefinition",
 ]
