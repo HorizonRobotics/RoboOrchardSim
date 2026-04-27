@@ -20,5 +20,12 @@ from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.cfg import (
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.embodiment import (  # noqa: E501
     DualArmPiperEmbodiment,
 )
+from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.profile import (
+    DUALARM_PIPER_ROBOT_INFO_CFGS,
+)
 
-__all__ = ["DUALARM_PIPER_CFG", "DualArmPiperEmbodiment"]
+__all__ = [
+    "DUALARM_PIPER_CFG",
+    "DUALARM_PIPER_ROBOT_INFO_CFGS",
+    "DualArmPiperEmbodiment",
+]

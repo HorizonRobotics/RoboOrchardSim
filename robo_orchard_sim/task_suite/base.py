@@ -37,6 +37,9 @@ if TYPE_CHECKING:
     from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
     from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
     from robo_orchard_sim.tasks.instructions.base import InstructionWrapper
+    from robo_orchard_sim.tasks.trajs_gen.base_executor import (
+        BaseExecutorCfg,
+    )
 from robo_orchard_sim.tasks.instructions.registry import (
     build_instruction_wrapper,
 )
@@ -325,3 +328,12 @@ class TaskDefinition(ABC):
             config_path: Optional YAML path overriding ``cls.config_path``
                 for this build only.
         """
+
+    @classmethod
+    def build_atomic_action_plan(
+        cls,
+        orchard_env: "OrchardEnv",
+    ) -> list["BaseExecutorCfg"]:
+        """Build the default atomic action plan for this task."""
+        del cls, orchard_env
+        return []

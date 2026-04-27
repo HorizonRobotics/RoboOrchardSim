@@ -16,6 +16,9 @@
 
 """Public builders for the place-a2b task suite."""
 
+from robo_orchard_sim.task_suite.manipulation.place_a2b.action_plan import (
+    build_task_atomic_action_plan,
+)
 from robo_orchard_sim.task_suite.manipulation.place_a2b.place_a2b_env import (  # noqa: E501
     PlaceA2BEasyTaskDefinition,
     PlaceA2BHardTaskDefinition,
@@ -24,4 +27,5 @@ from robo_orchard_sim.task_suite.manipulation.place_a2b.place_a2b_env import (  
 __all__ = [
     "PlaceA2BEasyTaskDefinition",
     "PlaceA2BHardTaskDefinition",
+    "build_task_atomic_action_plan",
 ]

@@ -30,6 +30,9 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
 from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
+from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
+    RobotInfoCfg,
+)
 
 
 class EmbodimentBase:
@@ -78,3 +81,19 @@ class EmbodimentBase:
     def get_record_terms(self) -> Mapping[str, RecordTermBaseCfg]:
         """Return embodiment record term fragments."""
         return {}
+
+    def get_robot_info_cfgs(self) -> Mapping[str, RobotInfoCfg]:
+        """Return robot metadata keyed by manipulator name."""
+        return {}
+
+    def get_robot_info_cfg(self, manipulator_name: str) -> RobotInfoCfg:
+        """Fetch one robot-info config or raise a descriptive error."""
+        robot_info_cfgs = self.get_robot_info_cfgs()
+        if manipulator_name not in robot_info_cfgs:
+            available = ", ".join(sorted(robot_info_cfgs))
+            raise KeyError(
+                f"Manipulator '{manipulator_name}' is not defined for "
+                f"embodiment '{self.scene_name}'. Available manipulators: "
+                f"{available or '<none>'}."
+            )
+        return robot_info_cfgs[manipulator_name]

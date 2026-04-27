@@ -21,7 +21,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from robo_orchard_sim.task_suite.base import TaskDefinition
+from robo_orchard_sim.task_suite.manipulation.place_a2b.action_plan import (
+    build_task_atomic_action_plan,
+)
 from robo_orchard_sim.task_suite.registration import register_task
+from robo_orchard_sim.tasks.trajs_gen.executors.pick import PickExecutorCfg
 
 if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
@@ -73,6 +77,15 @@ class PlaceA2BTaskDefinitionBase(TaskDefinition):
             embodiment=cls.resolve_embodiment(config_path=config_path),
             task=PlaceA2BTask(assets=task_assets, params=task_params),
         )
+
+    @classmethod
+    def build_atomic_action_plan(
+        cls,
+        orchard_env: "OrchardEnv",
+    ) -> list[PickExecutorCfg]:
+        """Build the default atomic action plan for place-a2b."""
+        del cls
+        return build_task_atomic_action_plan(orchard_env)
 
 
 def _make_place_a2b_task_definition_class(

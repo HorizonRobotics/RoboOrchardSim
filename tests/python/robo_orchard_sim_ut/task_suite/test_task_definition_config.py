@@ -230,6 +230,52 @@ def test_registration_build_task_forwards_config_path(monkeypatch) -> None:
     assert recorded == [(resolver, "/tmp/custom.yaml")]
 
 
+def test_task_definition_build_atomic_action_plan_returns_empty_list() -> None:
+    class _Stub(TaskDefinition):
+        namespace = "_stub_empty_plan"
+
+        @classmethod
+        def build(cls, resolver=None, config_path=None):  # pragma: no cover
+            del cls, resolver, config_path
+            raise NotImplementedError
+
+    plan = _Stub.build_atomic_action_plan(object())
+
+    assert plan == []
+
+
+def test_registration_build_task_atomic_action_plan_forwards_to_definition() -> (  # noqa: E501
+    None
+):
+    orchard_env = object()
+    returned_plan = [object()]
+    received_envs: list[object] = []
+
+    class _Stub(TaskDefinition):
+        namespace = "_stub_atomic_action_plan"
+
+        @classmethod
+        def build(cls, resolver=None, config_path=None):  # pragma: no cover
+            del cls, resolver, config_path
+            raise NotImplementedError
+
+        @classmethod
+        def build_atomic_action_plan(cls, env):
+            del cls
+            received_envs.append(env)
+            return returned_plan
+
+    task_registration.register_task(_Stub)
+
+    plan = task_registration.build_task_atomic_action_plan(
+        _Stub.namespace,
+        orchard_env=orchard_env,
+    )
+
+    assert plan is returned_plan
+    assert received_envs == [orchard_env]
+
+
 def test_registry_build_task_bootstraps_and_forwards_config_path(
     monkeypatch,
 ) -> None:

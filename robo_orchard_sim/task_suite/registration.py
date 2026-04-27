@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
         AssetResolver,
     )
+    from robo_orchard_sim.tasks.trajs_gen.base_executor import (
+        BaseExecutorCfg,
+    )
 
 _TASK_REGISTRY: dict[str, type[TaskDefinition]] = {}
 
@@ -44,6 +47,17 @@ def register_task(
     return task_definition
 
 
+def _get_task_definition(task_name: str) -> type[TaskDefinition]:
+    """Fetch one registered task definition or raise a descriptive error."""
+    try:
+        return _TASK_REGISTRY[task_name]
+    except KeyError as exc:
+        known_tasks = ", ".join(sorted(_TASK_REGISTRY))
+        raise KeyError(
+            f"Unknown task name {task_name!r}. Known tasks: {known_tasks}."
+        ) from exc
+
+
 def build_task(
     task_name: str,
     resolver: "AssetResolver | None" = None,
@@ -54,11 +68,14 @@ def build_task(
     ``config_path`` optionally overrides the task definition's default
     YAML path for this build only.
     """
-    try:
-        task_definition = _TASK_REGISTRY[task_name]
-    except KeyError as exc:
-        known_tasks = ", ".join(sorted(_TASK_REGISTRY))
-        raise KeyError(
-            f"Unknown task name {task_name!r}. Known tasks: {known_tasks}."
-        ) from exc
+    task_definition = _get_task_definition(task_name)
     return task_definition.build(resolver=resolver, config_path=config_path)
+
+
+def build_task_atomic_action_plan(
+    task_name: str,
+    orchard_env: OrchardEnv,
+) -> list["BaseExecutorCfg"]:
+    """Build the default atomic action plan from a registered task name."""
+    task_definition = _get_task_definition(task_name)
+    return task_definition.build_atomic_action_plan(orchard_env)

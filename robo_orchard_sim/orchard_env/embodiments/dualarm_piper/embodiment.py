@@ -56,8 +56,14 @@ from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.cfg import (
     DUALARM_PIPER_CFG,
 )
+from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.profile import (
+    DUALARM_PIPER_ROBOT_INFO_CFGS,
+)
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
+)
+from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
+    RobotInfoCfg,
 )
 
 RENDER_FPS = 30
@@ -252,6 +258,13 @@ class DualArmPiperEmbodiment(EmbodimentBase):
             return assets
         assets["cameras"] = self._get_camera_assets()
         return assets
+
+    def get_robot_info_cfgs(self) -> dict[str, RobotInfoCfg]:
+        """Return robot profile metadata for traj planning."""
+        return {
+            name: robot_info.with_robot_name(self.scene_name)
+            for name, robot_info in DUALARM_PIPER_ROBOT_INFO_CFGS.items()
+        }
 
     def get_observation_cfg(self) -> ObservationManagerCfg:
         """Return robot state and frame-transform observation groups."""

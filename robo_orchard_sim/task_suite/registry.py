@@ -22,11 +22,15 @@ from typing import TYPE_CHECKING
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
 from robo_orchard_sim.task_suite.registration import (
     build_task as _build_task,
+    build_task_atomic_action_plan as _build_task_atomic_action_plan,
 )
 
 if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
         AssetResolver,
+    )
+    from robo_orchard_sim.tasks.trajs_gen.base_executor import (
+        BaseExecutorCfg,
     )
 
 
@@ -48,3 +52,12 @@ def build_task(
     """Build a fresh orchard task lazily from its registered name."""
     _bootstrap_task_definitions()
     return _build_task(task_name, resolver=resolver, config_path=config_path)
+
+
+def build_task_atomic_action_plan(
+    task_name: str,
+    orchard_env: OrchardEnv,
+) -> list["BaseExecutorCfg"]:
+    """Build a default atomic action plan lazily from task name."""
+    _bootstrap_task_definitions()
+    return _build_task_atomic_action_plan(task_name, orchard_env)

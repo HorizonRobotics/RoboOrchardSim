@@ -17,5 +17,15 @@
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
+from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
+    ManipulatorProfile,
+    ResolvedManipulatorProfile,
+    RobotInfoCfg,
+)
 
-__all__ = ["EmbodimentBase"]
+__all__ = [
+    "EmbodimentBase",
+    "ManipulatorProfile",
+    "RobotInfoCfg",
+    "ResolvedManipulatorProfile",
+]
