@@ -43,6 +43,7 @@ def _meta(**overrides) -> AssetMeta:
         usd_path="",
         urdf_path="",
         interaction_path="",
+        caption_path="",
         tags=frozenset({"graspable"}),
     )
     d.update(overrides)

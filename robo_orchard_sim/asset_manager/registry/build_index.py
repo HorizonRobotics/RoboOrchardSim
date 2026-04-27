@@ -35,7 +35,7 @@ from robo_orchard_sim.asset_manager.registry.urdf_parser import (
     parse_urdf_extra_info,
 )
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 INDEX_FILENAME = "asset_index.parquet"
 
 DEFAULT_CACHE_ROOT = Path("/tmp/.cache/robo_orchard_sim/asset_index")
@@ -79,6 +79,7 @@ _EMPTY_SCHEMA = pa.schema(
         ("usd_path", pa.string()),
         ("urdf_path", pa.string()),
         ("interaction_path", pa.string()),
+        ("caption_path", pa.string()),
         ("tags", pa.list_(pa.string())),
         ("version", pa.string()),
         ("generate_time", pa.string()),
@@ -165,6 +166,7 @@ def _row_from_parsed(
         "usd_path": str(asset_dir / f"{asset_id}.usd"),
         "urdf_path": str(asset_dir / f"{asset_id}.urdf"),
         "interaction_path": str(asset_dir / "interaction.json"),
+        "caption_path": str(asset_dir / "caption_candidates.json"),
         "tags": sorted(parsed.tags),
         "version": parsed.version,
         "generate_time": parsed.generate_time,

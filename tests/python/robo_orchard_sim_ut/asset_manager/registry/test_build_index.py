@@ -90,9 +90,23 @@ def test_parquet_columns_cover_asset_meta(mini_asset_root: Path):
         "usd_path",
         "urdf_path",
         "interaction_path",
+        "caption_path",
         "tags",
     ]:
         assert required in cols, f"missing column {required}"
+
+
+def test_parquet_caption_path_defaults_to_asset_local_json(
+    mini_asset_root: Path,
+):
+    build_asset_index(str(mini_asset_root))
+    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    df = table.to_pandas()
+    row = df[df.asset_id == "apple_001"].iloc[0]
+    expected = (
+        mini_asset_root / "food/fruits/apple_001/caption_candidates.json"
+    )
+    assert row.caption_path == str(expected)
 
 
 def test_box_001_has_both_tags(mini_asset_root: Path):
@@ -163,6 +177,16 @@ def test_duplicate_asset_id_raises(tmp_path: Path, mini_asset_root: Path):
         (dup_dir / f.name).write_text(f.read_text())
     with pytest.raises(DuplicateAssetIdError):
         build_asset_index(str(mini_asset_root))
+
+
+def test_build_index_missing_caption_candidates_still_indexes_asset(
+    mini_asset_root: Path,
+):
+    report = build_asset_index(str(mini_asset_root))
+    assert report.total_indexed == 6
+    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    df = table.to_pandas()
+    assert "apple_001" in set(df.asset_id)
 
 
 # ---------------------------------------------------------------------------

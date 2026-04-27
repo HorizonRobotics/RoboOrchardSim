@@ -17,10 +17,11 @@
 """Evaluator implementation with explicit per-step episode loop."""
 
 from __future__ import annotations
-import copy
+import os
 import warnings
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import torch
 from robo_orchard_core.envs.env_base import EnvStepReturn
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
@@ -33,6 +34,7 @@ from robo_orchard_core.utils.config import (
 from robo_orchard_sim.evaluator.base import EpisodeResult, EvaluationResult
 from robo_orchard_sim.tasks.validators.base import (
     Validator,
+    ValidatorActor,
     ValidatorOutput,
 )
 
@@ -49,10 +51,33 @@ __all__ = [
 ]
 
 
-def _get_task_registry():
+def _get_task_builder():
     from robo_orchard_sim.task_suite import build_task
 
     return build_task
+
+
+def _create_asset_registry(asset_root: str):
+    from robo_orchard_sim.asset_manager.registry import AssetRegistry
+
+    return AssetRegistry(asset_root)
+
+
+def _create_asset_resolver(*, registry_obj: Any, seed: int):
+    """Create the run-scoped resolver used for task assembly.
+
+    The resolver RNG is seeded once per evaluator run. Asset identity
+    selection therefore stays fixed for the run, while per-episode seeds
+    passed to ``env.reset(...)`` only affect runtime reset randomness such as
+    pose variation.
+    """
+    from robo_orchard_sim.asset_manager.resolver import AssetResolver
+
+    return AssetResolver(
+        registry=registry_obj,
+        splits=None,  # TODO: support splits
+        rng=np.random.default_rng(seed),
+    )
 
 
 def _get_isaac_env_context_manager_cls():
@@ -171,6 +196,38 @@ class Evaluator:
             return self._env
         return self._open_env()
 
+    def _build_task_from_cfg(self) -> OrchardEnv:
+        """Build the run-scoped orchard task from evaluator configuration.
+
+        This task is assembled once per evaluator-owned environment. Asset
+        selection happens through the resolver seeded by ``self.cfg.seed``,
+        so asset identity is fixed within one evaluator run. Per-episode
+        seeds only flow into ``env.reset(seed=...)`` and affect reset-time
+        randomness after task assembly.
+        """
+        config_path = self.cfg.task_config_path
+        if config_path is not None:
+            config_path = os.path.abspath(config_path)
+            if not os.path.isfile(config_path):
+                raise FileNotFoundError(
+                    f"task_config_path does not exist: {config_path}"
+                )
+
+        registry_obj = _create_asset_registry(self.cfg.asset_root)
+        resolver = _create_asset_resolver(
+            registry_obj=registry_obj,
+            seed=self.cfg.seed,
+        )
+        task_builder = _get_task_builder()
+        task = task_builder(
+            self.cfg.task_name,
+            resolver=resolver,
+            config_path=config_path,
+        )
+        if self.cfg.enable_recording:
+            task.configure_recording(file_path=self.cfg.record_dir)
+        return task
+
     def _open_env(
         self,
         task: OrchardEnv | None = None,
@@ -178,7 +235,7 @@ class Evaluator:
         self._ensure_launcher()
 
         if task is None:
-            task = _get_task_registry()(self.cfg.task_name)
+            task = self._build_task_from_cfg()
         self._task = task
 
         env_cfg = task.to_isaac_env_cfg()
@@ -209,11 +266,42 @@ class Evaluator:
         self._close_env()
         return self._open_env(task=task)
 
-    def _build_validator(self) -> Validator:
+    def _build_validator_actors(
+        self,
+        scene: Any,
+        actor_names: list[str],
+    ) -> list[ValidatorActor]:
+        """Build validator actor snapshots from the runtime scene."""
+        return [
+            ValidatorActor.from_rigid_object(name, scene[name])
+            for name in actor_names
+        ]
+
+    def _capture_init_state(
+        self,
+        scene: Any,
+        actors: list[ValidatorActor],
+    ) -> None:
+        """Capture initial actor states from the runtime scene."""
+        for actor in actors:
+            actor.capture_init_state(scene[actor.name])
+
+    def _capture_final_state(
+        self,
+        scene: Any,
+        actors: list[ValidatorActor],
+    ) -> None:
+        """Capture final actor states from the runtime scene."""
+        for actor in actors:
+            actor.capture_final_state(scene[actor.name])
+
+    def _build_validator(self, env: IsaacManagerBasedEnv) -> Validator:
         if self._task is None:
             self._ensure_env()
         assert self._task is not None
-        return self._task.task.build_validator()
+        actor_names = self._task.task.get_validator_actor_names()
+        actors = self._build_validator_actors(env.scene, actor_names)
+        return self._task.task.build_validator(actors=actors)
 
     def _normalize_policy(
         self,
@@ -287,6 +375,8 @@ class Evaluator:
         self,
         validator: Validator,
         validator_output: ValidatorOutput,
+        *,
+        env_idx: int = 0,
     ) -> dict[str, Any]:
         # TODO：user can add meata data here
 
@@ -296,23 +386,21 @@ class Evaluator:
 
         meta_data = {
             "init_position": {
-                validator.actor_category[actor]: validator.init_state[
-                    actor
-                ].tolist()
+                actor.name: actor.init_state[env_idx].tolist()
                 for actor in actors
+                if actor.init_state is not None
             },
             "final_position": {
-                validator.actor_category[actor]: validator.final_state[
-                    actor
-                ].tolist()
+                actor.name: actor.final_state[env_idx].tolist()
                 for actor in actors
+                if actor.final_state is not None
             },
-            "actor_type": {
-                validator.actor_category[actor]: validator.actor_type[actor]
-                for actor in actors
-            },
-            "actor_uuid": {
-                validator.actor_category[actor]: validator.actor_uuid[actor]
+            "actors": {
+                actor.name: {
+                    "actor_category": actor.category,
+                    "actor_type": actor.actor_type,
+                    "actor_uuid": actor.uuid,
+                }
                 for actor in actors
             },
             "task_success": float(validator_output.success),
@@ -331,17 +419,25 @@ class Evaluator:
         if record_manager is None:
             return
 
-        meta_data = self._build_episode_metadata(validator, validator_output)
-        if not meta_data:
-            return
-
         num_envs = getattr(env, "num_envs", 1)
         meta_dict: dict[str, Any] | list[dict[str, Any]]
         if num_envs > 1:
-            # TODO: support meta_data for multi env
-            meta_dict = [copy.deepcopy(meta_data) for _ in range(num_envs)]
+            meta_dict = [
+                self._build_episode_metadata(
+                    validator,
+                    validator_output,
+                    env_idx=env_idx,
+                )
+                for env_idx in range(num_envs)
+            ]
         else:
-            meta_dict = meta_data
+            meta_dict = self._build_episode_metadata(
+                validator,
+                validator_output,
+            )
+
+        if not meta_dict:
+            return
 
         record_manager.set_episode_user_data({"meta_dict": meta_dict})
         record_manager.record_pre_reset()
@@ -358,9 +454,9 @@ class Evaluator:
         settle_return = self._settle_scene(env)
         observations = settle_return.observations
 
-        validator = self._build_validator()
+        validator = self._build_validator(env)
         validator.reset()
-        validator.set_init_state(env.scene)
+        self._capture_init_state(env.scene, validator.actors)
         policy.reset()
 
         stop_reason = "max_steps"
@@ -387,7 +483,7 @@ class Evaluator:
                 stop_reason = "truncated"
                 break
 
-        validator.set_final_state(env.scene)
+        self._capture_final_state(env.scene, validator.actors)
         self._record_episode_metadata(env, validator, validator_output)
 
         return EpisodeResult(
@@ -403,6 +499,10 @@ class Evaluator:
 class EvaluatorCfg(ClassConfig):
     class_type: ClassType_co[Evaluator] = Evaluator
     task_name: str
+    asset_root: str
+    task_config_path: str | None = None
+    enable_recording: bool = False
+    record_dir: str = "logs/records"
     launch: LaunchConfig = LaunchConfig()
     seed: int = 0
     episode_num: int = 1

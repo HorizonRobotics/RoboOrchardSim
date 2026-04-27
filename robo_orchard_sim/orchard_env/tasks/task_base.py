@@ -36,7 +36,10 @@ from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import AssetSpec, ObjectSpec
 
 if TYPE_CHECKING:
-    from robo_orchard_sim.tasks.validators.base import Validator
+    from robo_orchard_sim.tasks.validators.base import (
+        Validator,
+        ValidatorActor,
+    )
 
 
 class TaskAssetsBase(Config):
@@ -182,7 +185,14 @@ class TaskBase(ABC):
         """
 
     @abstractmethod
-    def build_validator(self) -> "Validator":
+    def get_validator_actor_names(self) -> list[str]:
+        """Return scene names of actors that feed validator metadata."""
+
+    @abstractmethod
+    def build_validator(
+        self,
+        actors: list["ValidatorActor"],
+    ) -> "Validator":
         """Build the task validator used for evaluation.
 
         Returns:

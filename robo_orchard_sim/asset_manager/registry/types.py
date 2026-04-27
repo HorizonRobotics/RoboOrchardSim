@@ -57,6 +57,7 @@ class AssetMeta:
     usd_path: str
     urdf_path: str
     interaction_path: str
+    caption_path: str
 
     # Open-ended capability tags derived from URDF <extra_info><tags>.
     # Callers filter by issubset (AssetFilter.tags).

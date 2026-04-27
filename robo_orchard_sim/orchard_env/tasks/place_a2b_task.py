@@ -38,7 +38,7 @@ from robo_orchard_sim.orchard_env.tasks.task_base import (
     TaskBase,
 )
 from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
-from robo_orchard_sim.tasks.validators.base import Validator
+from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
 from robo_orchard_sim.tasks.validators.checkers import (
     is_within_xy,
     lift,
@@ -135,7 +135,14 @@ class PlaceA2BTask(TaskBase):
             )
         }
 
-    def build_validator(self) -> Validator:
+    def get_validator_actor_names(self) -> list[str]:
+        """Return scene actors used by the place-a2b validator."""
+        return [
+            self.pick_object.scene_name,
+            self.place_object.scene_name,
+        ]
+
+    def build_validator(self, actors: list[ValidatorActor]) -> Validator:
         """Build the task validator for place-a2b evaluation.
 
         Returns:
@@ -144,7 +151,7 @@ class PlaceA2BTask(TaskBase):
         pick_name = self.pick_object.scene_name
         place_name = self.place_object.scene_name
         return Validator(
-            actors=[pick_name, place_name],
+            actors=actors,
             criteria=[
                 reach(pick_name, 0.2),
                 (lift(pick_name, 0.03), [0]),

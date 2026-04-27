@@ -26,6 +26,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
+from robo_orchard_sim.asset_manager.registry.build_index import SCHEMA_VERSION
 from robo_orchard_sim.asset_manager.registry.errors import (
     AssetIndexNotFoundError,
     AssetIndexVersionError,
@@ -111,6 +112,23 @@ def test_schema_version_mismatch_raises(mini_asset_root: Path):
         AssetRegistry(str(mini_asset_root), auto_build_index=False)
 
 
+def test_schema_version_mismatch_auto_rebuilds(mini_asset_root: Path):
+    reg_path = mini_asset_root / "asset_index.parquet"
+    AssetRegistry(str(mini_asset_root))  # build first
+    table = pq.read_table(reg_path)
+    table = table.replace_schema_metadata({b"schema_version": b"999"})
+    pq.write_table(table, reg_path)
+
+    reg = AssetRegistry(str(mini_asset_root), auto_build_index=True)
+    rebuilt = pq.read_table(reg_path)
+
+    assert len(reg) == 6
+    assert rebuilt.schema.metadata is not None
+    assert rebuilt.schema.metadata[b"schema_version"] == (
+        SCHEMA_VERSION.encode()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Lookups
 # ---------------------------------------------------------------------------
@@ -134,6 +152,17 @@ def test_get_by_asset_id(mini_asset_root: Path):
     meta = reg.get_by_asset_id("plate_001")
     assert meta.uuid == "u-plate-001"
     assert meta.tags == frozenset({"container"})
+
+
+def test_get_meta_caption_path_defaults_to_asset_local_json(
+    mini_asset_root: Path,
+):
+    reg = AssetRegistry(str(mini_asset_root))
+    meta = reg.get_by_asset_id("apple_001")
+    expected = (
+        mini_asset_root / "food/fruits/apple_001/caption_candidates.json"
+    )
+    assert meta.caption_path == str(expected)
 
 
 def test_has_methods(mini_asset_root: Path):

@@ -5,7 +5,7 @@ import inspect
 
 import torch
 
-from robo_orchard_sim.tasks.validators.base import Validator
+from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
 
 
 class _DummyObjectData:
@@ -86,7 +86,11 @@ def test_validator_forwards_env_idx_to_criteria():
         return env_idx == 1
 
     validator = Validator(
-        actors=["objects/cube"],
+        actors=[
+            ValidatorActor(
+                name="objects/cube", uuid="", category="", actor_type=""
+            )
+        ],
         criteria=[criterion],
         criteria_name=["criterion"],
     )
@@ -115,7 +119,11 @@ def test_validator_does_not_treat_plain_second_arg_as_env_idx():
             return True
 
     validator = Validator(
-        actors=["objects/cube"],
+        actors=[
+            ValidatorActor(
+                name="objects/cube", uuid="", category="", actor_type=""
+            )
+        ],
         criteria=[_Criterion()],
         criteria_name=["criterion"],
     )
@@ -339,7 +347,11 @@ def test_validator_reports_current_and_cumulative_criteria():
         return state["met"]
 
     validator = Validator(
-        actors=["objects/cube"],
+        actors=[
+            ValidatorActor(
+                name="objects/cube", uuid="", category="", actor_type=""
+            )
+        ],
         criteria=[criterion],
         criteria_name=["criterion"],
     )
@@ -355,7 +367,7 @@ def test_validator_reports_current_and_cumulative_criteria():
     assert second.metrics["criteria_reached"]["criterion"] is True
 
 
-def test_validator_accepts_actor_keys():
+def test_validator_actor_from_rigid_object_captures_cfg_and_pose():
     cube = _DummyObject(
         positions=[(0.0, 0.0, 0.5)],
         default_heights=[0.0],
@@ -363,27 +375,21 @@ def test_validator_accepts_actor_keys():
     cube.cfg.spawn = type(
         "SpawnCfg",
         (),
-        {
-            "semantic_tags": {
-                "class": "cube",
-                "actor_type": "rigid_object",
-                "uuid": "cube-uuid",
-            }
-        },
+        {"semantic_tags": {}},
     )()
-    scene = _DummyScene({"objects/cube": cube})
-    validator = Validator(
-        actors=["objects/cube"],
-        criteria=[lambda _env, env_idx=0: True],
-        criteria_name=["criterion"],
-    )
+    cube.cfg.category = "cube"
+    cube.cfg.actor_type = "rigid_object"
+    cube.cfg.uuid = "cube-uuid"
+    actor = ValidatorActor.from_rigid_object("objects/cube", cube)
+    actor.capture_init_state(cube)
+    actor.capture_final_state(cube)
 
-    validator.set_init_state(scene)
-    validator.set_final_state(scene)
-
-    assert validator.actor_category["objects/cube"] == "cube"
-    assert "objects/cube" in validator.init_state
-    assert "objects/cube" in validator.final_state
+    assert actor.name == "objects/cube"
+    assert actor.category == "cube"
+    assert actor.actor_type == "rigid_object"
+    assert actor.uuid == "cube-uuid"
+    assert actor.init_state is not None
+    assert actor.final_state is not None
 
 
 def test_lift_checker_accepts_plain_identifier():
@@ -410,9 +416,12 @@ def test_gripper_checker_accepts_plain_robot_identifier():
 
 def test_validator_accepts_plain_actor_identifier():
     validator = Validator(
-        actors=["cube"],
+        actors=[
+            ValidatorActor(name="cube", uuid="", category="", actor_type="")
+        ],
         criteria=[lambda _env, env_idx=0: True],
         criteria_name=["criterion"],
     )
 
-    assert validator.actors == ["cube"]
+    assert validator.actor_names == ["cube"]
+    assert [actor.name for actor in validator.actors] == ["cube"]

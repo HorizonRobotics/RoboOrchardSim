@@ -136,7 +136,7 @@ class PlaneTableScene(SceneBase):
                         # ),
                         # mass_props=MassPropertiesCfg(mass=10000),
                     ),
-                    object_elements_path=f"{ORCHARD_ASSET}/PUBLIC_OBJECTS/evaluation_assets/tables/table_001/table_interaction.json",  # noqa: E501
+                    interaction_path=f"{ORCHARD_ASSET}/PUBLIC_OBJECTS/evaluation_assets/tables/table_001/table_interaction.json",  # noqa: E501
                 ),
                 light=AssetBaseCfg(
                     class_type=XFormPrimAsset,

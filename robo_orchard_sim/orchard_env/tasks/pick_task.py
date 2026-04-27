@@ -34,7 +34,7 @@ from robo_orchard_sim.orchard_env.tasks.task_base import (
     TaskBase,
 )
 from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
-from robo_orchard_sim.tasks.validators.base import Validator
+from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
 from robo_orchard_sim.tasks.validators.checkers import lift, reach
 
 
@@ -110,11 +110,15 @@ class PickTask(TaskBase):
             }
         )
 
-    def build_validator(self) -> Validator:
+    def get_validator_actor_names(self) -> list[str]:
+        """Return scene actors used by the pick validator."""
+        return [self.pick_object.scene_name]
+
+    def build_validator(self, actors: list[ValidatorActor]) -> Validator:
         """Build the task validator for pick evaluation."""
         pick_name = self.pick_object.scene_name
         return Validator(
-            actors=[pick_name],
+            actors=actors,
             criteria=[
                 reach(pick_name, 0.2),
                 (lift(pick_name, 0.03), [0]),

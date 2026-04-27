@@ -218,7 +218,7 @@ class AssetResolver:
                 cause=exc,
             ) from exc
 
-        return meta, self._registry.build_spec(meta, name=prim_name)
+        return meta, self._registry.build_spec(meta, name=prim_name, role=role)
 
     def _resolve_split_only_in(
         self,
@@ -318,6 +318,10 @@ class AssetResolver:
 
         prim_name_prefix = entry.get("prim_name_prefix", role)
         return [
-            self._registry.build_spec(meta, name=f"{prim_name_prefix}_{idx}")
+            self._registry.build_spec(
+                meta,
+                name=f"{prim_name_prefix}_{idx}",
+                role=role,
+            )
             for idx, meta in enumerate(metas)
         ]

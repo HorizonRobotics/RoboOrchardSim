@@ -145,7 +145,7 @@ def main() -> None:
     registry = AssetRegistry(args.asset_root)
     resolver = AssetResolver(
         registry=registry,
-        splits=None,
+        splits=None,  # TODO: support splits
         rng=np.random.default_rng(args.seed),
     )
 

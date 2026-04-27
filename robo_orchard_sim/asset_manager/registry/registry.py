@@ -87,6 +87,7 @@ def _row_to_meta(row: dict[str, Any]) -> AssetMeta:
         usd_path=row["usd_path"],
         urdf_path=row["urdf_path"],
         interaction_path=row["interaction_path"],
+        caption_path=row["caption_path"],
         tags=tags,
         version=row.get("version") or "",
         generate_time=row.get("generate_time") or "",
@@ -148,10 +149,41 @@ class AssetRegistry:
                 "rebuild required"
             ) from e
         if version != SCHEMA_VERSION:
-            raise AssetIndexVersionError(
-                f"asset_index.parquet schema_version={version!r} "
-                f"expected {SCHEMA_VERSION!r}; rebuild required"
+            if not auto_build:
+                raise AssetIndexVersionError(
+                    f"asset_index.parquet schema_version={version!r} "
+                    f"expected {SCHEMA_VERSION!r}; rebuild required"
+                )
+            logger.info(
+                "index schema version mismatch at %s: found %s expected %s; "
+                "rebuilding",
+                index_path,
+                version,
+                SCHEMA_VERSION,
             )
+            build_asset_index(
+                str(self._asset_root), output_path=str(index_path)
+            )
+            table = pq.read_table(str(index_path))
+            schema_meta = table.schema.metadata or {}
+            raw_version = schema_meta.get(b"schema_version")
+            if not isinstance(raw_version, bytes):
+                raise AssetIndexVersionError(
+                    "rebuilt asset_index.parquet missing schema_version "
+                    "metadata"
+                )
+            try:
+                version = raw_version.decode()
+            except UnicodeDecodeError as e:
+                raise AssetIndexVersionError(
+                    f"rebuilt asset_index.parquet schema_version not "
+                    f"decodable: {e}"
+                ) from e
+            if version != SCHEMA_VERSION:
+                raise AssetIndexVersionError(
+                    f"rebuilt asset_index.parquet schema_version={version!r} "
+                    f"expected {SCHEMA_VERSION!r}"
+                )
 
         # --- atomic load (Fix 1 + Fix 2) ---
         metas: dict[str, AssetMeta] = {}
@@ -257,8 +289,7 @@ class AssetRegistry:
         meta: AssetMeta,
         *,
         name: str | None = None,
-        scale: tuple[float, float, float] | None = None,
-        tag: str = "",
+        role: str,
     ) -> "RigidObjectSpec":
         """Convert AssetMeta into a RigidObjectSpec.
 
@@ -266,9 +297,10 @@ class AssetRegistry:
         USD + interaction paths, and ``mass`` sourced from the URDF's
         ``<extra_info>`` (a declared asset-library property, not a
         runtime override). Pose (``initial_pos`` / ``initial_rot``) is
-        intentionally left unset — runtime placement is owned by
-        downstream modules (pose-reset events, etc.). ``scale`` / ``tag``
-        are optional programmatic knobs.
+        intentionally left unset; runtime placement is owned by
+        downstream modules (pose-reset events, etc.). Scene-role
+        semantics are injected by the caller via ``role`` and stored as
+        ``RigidObjectSpec.actor_type``.
 
         Imports RigidObjectSpec lazily to keep isaaclab out of the
         registry package's import graph for lightweight callers
@@ -279,10 +311,12 @@ class AssetRegistry:
         return RigidObjectSpec(
             name=name if name is not None else meta.asset_id,
             usd_path=meta.usd_path,
+            caption_path=meta.caption_path,
             interaction_path=meta.interaction_path,
             mass=meta.real_mass,
-            scale=scale,
-            tag=tag,
+            uuid=meta.uuid,
+            category=meta.category,
+            actor_type=role,
         )
 
 

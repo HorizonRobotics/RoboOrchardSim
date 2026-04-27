@@ -102,6 +102,7 @@ def _make(**overrides) -> AssetMeta:
         usd_path="/abs/lemon.usd",
         urdf_path="/abs/lemon.urdf",
         interaction_path="/abs/interaction.json",
+        caption_path="/abs/caption_candidates.json",
         tags=frozenset({"graspable"}),
         version="v0.1.0",
         generate_time="20260403174917",

@@ -77,7 +77,7 @@ from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
 from robo_orchard_sim.task_suite.manipulation.place_a2b import (
     PlaceA2BEasyTaskDefinition,
 )
-from robo_orchard_sim.tasks.validators.base import Validator
+from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
 
 
 def _make_asset_cfg(name: str) -> AssetBaseCfg:
@@ -165,12 +165,15 @@ class DummyTask(TaskBase):
     def get_action_cfg(self) -> ActionManagerCfg:
         return ActionManagerCfg(terms={})
 
-    def build_validator(self) -> Validator:
+    def get_validator_actor_names(self) -> list[str]:
+        return [
+            "objects/pick_object",
+            "objects/place_object",
+        ]
+
+    def build_validator(self, actors: list[ValidatorActor]) -> Validator:
         return Validator(
-            actors=[
-                "objects/pick_object",
-                "objects/place_object",
-            ],
+            actors=actors,
             criteria=[],
             criteria_name=[],
         )
@@ -386,7 +389,22 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
         "robo_orchard_sim.tasks.validators.utils.is_object_center_in_obb",
         lambda *_args, **_kwargs: env.allow_xy_match,
     )
-    validator = _make_place_a2b_task().build_validator()
+    validator = _make_place_a2b_task().build_validator(
+        actors=[
+            ValidatorActor(
+                name="objects/pick_object",
+                uuid="pick-uuid",
+                category="pick",
+                actor_type="pick",
+            ),
+            ValidatorActor(
+                name="objects/place_object",
+                uuid="place-uuid",
+                category="place",
+                actor_type="place",
+            ),
+        ]
+    )
     env = _make_validator_env()
     pick_object = env.scene["objects/pick_object"]
     robot = env.scene["robots/dualarm_piper"]
@@ -401,7 +419,7 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
     robot.set_gripper_positions(left=0.05, right=0.05)
     completed = validator.evaluate(env)
 
-    assert validator.actors == [
+    assert validator.actor_names == [
         "objects/pick_object",
         "objects/place_object",
     ]

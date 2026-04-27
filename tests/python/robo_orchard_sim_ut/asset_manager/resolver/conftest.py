@@ -261,6 +261,7 @@ def _fake_build_spec(
     meta,
     *,
     name=None,
+    role=None,
     mass=None,
     initial_pos=None,
     initial_rot=None,

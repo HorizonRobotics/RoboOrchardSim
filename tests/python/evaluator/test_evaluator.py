@@ -15,11 +15,12 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
+import types
 import warnings
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
-import numpy as np
 import pytest
 import torch
 from robo_orchard_core.envs.env_base import EnvStepReturn
@@ -27,7 +28,10 @@ from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 
 from robo_orchard_sim.evaluator import Evaluator, EvaluatorCfg, LaunchConfig
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
-from robo_orchard_sim.tasks.validators.base import ValidatorOutput
+from robo_orchard_sim.tasks.validators.base import (
+    ValidatorActor,
+    ValidatorOutput,
+)
 
 
 @dataclass
@@ -89,8 +93,14 @@ class _StubPolicyCfg(PolicyConfig[_ConfiguredStubPolicy]):
 
 
 class _StubEnvCfg:
-    def __init__(self, env: "_StubStepEnv") -> None:
+    def __init__(
+        self,
+        env: "_StubStepEnv",
+        *,
+        record_dir: str | None = None,
+    ) -> None:
         self._env = env
+        self.record_dir = record_dir
 
     def __call__(self) -> "_StubStepEnv":
         return self._env
@@ -115,6 +125,10 @@ class _StubEnvContextManager:
 
     def __enter__(self) -> "_StubStepEnv":
         self.enter_calls += 1
+        if self.cfg.record_dir is not None:
+            self.env.record_manager = _StubRecordManager(
+                file_path=self.cfg.record_dir
+            )
         return self.env
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -145,12 +159,75 @@ class _StubStepEnv:
         self._episodes = episodes
         self._episode_index = 0
         self._active_steps: list[_StepState] = []
-        self.scene = object()
+        self.scene = _StubScene(
+            {
+                "actor_a": _StubAsset(
+                    root_state_w=self._root_state(
+                        num_envs=num_envs,
+                        pos=self._positions_per_env(
+                            num_envs=num_envs,
+                            base_pos=(0.0, 0.1, 0.2),
+                        ),
+                    ),
+                    category="apple",
+                    actor_type="fruit",
+                    uuid="uuid-apple",
+                ),
+                "actor_b": _StubAsset(
+                    root_state_w=self._root_state(
+                        num_envs=num_envs,
+                        pos=self._positions_per_env(
+                            num_envs=num_envs,
+                            base_pos=(1.0, 1.1, 1.2),
+                        ),
+                    ),
+                    category="basket",
+                    actor_type="container",
+                    uuid="uuid-basket",
+                ),
+            }
+        )
         self.current_step = 0
         self.num_envs = num_envs
         self.reset_calls: list[dict[str, Any]] = []
         self.step_calls: list[dict[str, Any]] = []
         self.record_manager = None
+
+    def _positions_per_env(
+        self,
+        *,
+        num_envs: int,
+        base_pos: tuple[float, float, float],
+    ) -> tuple[float, float, float] | list[tuple[float, float, float]]:
+        if num_envs == 1:
+            return base_pos
+        return [
+            tuple(coord + env_idx for coord in base_pos)
+            for env_idx in range(num_envs)
+        ]
+
+    def _root_state(
+        self,
+        *,
+        num_envs: int,
+        pos: tuple[float, float, float] | list[tuple[float, float, float]],
+    ) -> torch.Tensor:
+        state = torch.zeros((num_envs, 13), dtype=torch.float64)
+        if isinstance(pos, list):
+            state[:, :3] = torch.tensor(pos, dtype=torch.float64)
+        else:
+            state[:, :3] = torch.tensor(pos, dtype=torch.float64)
+        state[:, 3] = 1.0
+        return state
+
+    def _set_actor_pose(
+        self,
+        name: str,
+        pos: tuple[float, float, float] | list[tuple[float, float, float]],
+    ) -> None:
+        self.scene[name].data = _StubAssetData(
+            root_state_w=self._root_state(num_envs=self.num_envs, pos=pos)
+        )
 
     def reset(self, **kwargs: Any) -> EnvStepReturn:
         self.reset_calls.append(dict(kwargs))
@@ -180,6 +257,20 @@ class _StubStepEnv:
 
         step_state = self._active_steps.pop(0)
         self.current_step += 1
+        self._set_actor_pose(
+            "actor_a",
+            self._positions_per_env(
+                num_envs=self.num_envs,
+                base_pos=(0.3, 0.4, 0.5),
+            ),
+        )
+        self._set_actor_pose(
+            "actor_b",
+            self._positions_per_env(
+                num_envs=self.num_envs,
+                base_pos=(1.3, 1.4, 1.5),
+            ),
+        )
         observations = step_state.observations or {"step": self.current_step}
         return EnvStepReturn(
             observations=observations,
@@ -196,11 +287,25 @@ class _StubStepEnv:
 class _StubAssetData:
     def __init__(self, root_state_w: torch.Tensor) -> None:
         self.root_state_w = root_state_w
+        self.root_pos_w = root_state_w[:, :3]
+        self.root_quat_w = root_state_w[:, 3:7]
 
 
 class _StubAsset:
-    def __init__(self, root_state_w: torch.Tensor) -> None:
+    def __init__(
+        self,
+        root_state_w: torch.Tensor,
+        *,
+        category: str = "unknown",
+        actor_type: str = "unknown",
+        uuid: str = "unknown",
+    ) -> None:
         self.data = _StubAssetData(root_state_w=root_state_w)
+        self.cfg = SimpleNamespace(
+            category=category,
+            actor_type=actor_type,
+            uuid=uuid,
+        )
 
 
 class _StubScene:
@@ -229,6 +334,18 @@ class _StubSettlingEnv(_StubStepEnv):
                 for name, state in settle_states[0].items()
             }
         )
+        self.scene._assets["actor_a"] = _StubAsset(
+            root_state_w=self._root_state(num_envs=1, pos=(0.0, 0.1, 0.2)),
+            category="apple",
+            actor_type="fruit",
+            uuid="uuid-apple",
+        )
+        self.scene._assets["actor_b"] = _StubAsset(
+            root_state_w=self._root_state(num_envs=1, pos=(1.0, 1.1, 1.2)),
+            category="basket",
+            actor_type="container",
+            uuid="uuid-basket",
+        )
 
     def step(self, action: dict[str, Any] | None = None) -> EnvStepReturn:
         if action is None:
@@ -250,45 +367,17 @@ class _StubSettlingEnv(_StubStepEnv):
 
 
 class _StubValidator:
-    def __init__(self, success_step: int) -> None:
+    def __init__(
+        self,
+        success_step: int,
+        actors: list[ValidatorActor],
+    ) -> None:
         self.success_step = success_step
         self.reset_calls = 0
-        self.set_init_state_calls = 0
-        self.set_final_state_calls = 0
-        self.actors = ["actor_a", "actor_b"]
-        self.actor_category = {
-            "actor_a": "apple",
-            "actor_b": "basket",
-        }
-        self.actor_type = {
-            "actor_a": "fruit",
-            "actor_b": "container",
-        }
-        self.actor_uuid = {
-            "actor_a": "uuid-apple",
-            "actor_b": "uuid-basket",
-        }
-        self.init_state: dict[str, np.ndarray] = {}
-        self.final_state: dict[str, np.ndarray] = {}
+        self.actors = list(actors)
 
     def reset(self) -> None:
         self.reset_calls += 1
-
-    def set_init_state(self, scene: object) -> None:
-        del scene
-        self.set_init_state_calls += 1
-        self.init_state = {
-            "actor_a": np.array([0.0, 0.1, 0.2, 1.0, 0.0, 0.0, 0.0]),
-            "actor_b": np.array([1.0, 1.1, 1.2, 1.0, 0.0, 0.0, 0.0]),
-        }
-
-    def set_final_state(self, scene: object) -> None:
-        del scene
-        self.set_final_state_calls += 1
-        self.final_state = {
-            "actor_a": np.array([0.3, 0.4, 0.5, 1.0, 0.0, 0.0, 0.0]),
-            "actor_b": np.array([1.3, 1.4, 1.5, 1.0, 0.0, 0.0, 0.0]),
-        }
 
     def evaluate(self, env: _StubStepEnv, env_idx: int = 0) -> ValidatorOutput:
         del env_idx
@@ -306,10 +395,13 @@ class _StubTask:
     success_steps: list[int]
     _validator_index: int = 0
 
-    def build_validator(self) -> _StubValidator:
+    def get_validator_actor_names(self) -> list[str]:
+        return ["actor_a", "actor_b"]
+
+    def build_validator(self, actors: list[ValidatorActor]) -> _StubValidator:
         success_step = self.success_steps[self._validator_index]
         self._validator_index += 1
-        return _StubValidator(success_step=success_step)
+        return _StubValidator(success_step=success_step, actors=actors)
 
 
 @dataclass
@@ -317,28 +409,52 @@ class _StubOrchardEnv(OrchardEnv):
     env: _StubStepEnv
     success_steps: list[int]
     task: _StubTask = field(init=False)
+    record_dir: str | None = None
 
     def __post_init__(self) -> None:
         self.task = _StubTask(success_steps=self.success_steps)
 
+    def configure_recording(
+        self,
+        file_path: str | None = None,
+        controller: object | None = None,
+    ) -> "_StubOrchardEnv":
+        del controller
+        self.record_dir = file_path
+        return self
+
     def to_isaac_env_cfg(self) -> _StubEnvCfg:
-        return _StubEnvCfg(self.env)
+        return _StubEnvCfg(self.env, record_dir=self.record_dir)
 
 
 class _StubTaskRegistry:
     def __init__(self, tasks: list[_StubOrchardEnv]) -> None:
         self._tasks = list(tasks)
         self.build_calls: list[str] = []
+        self.build_kwargs: list[dict[str, object | None]] = []
 
-    def build_task(self, task_name: str) -> _StubOrchardEnv:
+    def build_task(
+        self,
+        task_name: str,
+        *,
+        resolver: object | None = None,
+        config_path: str | None = None,
+    ) -> _StubOrchardEnv:
         self.build_calls.append(task_name)
+        self.build_kwargs.append(
+            {
+                "resolver": resolver,
+                "config_path": config_path,
+            }
+        )
         if not self._tasks:
             raise RuntimeError("No stub tasks left to build.")
         return self._tasks.pop(0)
 
 
 class _StubRecordManager:
-    def __init__(self) -> None:
+    def __init__(self, file_path: str | None = None) -> None:
+        self.file_path = file_path
         self.episode_user_data_calls: list[dict[str, Any]] = []
         self.record_pre_reset_calls = 0
 
@@ -350,7 +466,7 @@ class _StubRecordManager:
 
 
 class TestEvaluator:
-    def _patch_runtime(
+    def patch_runtime(
         self,
         monkeypatch: pytest.MonkeyPatch,
         *,
@@ -378,12 +494,26 @@ class TestEvaluator:
         )
         monkeypatch.setattr(
             evaluator_module,
-            "_get_task_registry",
+            "_create_asset_registry",
+            lambda asset_root: f"registry:{asset_root}",
+        )
+        monkeypatch.setattr(
+            evaluator_module,
+            "_create_asset_resolver",
+            lambda *, registry_obj, seed: types.SimpleNamespace(
+                registry=registry_obj,
+                splits=None,
+                rng=f"rng:{seed}",
+            ),
+        )
+        monkeypatch.setattr(
+            evaluator_module,
+            "_get_task_builder",
             lambda: registry.build_task,
         )
         return registry
 
-    def _build_evaluator(
+    def build_evaluator(
         self,
         monkeypatch: pytest.MonkeyPatch,
         *,
@@ -398,12 +528,13 @@ class TestEvaluator:
             env=env,
             success_steps=success_steps,
         )
-        registry = self._patch_runtime(
+        registry = self.patch_runtime(
             monkeypatch,
             tasks=[orchard_env],
         )
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             seed=seed,
             episode_num=episode_num,
             max_steps=max_steps,
@@ -413,6 +544,7 @@ class TestEvaluator:
     def test_cfg_instantiates_evaluator(self) -> None:
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
         )()
@@ -432,13 +564,14 @@ class TestEvaluator:
             env=_StubStepEnv(episodes=[[_StepState()]]),
             success_steps=[1],
         )
-        registry = self._patch_runtime(
+        registry = self.patch_runtime(
             monkeypatch,
             tasks=[orchard_env],
         )
 
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
         )()
@@ -468,7 +601,7 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        evaluator, _, _ = self._build_evaluator(
+        evaluator, _, _ = self.build_evaluator(
             monkeypatch,
             episodes=[
                 [_StepState()],
@@ -488,7 +621,7 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        evaluator, _, _ = self._build_evaluator(
+        evaluator, _, _ = self.build_evaluator(
             monkeypatch,
             episodes=[
                 [_StepState()],
@@ -509,7 +642,7 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        evaluator, env, _ = self._build_evaluator(
+        evaluator, env, _ = self.build_evaluator(
             monkeypatch,
             episodes=[
                 [
@@ -542,7 +675,7 @@ class TestEvaluator:
         terminated: bool,
         truncated: bool,
     ) -> None:
-        evaluator, _, _ = self._build_evaluator(
+        evaluator, _, _ = self.build_evaluator(
             monkeypatch,
             episodes=[
                 [_StepState(terminated=terminated, truncated=truncated)]
@@ -560,7 +693,7 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        evaluator, env, registry = self._build_evaluator(
+        evaluator, env, registry = self.build_evaluator(
             monkeypatch,
             episodes=[
                 [_StepState()],
@@ -583,6 +716,81 @@ class TestEvaluator:
         assert len(env.reset_calls) == 2
         assert registry.build_calls == ["place_a2b_easy"]
 
+    def test_evaluate_uses_evaluator_cfg_to_build_task_behavior(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        import robo_orchard_sim.evaluator.evaluator as evaluator_module
+
+        success_task = _StubOrchardEnv(
+            env=_StubStepEnv(episodes=[[_StepState()]]),
+            success_steps=[1],
+        )
+        fallback_task = _StubOrchardEnv(
+            env=_StubStepEnv(episodes=[[_StepState()]]),
+            success_steps=[99],
+        )
+        config_path = tmp_path / "task.yaml"
+        config_path.write_text("task: place_a2b_easy\n", encoding="utf-8")
+
+        self.patch_runtime(monkeypatch, tasks=[fallback_task])
+
+        def build_task(
+            task_name: str,
+            *,
+            resolver: object | None = None,
+            config_path: str | None = None,
+        ) -> _StubOrchardEnv:
+            if (
+                task_name == "place_a2b_easy"
+                and config_path == str(config_path_obj)
+                and getattr(resolver, "registry", None)
+                == "registry:/tmp/assets"
+                and getattr(resolver, "rng", None) == "rng:0"
+            ):
+                return success_task
+            return fallback_task
+
+        config_path_obj = config_path.resolve()
+        monkeypatch.setattr(
+            evaluator_module,
+            "_get_task_builder",
+            lambda: build_task,
+        )
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            task_config_path=str(config_path),
+            episode_num=1,
+            max_steps=1,
+        )()
+
+        result = evaluator.evaluate(_StubPolicy())
+
+        assert result.episode_results[0].stop_reason == "success"
+
+    def test_evaluate_configures_recording_when_enabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        explicit_env = _StubStepEnv(episodes=[[_StepState()]])
+        explicit_task = _StubOrchardEnv(env=explicit_env, success_steps=[1])
+        self.patch_runtime(monkeypatch, tasks=[explicit_task])
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            enable_recording=True,
+            record_dir="logs/eval_records",
+            episode_num=1,
+            max_steps=1,
+        )()
+
+        evaluator.evaluate(_StubPolicy())
+
+        assert explicit_env.record_manager is not None
+        assert explicit_env.record_manager.file_path == "logs/eval_records"
+
     def test_episode_waits_for_scene_to_settle_before_evaluation(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -601,9 +809,10 @@ class TestEvaluator:
             ],
         )
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
-        self._patch_runtime(monkeypatch, tasks=[orchard_env])
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
             max_settle_steps=3,
@@ -632,9 +841,10 @@ class TestEvaluator:
             ],
         )
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
-        self._patch_runtime(monkeypatch, tasks=[orchard_env])
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
             max_settle_steps=2,
@@ -661,9 +871,10 @@ class TestEvaluator:
             ],
         )
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
-        self._patch_runtime(monkeypatch, tasks=[orchard_env])
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
             max_settle_steps=3,
@@ -680,7 +891,7 @@ class TestEvaluator:
     ) -> None:
         first_env = _StubStepEnv(episodes=[[_StepState()]])
         second_env = _StubStepEnv(episodes=[[_StepState()]])
-        registry = self._patch_runtime(
+        registry = self.patch_runtime(
             monkeypatch,
             tasks=[
                 _StubOrchardEnv(env=first_env, success_steps=[1]),
@@ -689,6 +900,7 @@ class TestEvaluator:
         )
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
             launch=LaunchConfig(
@@ -725,7 +937,7 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        evaluator, env, _ = self._build_evaluator(
+        evaluator, env, _ = self.build_evaluator(
             monkeypatch,
             episodes=[[_StepState()]],
             success_steps=[1],
@@ -742,20 +954,24 @@ class TestEvaluator:
             {
                 "meta_dict": {
                     "init_position": {
-                        "apple": [0.0, 0.1, 0.2, 1.0, 0.0, 0.0, 0.0],
-                        "basket": [1.0, 1.1, 1.2, 1.0, 0.0, 0.0, 0.0],
+                        "actor_a": [0.0, 0.1, 0.2, 1.0, 0.0, 0.0, 0.0],
+                        "actor_b": [1.0, 1.1, 1.2, 1.0, 0.0, 0.0, 0.0],
                     },
                     "final_position": {
-                        "apple": [0.3, 0.4, 0.5, 1.0, 0.0, 0.0, 0.0],
-                        "basket": [1.3, 1.4, 1.5, 1.0, 0.0, 0.0, 0.0],
+                        "actor_a": [0.3, 0.4, 0.5, 1.0, 0.0, 0.0, 0.0],
+                        "actor_b": [1.3, 1.4, 1.5, 1.0, 0.0, 0.0, 0.0],
                     },
-                    "actor_type": {
-                        "apple": "fruit",
-                        "basket": "container",
-                    },
-                    "actor_uuid": {
-                        "apple": "uuid-apple",
-                        "basket": "uuid-basket",
+                    "actors": {
+                        "actor_a": {
+                            "actor_category": "apple",
+                            "actor_type": "fruit",
+                            "actor_uuid": "uuid-apple",
+                        },
+                        "actor_b": {
+                            "actor_category": "basket",
+                            "actor_type": "container",
+                            "actor_uuid": "uuid-basket",
+                        },
                     },
                     "task_success": 1.0,
                     "task_progress": 1.0,
@@ -763,15 +979,16 @@ class TestEvaluator:
             }
         ]
 
-    def test_episode_broadcasts_meta_dict_for_multi_env_recording(
+    def test_episode_records_distinct_meta_dicts_for_multi_env(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         env = _StubStepEnv(episodes=[[_StepState()]], num_envs=2)
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
-        self._patch_runtime(monkeypatch, tasks=[orchard_env])
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
             seed=7,
@@ -785,40 +1002,48 @@ class TestEvaluator:
                 "meta_dict": [
                     {
                         "init_position": {
-                            "apple": [0.0, 0.1, 0.2, 1.0, 0.0, 0.0, 0.0],
-                            "basket": [1.0, 1.1, 1.2, 1.0, 0.0, 0.0, 0.0],
+                            "actor_a": [0.0, 0.1, 0.2, 1.0, 0.0, 0.0, 0.0],
+                            "actor_b": [1.0, 1.1, 1.2, 1.0, 0.0, 0.0, 0.0],
                         },
                         "final_position": {
-                            "apple": [0.3, 0.4, 0.5, 1.0, 0.0, 0.0, 0.0],
-                            "basket": [1.3, 1.4, 1.5, 1.0, 0.0, 0.0, 0.0],
+                            "actor_a": [0.3, 0.4, 0.5, 1.0, 0.0, 0.0, 0.0],
+                            "actor_b": [1.3, 1.4, 1.5, 1.0, 0.0, 0.0, 0.0],
                         },
-                        "actor_type": {
-                            "apple": "fruit",
-                            "basket": "container",
-                        },
-                        "actor_uuid": {
-                            "apple": "uuid-apple",
-                            "basket": "uuid-basket",
+                        "actors": {
+                            "actor_a": {
+                                "actor_category": "apple",
+                                "actor_type": "fruit",
+                                "actor_uuid": "uuid-apple",
+                            },
+                            "actor_b": {
+                                "actor_category": "basket",
+                                "actor_type": "container",
+                                "actor_uuid": "uuid-basket",
+                            },
                         },
                         "task_success": 1.0,
                         "task_progress": 1.0,
                     },
                     {
                         "init_position": {
-                            "apple": [0.0, 0.1, 0.2, 1.0, 0.0, 0.0, 0.0],
-                            "basket": [1.0, 1.1, 1.2, 1.0, 0.0, 0.0, 0.0],
+                            "actor_a": [1.0, 1.1, 1.2, 1.0, 0.0, 0.0, 0.0],
+                            "actor_b": [2.0, 2.1, 2.2, 1.0, 0.0, 0.0, 0.0],
                         },
                         "final_position": {
-                            "apple": [0.3, 0.4, 0.5, 1.0, 0.0, 0.0, 0.0],
-                            "basket": [1.3, 1.4, 1.5, 1.0, 0.0, 0.0, 0.0],
+                            "actor_a": [1.3, 1.4, 1.5, 1.0, 0.0, 0.0, 0.0],
+                            "actor_b": [2.3, 2.4, 2.5, 1.0, 0.0, 0.0, 0.0],
                         },
-                        "actor_type": {
-                            "apple": "fruit",
-                            "basket": "container",
-                        },
-                        "actor_uuid": {
-                            "apple": "uuid-apple",
-                            "basket": "uuid-basket",
+                        "actors": {
+                            "actor_a": {
+                                "actor_category": "apple",
+                                "actor_type": "fruit",
+                                "actor_uuid": "uuid-apple",
+                            },
+                            "actor_b": {
+                                "actor_category": "basket",
+                                "actor_type": "container",
+                                "actor_uuid": "uuid-basket",
+                            },
                         },
                         "task_success": 1.0,
                         "task_progress": 1.0,
