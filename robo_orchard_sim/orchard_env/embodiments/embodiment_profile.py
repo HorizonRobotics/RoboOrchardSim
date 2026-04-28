@@ -18,7 +18,15 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+if TYPE_CHECKING:
+    from robo_orchard_sim.controllers.curobo_planner.curobo import (
+        ArticulationJointCuroboTrajPlanner,
+        ArticulationJointCuroboTrajPlannerCfg,
+    )
 
 
 def _to_tuple(values: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
@@ -75,9 +83,17 @@ class ManipulatorProfile:
 class RobotInfoCfg:
     """Executor-facing concrete robot and manipulator configuration."""
 
-    robot_name: str = ""
-    manipulator_name: str = ""
+    robot_name: str
+    manipulator_name: str
+    gripper_open_val: list[float]  # should match number of gripper joints
+    gripper_close_val: list[float]  # should match number of gripper joints
+    t_standard_tcp_to_robot_ee: np.ndarray
+    planner: ArticulationJointCuroboTrajPlannerCfg
     manipulator_profile: ManipulatorProfile | None = None
+
+    def __post_init__(self) -> None:
+        if self.planner is None:
+            raise ValueError("RobotInfoCfg.planner must not be None.")
 
     def with_robot_name(self, robot_name: str) -> "RobotInfoCfg":
         """Return a copy bound to a concrete scene robot name."""
@@ -103,12 +119,28 @@ class RobotInfoCfg:
                 "RobotInfoCfg.manipulator_name must not be empty."
             )
 
+        if context is None:
+            raise ValueError(
+                "RobotInfoCfg planner resolution requires a manipulator "
+                "context."
+            )
+        planner = context.resolve_planner_instance(
+            robot_name=robot_name,
+            manipulator_name=robot_info.manipulator_name,
+            planner_cfg=robot_info.planner,
+            env_nums=env.num_envs,
+        )
+
         articulation = env.scene[robot_name]
         return ResolvedManipulatorProfile.from_articulation(
             articulation=articulation,
             robot_name=robot_name,
             manipulator_name=robot_info.manipulator_name,
             cfg=manipulator_profile,
+            gripper_open_val=robot_info.gripper_open_val,
+            gripper_close_val=robot_info.gripper_close_val,
+            t_standard_tcp_to_robot_ee=robot_info.t_standard_tcp_to_robot_ee,
+            planner=planner,
         )
 
 
@@ -126,8 +158,18 @@ class ResolvedManipulatorProfile:
     body_names: tuple[str, ...]
     ee_body_id: int
     ee_body_name: str
+    planner: ArticulationJointCuroboTrajPlanner
+    gripper_open_val: list[float] | None = None
+    gripper_close_val: list[float] | None = None
+    t_standard_tcp_to_robot_ee: np.ndarray | None = None
     base_body_id: int | None = None
     base_body_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.planner is None:
+            raise ValueError(
+                "ResolvedManipulatorProfile.planner must not be None."
+            )
 
     @property
     def gripper_ids(self) -> tuple[int, ...]:
@@ -146,6 +188,10 @@ class ResolvedManipulatorProfile:
         robot_name: str,
         manipulator_name: str,
         cfg: ManipulatorProfile,
+        planner: ArticulationJointCuroboTrajPlanner,
+        gripper_open_val: list[float] | None = None,
+        gripper_close_val: list[float] | None = None,
+        t_standard_tcp_to_robot_ee: np.ndarray | None = None,
     ) -> "ResolvedManipulatorProfile":
         """Resolve semantic manipulator metadata into runtime indices."""
         joint_ids, joint_names = articulation.find_joints(
@@ -201,6 +247,10 @@ class ResolvedManipulatorProfile:
             body_names=body_names,
             ee_body_id=ee_body_id,
             ee_body_name=ee_body_name,
+            gripper_open_val=gripper_open_val,
+            gripper_close_val=gripper_close_val,
+            t_standard_tcp_to_robot_ee=t_standard_tcp_to_robot_ee,
+            planner=planner,
             base_body_id=base_body_id,
             base_body_name=base_body_name,
         )

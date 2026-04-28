@@ -30,6 +30,10 @@ from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
 )
 
 
+class _FakePlanner:
+    pass
+
+
 class _RobotInfo:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -48,6 +52,7 @@ class _RobotInfo:
             body_names=(),
             ee_body_id=0,
             ee_body_name="link1",
+            planner=cast(Any, _FakePlanner()),
         )
 
 

@@ -51,4 +51,14 @@ def build_task_atomic_action_plan(
             ),
             priority=2,
         ),
+        # MoveExecutorCfg(
+        #     robot_info=left_arm,
+        #     target_pose=[0.38, -0.25, 0.25, 0.265, 0.092, 0.963, 0.0374],
+        #     priority=0,
+        # ),
+        # MoveExecutorCfg(
+        #     robot_info=right_arm,
+        #     target_pose=[0.38, 0.25, 0.25, 0.245, -0.097, 0.963, -0.044],
+        #     priority=0,
+        # ),
     ]

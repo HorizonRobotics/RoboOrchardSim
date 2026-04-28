@@ -14,6 +14,12 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+from dataclasses import replace
+from typing import Any, cast
+
+import numpy as np
+import pytest
+
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.embodiment import (
     DualArmPiperEmbodiment,
 )
@@ -23,6 +29,23 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     RobotInfoCfg,
 )
 from robo_orchard_sim.tasks.trajs_gen.base_executor import BaseExecutorCfg
+from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
+    ManipulatorBindingContext,
+)
+
+
+class _FakePlanner:
+    def __init__(
+        self,
+        cfg: "_FakePlannerCfg | None" = None,
+        env_nums: int = 1,
+    ) -> None:
+        self.cfg = cfg
+        self.env_nums = env_nums
+
+
+class _FakePlannerCfg:
+    class_type = _FakePlanner
 
 
 class _FakeArticulation:
@@ -71,6 +94,7 @@ class _FakeArticulation:
 
 class _FakeEnv:
     def __init__(self):
+        self.num_envs = 1
         self.scene = {"robots/dualarm_piper": _FakeArticulation()}
 
 
@@ -111,6 +135,7 @@ def test_resolved_manipulator_profile_from_articulation_returns_ids():
         robot_name="robots/dualarm_piper",
         manipulator_name="left_arm",
         cfg=cfg,
+        planner=cast(Any, _FakePlanner()),
     )
 
     assert resolved.joint_ids == (0, 1, 2, 3, 4, 5)
@@ -122,11 +147,75 @@ def test_resolved_manipulator_profile_from_articulation_returns_ids():
 def test_base_executor_cfg_resolve_with_robot_info_returns_ids():
     embodiment = DualArmPiperEmbodiment(enable_cameras=False)
     cfg = BaseExecutorCfg(
-        robot_info=embodiment.get_robot_info_cfg("left_arm"),
+        robot_info=replace(
+            embodiment.get_robot_info_cfg("left_arm"),
+            planner=cast(Any, _FakePlannerCfg()),
+        ),
     )
 
-    resolved = cfg.resolve_manipulator_info(env=_FakeEnv())
+    resolved = cfg.resolve_manipulator_info(
+        env=_FakeEnv(),
+        context=ManipulatorBindingContext(),
+    )
 
     assert resolved.robot_name == "robots/dualarm_piper"
     assert resolved.manipulator_name == "left_arm"
     assert resolved.ee_body_name == "left_link6"
+
+
+def test_base_executor_cfg_resolve_with_robot_info_instantiates_planner():
+    embodiment = DualArmPiperEmbodiment(enable_cameras=False)
+    cfg = BaseExecutorCfg(
+        robot_info=replace(
+            embodiment.get_robot_info_cfg("left_arm"),
+            planner=cast(Any, _FakePlannerCfg()),
+        ),
+    )
+
+    resolved = cfg.resolve_manipulator_info(
+        env=_FakeEnv(),
+        context=ManipulatorBindingContext(),
+    )
+
+    assert isinstance(resolved.planner, _FakePlanner)
+
+
+def test_robot_info_cfg_planner_without_context_raises_value_error():
+    embodiment = DualArmPiperEmbodiment(enable_cameras=False)
+    robot_info = embodiment.get_robot_info_cfg("left_arm")
+
+    with pytest.raises(ValueError, match="requires a manipulator context"):
+        robot_info.resolve(env=_FakeEnv())
+
+
+def test_robot_info_cfg_missing_planner_raises_value_error():
+    with pytest.raises(ValueError, match="RobotInfoCfg.planner"):
+        RobotInfoCfg(
+            robot_name="robots/fake",
+            manipulator_name="left_arm",
+            gripper_open_val=[],
+            gripper_close_val=[],
+            t_standard_tcp_to_robot_ee=np.eye(4),
+            manipulator_profile=ManipulatorProfile(
+                arm_joint_names=("joint1",),
+                ee_body_name="ee",
+            ),
+            planner=cast(Any, None),
+        )
+
+
+def test_resolved_manipulator_profile_missing_planner_raises_value_error():
+    with pytest.raises(ValueError, match="ResolvedManipulatorProfile.planner"):
+        ResolvedManipulatorProfile(
+            robot_name="robots/fake",
+            manipulator_name="left_arm",
+            joint_ids=(0,),
+            joint_names=("joint1",),
+            gripper_joint_ids=(),
+            gripper_joint_names=(),
+            body_ids=(),
+            body_names=(),
+            ee_body_id=0,
+            ee_body_name="ee",
+            planner=cast(Any, None),
+        )

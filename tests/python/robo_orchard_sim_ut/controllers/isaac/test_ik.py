@@ -23,7 +23,7 @@ from robo_orchard_core.controllers.differential_ik import (
 from robo_orchard_core.utils import math as math_utils
 
 from robo_orchard_sim.cfg_wrappers.envs.env_cfg import SimulationCfg
-from robo_orchard_sim.controllers.differential_ik import (
+from robo_orchard_sim.controllers.differential_ik.differential_ik import (
     IsaacDifferentialIKControllerCfg,
 )
 from robo_orchard_sim.envs.env_base import (

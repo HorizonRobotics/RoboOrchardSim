@@ -42,7 +42,7 @@ RoboOrchard-SimLauncher = "robo_orchard_sim.launcher:main"
 include-package-data = true
 
 [tool.setuptools.package-data]
-"robo_orchard_sim" = ["**/*.yaml"]
+"robo_orchard_sim" = ["**/*.yaml", "**/*.yml"]
 
 [tool.setuptools.packages.find]
 where = ["."]

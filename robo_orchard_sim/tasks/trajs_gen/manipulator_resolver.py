@@ -47,10 +47,11 @@ ManipulatorPredicate = Callable[[Any], bool]
 
 
 class ManipulatorBindingContext:
-    """Runtime cache for one manipulator binding lifecycle."""
+    """Runtime cache for manipulator bindings and planner instances."""
 
     def __init__(self) -> None:
         self._selected: dict[str, ManipulatorResolver] = {}
+        self._planner_instances: dict[tuple[str, str], Any] = {}
 
     def resolve_once(
         self,
@@ -61,7 +62,23 @@ class ManipulatorBindingContext:
         """Resolve a selector once and reuse it for this binding key."""
         if binding_key not in self._selected:
             self._selected[binding_key] = selector.select(env)
-        return self._selected[binding_key].resolve(env=env)
+        return self._selected[binding_key].resolve(env=env, context=self)
+
+    def resolve_planner_instance(
+        self,
+        robot_name: str,
+        manipulator_name: str,
+        planner_cfg: Any,
+        env_nums: int,
+    ) -> Any:
+        """Create or reuse one planner instance per robot manipulator."""
+        key = (robot_name, manipulator_name)
+        if key not in self._planner_instances:
+            self._planner_instances[key] = planner_cfg.class_type(
+                planner_cfg,
+                env_nums,
+            )
+        return self._planner_instances[key]
 
     def reset(self) -> None:
         """Clear all selected manipulators for the next action sequence."""
@@ -114,7 +131,7 @@ class PredicateManipulatorResolver:
         context: ManipulatorBindingContext | None = None,
     ) -> ResolvedManipulatorProfile:
         """Resolve the selected manipulator against the runtime env."""
-        return self.select(env).resolve(env=env)
+        return self.select(env).resolve(env=env, context=context)
 
 
 class BoundManipulatorResolver:

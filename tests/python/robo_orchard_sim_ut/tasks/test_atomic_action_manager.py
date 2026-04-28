@@ -15,7 +15,8 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
-from typing import Any
+from dataclasses import replace
+from typing import Any, cast
 
 import torch
 
@@ -43,6 +44,10 @@ from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
 from robo_orchard_sim.utils.config import ClassType_co
 
 
+class _FakePlanner:
+    pass
+
+
 class _FakeTrajectoryExecutor(BaseExecutor):
     cfg: "_FakeTrajectoryExecutorCfg"
 
@@ -67,6 +72,7 @@ class _FakeTrajectoryExecutor(BaseExecutor):
             body_names=(),
             ee_body_id=0,
             ee_body_name="ee",
+            planner=cast(Any, _FakePlanner()),
         )
         self.last_resolved_manipulator = resolved
         trajectories = [
@@ -85,6 +91,48 @@ class _FakeTrajectoryExecutorCfg(BaseExecutorCfg):
     manipulator_name: str
     trajectory: list[list[list[float]]]
     success: bool = True
+
+
+class _FakePlannerInstance:
+    def __init__(self, cfg: "_FakePlannerCfg", env_nums: int) -> None:
+        self.cfg = cfg
+        self.env_nums = env_nums
+        cfg.instances.append(self)
+
+
+class _FakePlannerCfg:
+    class_type: ClassType_co[_FakePlannerInstance] = _FakePlannerInstance
+
+    def __init__(self) -> None:
+        self.instances: list[_FakePlannerInstance] = []
+
+
+class _PlannerProbeExecutor(BaseExecutor):
+    cfg: "_PlannerProbeExecutorCfg"
+
+    def plan(
+        self,
+        env: Any,
+        context: ManipulatorBindingContext,
+    ) -> Trajectories:
+        resolved = self.cfg.resolve_manipulator_info(
+            env,
+            context=context,
+        )
+        trajectory = torch.tensor(
+            [[1.0]],
+            dtype=torch.float32,
+            device=env.device,
+        )
+        return Trajectories(
+            trajectories=[trajectory for _ in range(env.num_envs)],
+            success=True,
+            resolved_manipulator=resolved,
+        )
+
+
+class _PlannerProbeExecutorCfg(BaseExecutorCfg):
+    class_type: ClassType_co[_PlannerProbeExecutor] = _PlannerProbeExecutor
 
 
 class _FakeArticulation:
@@ -161,10 +209,17 @@ _PIPER_LEFT_ARM_KEY = "robots/dualarm_piper/left_arm"
 _PIPER_RIGHT_ARM_KEY = "robots/dualarm_piper/right_arm"
 
 
+def _piper_robot_info_with_fake_planner(arm: str):
+    return replace(
+        DUALARM_PIPER_ROBOT_INFO_CFGS[arm],
+        planner=cast(Any, _FakePlannerCfg()),
+    )
+
+
 def test_atomic_action_manager_pick_get_action_returns_correct_trajectory():
     manager = AtomicActionManagerCfg()()
     executor_cfg = PickExecutorCfg(
-        robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
+        robot_info=_piper_robot_info_with_fake_planner("left_arm"),
         pick_object_info=ObjectInfo(
             name="objects/pick_object",
             mode="active",
@@ -189,7 +244,7 @@ def test_atomic_action_manager_pick_get_action_returns_correct_trajectory():
 def test_atomic_action_manager_pick_get_action_state_shows_running_status():
     manager = AtomicActionManagerCfg()()
     executor_cfg = PickExecutorCfg(
-        robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
+        robot_info=_piper_robot_info_with_fake_planner("left_arm"),
         pick_object_info=ObjectInfo(
             name="objects/pick_object",
             mode="active",
@@ -244,8 +299,8 @@ def test_atomic_action_manager_dynamic_resolver_selects_right_action_key():
     manager = AtomicActionManagerCfg()()
     robot_info = PredicateManipulatorResolver(
         predicate=lambda env: False,
-        true_robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-        false_robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["right_arm"],
+        true_robot_info=_piper_robot_info_with_fake_planner("left_arm"),
+        false_robot_info=_piper_robot_info_with_fake_planner("right_arm"),
     )
     executor_cfg = PickExecutorCfg(
         robot_info=robot_info,
@@ -271,8 +326,8 @@ def test_atomic_action_manager_reset_sequence_reselects_bound_arm():
         binding_key="test.pick_move_place_arm",
         selector=PredicateManipulatorResolver(
             predicate=lambda env: env.use_left,
-            true_robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-            false_robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["right_arm"],
+            true_robot_info=_piper_robot_info_with_fake_planner("left_arm"),
+            false_robot_info=_piper_robot_info_with_fake_planner("right_arm"),
         ),
     )
     executor_cfg = PickExecutorCfg(
@@ -377,6 +432,45 @@ def test_atomic_action_manager_same_arm_waits_for_previous_completion():
         [[2.0]],
         [[3.0]],
         [],
+    ]
+
+
+def test_atomic_action_manager_planner_cfg_per_manipulator_shares_instance():
+    manager = AtomicActionManagerCfg()()
+    planner_cfg = _FakePlannerCfg()
+    manager.register(
+        [
+            _PlannerProbeExecutorCfg(
+                robot_info=replace(
+                    DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
+                    planner=planner_cfg,
+                ),
+                priority=1,
+            ),
+            _PlannerProbeExecutorCfg(
+                robot_info=replace(
+                    DUALARM_PIPER_ROBOT_INFO_CFGS["right_arm"],
+                    planner=planner_cfg,
+                ),
+                priority=1,
+            ),
+            _PlannerProbeExecutorCfg(
+                robot_info=replace(
+                    DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
+                    planner=planner_cfg,
+                ),
+                priority=2,
+            ),
+        ]
+    )
+
+    env = _FakeEnv()
+    manager.get_action(env)
+    manager.get_action(env)
+
+    assert [instance.env_nums for instance in planner_cfg.instances] == [
+        env.num_envs,
+        env.num_envs,
     ]
 
 
