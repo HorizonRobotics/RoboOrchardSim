@@ -789,6 +789,17 @@ def test_dualarm_piper_embodiment_get_action_cfg_returns_arm_gripper_terms():
     }
 
 
+def test_dualarm_piper_embodiment_robot_cfg_preserves_joint_defaults():
+    embodiment = DualArmPiperEmbodiment(enable_cameras=False)
+
+    robot_cfg = embodiment.get_assets_cfg()["robots"]["dualarm_piper"]
+
+    assert robot_cfg.init_state.joint_pos["left_joint7"] == 0.05
+    assert robot_cfg.init_state.joint_pos["left_joint8"] == -0.05
+    assert robot_cfg.init_state.joint_pos["right_joint7"] == 0.05
+    assert robot_cfg.init_state.joint_pos["right_joint8"] == -0.05
+
+
 def test_dualarm_piper_embodiment_observation_cfg_returns_robot_tf_groups():
     embodiment = DualArmPiperEmbodiment()
 

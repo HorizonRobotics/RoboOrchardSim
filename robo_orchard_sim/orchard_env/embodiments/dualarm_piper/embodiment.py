@@ -36,6 +36,9 @@ from robo_orchard_sim.envs.managers.actions.articulation.joint_position import (
 from robo_orchard_sim.envs.managers.events.default_reset import (
     DefaultResetTermCfg,
 )
+from robo_orchard_sim.envs.managers.events.joint_state_reset import (
+    JointStateResetTermCfg,
+)
 from robo_orchard_sim.envs.managers.observations.asset_obs import (
     AssetObservationTermCfg,
 )
@@ -72,6 +75,14 @@ ACTION_FPS = 30
 
 class DualArmPiperEmbodiment(EmbodimentBase):
     """Dual-arm Piper embodiment for phase0 minimal build path."""
+
+    GRIPPER_JOINT_NAMES: tuple[str, ...] = (
+        "left_joint7",
+        "left_joint8",
+        "right_joint7",
+        "right_joint8",
+    )
+    """Joint names that are excluded from init-pose noise."""
 
     @staticmethod
     def _get_camera_asset_map() -> GroupAssetCfg:
@@ -238,7 +249,14 @@ class DualArmPiperEmbodiment(EmbodimentBase):
         initial_pos: tuple[float, float, float] = (0.0, 0.0, 0.0),
         initial_rot: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
         enable_cameras: bool = True,
+        init_joint_noise_std: float = 0.0,
+        init_joint_pos: dict[str, float] | None = None,
     ):
+        if init_joint_noise_std < 0.0:
+            raise ValueError(
+                "init_joint_noise_std must be non-negative, "
+                f"got {init_joint_noise_std}."
+            )
         super().__init__(
             robot=ArticulationSpec(
                 name=name,
@@ -246,10 +264,15 @@ class DualArmPiperEmbodiment(EmbodimentBase):
                 template_cfg=DUALARM_PIPER_CFG,
                 initial_pos=initial_pos,
                 initial_rot=initial_rot,
-                joint_pos={".*": 0.0},
             )
         )
         self.enable_cameras = enable_cameras
+        self.init_joint_noise_std = float(init_joint_noise_std)
+        self.init_joint_pos: dict[str, float] | None
+        if init_joint_pos is not None:
+            self.init_joint_pos = dict(init_joint_pos)
+        else:
+            self.init_joint_pos = None
 
     def get_assets_cfg(self) -> dict[str, GroupAssetCfg]:
         """Return robot and optionally camera assets."""
@@ -420,13 +443,44 @@ class DualArmPiperEmbodiment(EmbodimentBase):
         )
 
     def get_event_cfg(self) -> EventManagerCfg:
-        """Return robot-specific embodiment events."""
+        """Return robot-specific embodiment events.
+
+        When ``init_joint_noise_std`` is positive or ``init_joint_pos`` is
+        set, the default reset only restores joint positions/velocities
+        and a follow-up ``JointStateResetTerm`` writes the (optionally
+        Gaussian-perturbed) target joint positions to both the simulator
+        state and the controller targets.
+        """
+        needs_init_joint_state_term = (
+            self.init_joint_noise_std > 0.0 or self.init_joint_pos is not None
+        )
+        if not needs_init_joint_state_term:
+            return EventManagerCfg(
+                terms={
+                    "reset_robot_default": DefaultResetTermCfg(
+                        asset_cfgs=[SceneEntityCfg(name=self.scene_name)],
+                        trigger_topic="reset",
+                        reset_joint_targets=True,
+                    ),
+                }
+            )
+
         return EventManagerCfg(
             terms={
                 "reset_robot_default": DefaultResetTermCfg(
                     asset_cfgs=[SceneEntityCfg(name=self.scene_name)],
                     trigger_topic="reset",
-                    reset_joint_targets=True,
+                    reset_joint_targets=False,
+                ),
+                "reset_robot_init_joint_state": JointStateResetTermCfg(
+                    asset_cfgs=[SceneEntityCfg(name=self.scene_name)],
+                    trigger_topic="reset",
+                    noise_std=self.init_joint_noise_std,
+                    noise_excluded_joint_names=list(self.GRIPPER_JOINT_NAMES),
+                    init_joint_pos=self.init_joint_pos,
+                    clamp_to_joint_limits=True,
+                    write_joint_state=True,
+                    write_joint_position_target=True,
                 ),
             }
         )

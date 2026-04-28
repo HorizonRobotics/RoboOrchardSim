@@ -24,6 +24,9 @@ from robo_orchard_sim.cfg_wrappers.assets_cfg import ArticulationCfg
 from robo_orchard_sim.cfg_wrappers.sim.spawners import UsdFileCfg
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
+from robo_orchard_sim.orchard_env.embodiments.dualarm_piper import (
+    DualArmPiperEmbodiment,
+)
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
@@ -163,6 +166,26 @@ def test_resolve_embodiment_rejects_unknown_registered_name() -> None:
 
     with pytest.raises(ValueError, match="Unknown embodiment"):
         UnknownEmbodimentTaskDefinition.resolve_embodiment()
+
+
+def test_resolve_embodiment_passes_init_joint_pos_from_yaml(
+    tmp_path: Path,
+) -> None:
+    class YamlEmbodimentTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {
+                "embodiment": {
+                    "type": "dualarm_piper",
+                    "init_joint_pos": {"left_joint1": 0.1},
+                }
+            },
+        )
+
+    embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
+
+    assert isinstance(embodiment, DualArmPiperEmbodiment)
+    assert embodiment.init_joint_pos == {"left_joint1": 0.1}
 
 
 def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(

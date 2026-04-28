@@ -65,6 +65,8 @@ class EmbodimentConfig(Config):
 
     type: str
     initial_pos: tuple[float, float, float] | None = None
+    init_joint_noise_std: float | None = None
+    init_joint_pos: dict[str, float] | None = None
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -171,6 +173,10 @@ def build_embodiment(cfg: EmbodimentConfig) -> "EmbodimentBase":
     kwargs = dict(cfg.params)
     if cfg.initial_pos is not None:
         kwargs["initial_pos"] = cfg.initial_pos
+    if cfg.init_joint_noise_std is not None:
+        kwargs["init_joint_noise_std"] = cfg.init_joint_noise_std
+    if cfg.init_joint_pos is not None:
+        kwargs["init_joint_pos"] = cfg.init_joint_pos
     return embodiment_cls(**kwargs)
 
 
@@ -195,6 +201,7 @@ class TaskDefinition(ABC):
         embodiment:
           type: dualarm_piper
           initial_pos: [0.0, 0.3, 0.0]
+          init_joint_noise_std: 0.05
 
         instruction:
           template: place_a2b_default
