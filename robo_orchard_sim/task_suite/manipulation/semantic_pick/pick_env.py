@@ -72,7 +72,11 @@ class PickTaskDefinitionBase(TaskDefinition):
         return OrchardEnv(
             scene=cls.resolve_scene(config_path=config_path),
             embodiment=cls.resolve_embodiment(config_path=config_path),
-            task=PickTask(assets=task_assets, params=task_params),
+            task=PickTask(
+                assets=task_assets,
+                params=task_params,
+                instruction=cls.resolve_instruction(config_path=config_path),
+            ),
         )
 
 

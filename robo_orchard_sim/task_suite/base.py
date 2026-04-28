@@ -74,7 +74,8 @@ class InstructionConfig(Config):
     """Strongly typed instruction configuration loaded from task YAML."""
 
     template: str
-    template_mode: Literal["raw", "seen", "unseen"] = "raw"
+    template_mode: Literal["fixed", "variants"] = "fixed"
+    actor_description_mode: Literal["raw", "seen", "unseen"] = "raw"
 
 
 class TaskConfig(Config):
@@ -205,7 +206,8 @@ class TaskDefinition(ABC):
 
         instruction:
           template: place_a2b_default
-          template_mode: raw
+          template_mode: fixed
+          actor_description_mode: raw
     """
 
     namespace: ClassVar[str]
@@ -285,6 +287,7 @@ class TaskDefinition(ABC):
             return build_instruction_wrapper(
                 cfg.instruction.template,
                 template_mode=cfg.instruction.template_mode,
+                actor_description_mode=cfg.instruction.actor_description_mode,
             )
         if cls.instruction is None:
             return None

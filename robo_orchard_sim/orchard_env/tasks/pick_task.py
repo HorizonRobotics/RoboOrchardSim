@@ -17,6 +17,7 @@
 """Pick task definition built on ``TaskBase``."""
 
 from __future__ import annotations
+from typing import Any
 
 from robo_orchard_core.envs.managers.events import EventManagerCfg
 from robo_orchard_core.utils.config import Config
@@ -34,6 +35,10 @@ from robo_orchard_sim.orchard_env.tasks.task_base import (
     TaskBase,
 )
 from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
+from robo_orchard_sim.tasks.instructions.base import (
+    InstructionActor,
+    InstructionWrapper,
+)
 from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
 from robo_orchard_sim.tasks.validators.checkers import lift, reach
 
@@ -75,11 +80,12 @@ class PickTask(TaskBase):
         self,
         assets: PickAssets,
         params: PickTaskParams | None = None,
+        instruction: InstructionWrapper | None = None,
     ):
         self.assets = assets
         self.params = params or PickTaskParams()
         flattened_assets = assets.flatten()
-        super().__init__(flattened_assets)
+        super().__init__(flattened_assets, instruction=instruction)
 
         self.pick_object = self._assets["pick"]
         self.distractors = [
@@ -128,3 +134,20 @@ class PickTask(TaskBase):
                 "lift_pick",
             ],
         )
+
+    def build_instruction_context(
+        self,
+        env: Any,
+        *,
+        actor_description_seed: int,
+    ) -> dict[str, InstructionActor]:
+        if self.instruction is None:
+            return {}
+
+        return {
+            "actor1": InstructionActor.from_rigid_object(
+                env.scene[self.pick_object.scene_name],
+                actor_description_mode=self.instruction.actor_description_mode,
+                actor_description_seed=actor_description_seed,
+            )
+        }

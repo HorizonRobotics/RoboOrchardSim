@@ -196,9 +196,8 @@ def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
         instruction_registry.INSTRUCTION_TEMPLATE_REGISTRY,
         "yaml_template",
         {
-            "raw": "place {pick} into {place}",
-            "seen": [],
-            "unseen": [],
+            "fixed": "place {pick} into {place}",
+            "variants": [],
         },
     )
 
@@ -209,7 +208,7 @@ def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
             {
                 "instruction": {
                     "template": "yaml_template",
-                    "template_mode": "seen",
+                    "template_mode": "variants",
                 }
             },
         )
@@ -217,7 +216,8 @@ def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
     instruction = YamlInstructionsTaskDefinition.resolve_instruction()
 
     assert isinstance(instruction, InstructionWrapper)
-    assert instruction.template_mode == "seen"
+    assert instruction.template == "yaml_template"
+    assert instruction.template_mode == "variants"
 
 
 def test_place_a2b_task_definitions_register_easy_and_hard_namespaces() -> (

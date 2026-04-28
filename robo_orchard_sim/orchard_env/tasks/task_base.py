@@ -36,6 +36,11 @@ from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import AssetSpec, ObjectSpec
 
 if TYPE_CHECKING:
+    from robo_orchard_sim.envs.manager_based_env import IsaacManagerBasedEnv
+    from robo_orchard_sim.tasks.instructions.base import (
+        InstructionActor,
+        InstructionWrapper,
+    )
     from robo_orchard_sim.tasks.validators.base import (
         Validator,
         ValidatorActor,
@@ -129,11 +134,16 @@ class TaskBase(ABC):
 
     EPISODE_META_RECORD_KEY = "episode/meta_dict"
 
-    def __init__(self, assets: Mapping[str, AssetSpec]):
+    def __init__(
+        self,
+        assets: Mapping[str, AssetSpec],
+        instruction: "InstructionWrapper | None" = None,
+    ):
         self._assets = {
             role: spec.with_default_namespace("objects")
             for role, spec in assets.items()
         }
+        self.instruction = instruction
 
     # ---------------------------------------------------------
     # Scene assets
@@ -198,3 +208,13 @@ class TaskBase(ABC):
         Returns:
             Validator: Task-specific success/progress validator.
         """
+
+    def build_instruction_context(
+        self,
+        env: "IsaacManagerBasedEnv",
+        *,
+        actor_description_seed: int,
+    ) -> Mapping[str, "InstructionActor"]:
+        """Build named instruction actors from the runtime task context."""
+        del env, actor_description_seed
+        return {}

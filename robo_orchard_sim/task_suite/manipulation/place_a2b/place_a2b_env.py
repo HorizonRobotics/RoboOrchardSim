@@ -75,7 +75,11 @@ class PlaceA2BTaskDefinitionBase(TaskDefinition):
         return OrchardEnv(
             scene=cls.resolve_scene(config_path=config_path),
             embodiment=cls.resolve_embodiment(config_path=config_path),
-            task=PlaceA2BTask(assets=task_assets, params=task_params),
+            task=PlaceA2BTask(
+                assets=task_assets,
+                params=task_params,
+                instruction=cls.resolve_instruction(config_path=config_path),
+            ),
         )
 
     @classmethod

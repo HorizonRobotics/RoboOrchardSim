@@ -45,27 +45,39 @@ def register_instruction_template(
     return template
 
 
-def build_instruction_wrapper(
-    template_name: str,
-    template_mode: Literal["raw", "seen", "unseen"] = "raw",
-) -> InstructionWrapper:
-    """Build an instruction wrapper from the registered template name."""
+def get_instruction_template(template_name: str) -> InstructionTemplate:
+    """Return the registered template payload for template_name."""
     try:
-        template = INSTRUCTION_TEMPLATE_REGISTRY[template_name]
+        return INSTRUCTION_TEMPLATE_REGISTRY[template_name]
     except KeyError as exc:
         known_templates = ", ".join(sorted(INSTRUCTION_TEMPLATE_REGISTRY))
         raise ValueError(
             "Unknown instruction template "
             f"{template_name!r}. Known templates: {known_templates}."
         ) from exc
-    return InstructionWrapper(template, template_mode=template_mode)
+
+
+def build_instruction_wrapper(
+    template_name: str,
+    template_mode: Literal["fixed", "variants"] = "fixed",
+    actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
+) -> InstructionWrapper:
+    """Build an instruction wrapper from the registered template name."""
+    get_instruction_template(template_name)
+    return InstructionWrapper(
+        template_name,
+        template_mode=template_mode,
+        actor_description_mode=actor_description_mode,
+    )
 
 
 register_instruction_template(
     "place_a2b_default",
     {
-        "raw": "Pick up {actor1.description} and place in {actor2.description}",
-        "seen": [
+        "fixed": (
+            "Pick up {actor1.description} and place in {actor2.description}"
+        ),
+        "variants": [
             "Grab {actor1.description} using robot arm and place it in {actor2.description}.",
             "Hold {actor1.description} with robot arm and place it into {actor2.description}.",
             "Grab {actor1.description} using robot arm and release it into {actor2.description}.",
@@ -116,8 +128,6 @@ register_instruction_template(
             "Lift {actor1.description} with robot arm and place it into {actor2.description}.",
             "Hold {actor1.description} using robot arm and place it into {actor2.description}.",
             "Hold {actor1.description} using robot arm and place it in {actor2.description}.",
-        ],
-        "unseen": [
             "Use robot arm to lift {actor1.description} and place into {actor2.description}.",
             "Pick up {actor1.description} using robot arm and put in {actor2.description}.",
             "Lift {actor1.description} with robot arm and release it into {actor2.description}.",
@@ -135,15 +145,13 @@ register_instruction_template(
 register_instruction_template(
     "pick_default",
     {
-        "raw": "Pick up {actor1.description}",
-        "seen": [
+        "fixed": "Pick up {actor1.description}",
+        "variants": [
             "Pick up {actor1.description}.",
             "Grab {actor1.description}.",
             "Lift {actor1.description}.",
             "Pick {actor1.description} up.",
             "Grasp {actor1.description}.",
-        ],
-        "unseen": [
             "Take {actor1.description}.",
             "Lift the {actor1.description}.",
             "Pick up the {actor1.description}.",

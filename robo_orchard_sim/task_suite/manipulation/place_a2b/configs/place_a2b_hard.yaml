@@ -30,7 +30,8 @@ embodiment:
 
 instruction:
   template: place_a2b_default
-  template_mode: raw
+  template_mode: variants  # valid values: fixed | variants
+  actor_description_mode: seen  # valid values: raw | seen | unseen
 
 task:
   params:

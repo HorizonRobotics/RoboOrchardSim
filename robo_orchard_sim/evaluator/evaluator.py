@@ -266,12 +266,19 @@ class Evaluator:
         self._close_env()
         return self._open_env(task=task)
 
+    def _get_runtime_task(self) -> Any:
+        """Return the task bound to the current evaluator environment."""
+        if self._task is None:
+            self._ensure_env()
+        assert self._task is not None
+        return self._task.task
+
     def _build_validator_actors(
         self,
         scene: Any,
-        actor_names: list[str],
     ) -> list[ValidatorActor]:
         """Build validator actor snapshots from the runtime scene."""
+        actor_names = self._get_runtime_task().get_validator_actor_names()
         return [
             ValidatorActor.from_rigid_object(name, scene[name])
             for name in actor_names
@@ -295,13 +302,11 @@ class Evaluator:
         for actor in actors:
             actor.capture_final_state(scene[actor.name])
 
-    def _build_validator(self, env: IsaacManagerBasedEnv) -> Validator:
-        if self._task is None:
-            self._ensure_env()
-        assert self._task is not None
-        actor_names = self._task.task.get_validator_actor_names()
-        actors = self._build_validator_actors(env.scene, actor_names)
-        return self._task.task.build_validator(actors=actors)
+    def _build_validator(
+        self,
+        actors: list[ValidatorActor],
+    ) -> Validator:
+        return self._get_runtime_task().build_validator(actors=actors)
 
     def _normalize_policy(
         self,
@@ -373,14 +378,14 @@ class Evaluator:
 
     def _build_episode_metadata(
         self,
-        validator: Validator,
+        actors: list[ValidatorActor],
         validator_output: ValidatorOutput,
+        instruction_text: str | None,
         *,
         env_idx: int = 0,
     ) -> dict[str, Any]:
         # TODO：user can add meata data here
 
-        actors = validator.actors
         if not actors:
             return {}
 
@@ -406,14 +411,39 @@ class Evaluator:
             "task_success": float(validator_output.success),
             "task_progress": float(validator_output.progress),
         }
+        if instruction_text is not None:
+            meta_data["instruction"] = instruction_text
 
         return meta_data
+
+    def _build_policy_instruction(
+        self,
+        env: IsaacManagerBasedEnv,
+        *,
+        template_seed: int,
+        actor_description_seed: int,
+    ) -> str | None:
+        task = self._get_runtime_task()
+        if task.instruction is None:
+            return None
+
+        instruction = task.instruction
+        actors = task.build_instruction_context(
+            env,
+            actor_description_seed=actor_description_seed,
+        )
+        return instruction.render(
+            actors=actors,
+            template_seed=template_seed,
+            actor_description_seed=actor_description_seed,
+        )
 
     def _record_episode_metadata(
         self,
         env: IsaacManagerBasedEnv,
-        validator: Validator,
+        actors: list[ValidatorActor],
         validator_output: ValidatorOutput,
+        instruction_text: str | None,
     ) -> None:
         record_manager = getattr(env, "record_manager", None)
         if record_manager is None:
@@ -424,16 +454,18 @@ class Evaluator:
         if num_envs > 1:
             meta_dict = [
                 self._build_episode_metadata(
-                    validator,
+                    actors,
                     validator_output,
+                    instruction_text,
                     env_idx=env_idx,
                 )
                 for env_idx in range(num_envs)
             ]
         else:
             meta_dict = self._build_episode_metadata(
-                validator,
+                actors,
                 validator_output,
+                instruction_text,
             )
 
         if not meta_dict:
@@ -442,23 +474,49 @@ class Evaluator:
         record_manager.set_episode_user_data({"meta_dict": meta_dict})
         record_manager.record_pre_reset()
 
-    def _run_episode(
+    def _prepare_episode(
         self,
         env: IsaacManagerBasedEnv,
         policy: PolicyMixin,
         seed: int,
-    ) -> EpisodeResult:
+        *,
+        template_seed: int | None = None,
+        actor_description_seed: int | None = None,
+    ) -> tuple[dict[str, Any], list[ValidatorActor], Validator, str | None]:
         reset_return = env.reset(seed=seed)
         observations = reset_return.observations
 
         settle_return = self._settle_scene(env)
         observations = settle_return.observations
 
-        validator = self._build_validator(env)
-        validator.reset()
-        self._capture_init_state(env.scene, validator.actors)
-        policy.reset()
+        if template_seed is None:
+            template_seed = seed
+        if actor_description_seed is None:
+            actor_description_seed = seed
+        instruction_text = self._build_policy_instruction(
+            env=env,
+            template_seed=template_seed,
+            actor_description_seed=actor_description_seed,
+        )
+        if instruction_text is not None:
+            print(f"instruction: {instruction_text}")
 
+        actors = self._build_validator_actors(env.scene)
+        validator = self._build_validator(actors)
+        validator.reset()
+
+        self._capture_init_state(env.scene, actors)
+        policy.reset()
+        return observations, actors, validator, instruction_text
+
+    def _step_episode(
+        self,
+        env: IsaacManagerBasedEnv,
+        policy: PolicyMixin,
+        observations: dict[str, Any],
+        validator: Validator,
+        instruction_text: str | None,
+    ) -> tuple[int, str, ValidatorOutput]:
         stop_reason = "max_steps"
         steps = 0
         validator_output = ValidatorOutput(
@@ -467,7 +525,9 @@ class Evaluator:
             metrics={},
         )
         for step_idx in range(self.cfg.max_steps):
-            action = policy(observations)
+            policy_input = dict(observations)
+            policy_input["instruction"] = instruction_text
+            action = policy(policy_input)
             step_return = env.step(action)
             observations = step_return.observations
             validator_output = validator.evaluate(env, env_idx=0)
@@ -483,8 +543,41 @@ class Evaluator:
                 stop_reason = "truncated"
                 break
 
-        self._capture_final_state(env.scene, validator.actors)
-        self._record_episode_metadata(env, validator, validator_output)
+        return steps, stop_reason, validator_output
+
+    def _run_episode(
+        self,
+        env: IsaacManagerBasedEnv,
+        policy: PolicyMixin,
+        seed: int,
+        *,
+        template_seed: int | None = None,
+        actor_description_seed: int | None = None,
+    ) -> EpisodeResult:
+        observations, actors, validator, instruction_text = (
+            self._prepare_episode(
+                env=env,
+                policy=policy,
+                seed=seed,
+                template_seed=template_seed,
+                actor_description_seed=actor_description_seed,
+            )
+        )
+        steps, stop_reason, validator_output = self._step_episode(
+            env=env,
+            policy=policy,
+            observations=observations,
+            validator=validator,
+            instruction_text=instruction_text,
+        )
+
+        self._capture_final_state(env.scene, actors)
+        self._record_episode_metadata(
+            env,
+            actors,
+            validator_output,
+            instruction_text,
+        )
 
         return EpisodeResult(
             seed=seed,

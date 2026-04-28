@@ -28,6 +28,7 @@ from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 
 from robo_orchard_sim.evaluator import Evaluator, EvaluatorCfg, LaunchConfig
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+from robo_orchard_sim.tasks.instructions.base import InstructionActor
 from robo_orchard_sim.tasks.validators.base import (
     ValidatorActor,
     ValidatorOutput,
@@ -391,9 +392,45 @@ class _StubValidator:
 
 
 @dataclass
+class _StubInstruction:
+    actor_description_mode: str = "seen"
+    render_calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def render(
+        self,
+        actors: dict[str, Any] | None = None,
+        template_seed: int | None = None,
+        actor_description_seed: int | None = None,
+    ) -> str:
+        self.render_calls.append(
+            {
+                "actors": actors,
+                "template_seed": template_seed,
+                "actor_description_seed": actor_description_seed,
+            }
+        )
+        return (
+            "instruction-template-"
+            f"{template_seed}-actor-{actor_description_seed}"
+        )
+
+
+@dataclass
+class _StubInstructionActor:
+    name: str
+
+
+@dataclass
 class _StubTask:
     success_steps: list[int]
+    instruction: Any = None
     _validator_index: int = 0
+    pick_object: Any = field(
+        default_factory=lambda: SimpleNamespace(scene_name="actor_a")
+    )
+    place_object: Any = field(
+        default_factory=lambda: SimpleNamespace(scene_name="actor_b")
+    )
 
     def get_validator_actor_names(self) -> list[str]:
         return ["actor_a", "actor_b"]
@@ -402,6 +439,25 @@ class _StubTask:
         success_step = self.success_steps[self._validator_index]
         self._validator_index += 1
         return _StubValidator(success_step=success_step, actors=actors)
+
+    def build_instruction_context(
+        self,
+        env: Any,
+        *,
+        actor_description_seed: int,
+    ) -> dict[str, Any]:
+        return {
+            "actor1": InstructionActor.from_rigid_object(
+                env.scene[self.pick_object.scene_name],
+                actor_description_mode=self.instruction.actor_description_mode,
+                actor_description_seed=actor_description_seed,
+            ),
+            "actor2": InstructionActor.from_rigid_object(
+                env.scene[self.place_object.scene_name],
+                actor_description_mode=self.instruction.actor_description_mode,
+                actor_description_seed=actor_description_seed,
+            ),
+        }
 
 
 @dataclass
@@ -853,7 +909,7 @@ class TestEvaluator:
         with pytest.warns(UserWarning, match="objects/cube, robots/arm"):
             evaluator.evaluate(_StubPolicy())
 
-    def test_episode_uses_post_settle_observations_for_first_policy_step(
+    def test_episode_passes_instruction_wrapped_with_observations_to_policy(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -871,7 +927,28 @@ class TestEvaluator:
             ],
         )
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
+        orchard_env.task.instruction = _StubInstruction(
+            actor_description_mode="seen"
+        )
         self.patch_runtime(monkeypatch, tasks=[orchard_env])
+
+        class _FakeInstructionActor:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        def _fake_from_rigid_object(
+            rigid_object: Any,
+            actor_description_mode: str = "raw",
+            actor_description_seed: int | None = None,
+        ) -> _FakeInstructionActor:
+            del actor_description_mode, actor_description_seed
+            return _FakeInstructionActor(rigid_object.cfg.uuid)
+
+        monkeypatch.setattr(
+            InstructionActor,
+            "from_rigid_object",
+            staticmethod(_fake_from_rigid_object),
+        )
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
             asset_root="/tmp/assets",
@@ -883,7 +960,52 @@ class TestEvaluator:
 
         evaluator.evaluate(policy)
 
-        assert policy.observations_seen[0] == {"settle_step": 2}
+        assert policy.observations_seen[0] == {
+            "settle_step": 2,
+            "instruction": "instruction-template-0-actor-0",
+        }
+
+    def test_evaluate_with_instruction_prints_instruction_text(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        env = _StubStepEnv(episodes=[[_StepState()]])
+        orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
+        orchard_env.task.instruction = _StubInstruction(
+            actor_description_mode="seen"
+        )
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
+
+        class _FakeInstructionActor:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        def _fake_from_rigid_object(
+            rigid_object: Any,
+            actor_description_mode: str = "raw",
+            actor_description_seed: int | None = None,
+        ) -> _FakeInstructionActor:
+            del actor_description_mode, actor_description_seed
+            return _FakeInstructionActor(rigid_object.cfg.uuid)
+
+        monkeypatch.setattr(
+            InstructionActor,
+            "from_rigid_object",
+            staticmethod(_fake_from_rigid_object),
+        )
+
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+        )()
+
+        evaluator.evaluate(_StubPolicy())
+
+        captured = capsys.readouterr()
+        assert "instruction: instruction-template-0-actor-0" in captured.out
 
     def test_reload_env_reuses_launcher_and_rebuilds_env_runtime(
         self,
@@ -978,6 +1100,152 @@ class TestEvaluator:
                 }
             }
         ]
+
+    def test_episode_records_instruction_rendered_from_rigid_objects(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        env = _StubStepEnv(episodes=[[_StepState()]])
+        orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
+        orchard_env.task.instruction = _StubInstruction(
+            actor_description_mode="seen"
+        )
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
+        env.record_manager = _StubRecordManager()
+
+        from_rigid_object_calls: list[dict[str, Any]] = []
+
+        class _FakeInstructionActor:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        def _fake_from_rigid_object(
+            rigid_object: Any,
+            actor_description_mode: str = "raw",
+            actor_description_seed: int | None = None,
+        ) -> _FakeInstructionActor:
+            from_rigid_object_calls.append(
+                {
+                    "rigid_object": rigid_object,
+                    "actor_description_mode": actor_description_mode,
+                    "actor_description_seed": actor_description_seed,
+                }
+            )
+            return _FakeInstructionActor(rigid_object.cfg.uuid)
+
+        monkeypatch.setattr(
+            InstructionActor,
+            "from_rigid_object",
+            staticmethod(_fake_from_rigid_object),
+        )
+
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+            seed=7,
+        )()
+
+        evaluator.evaluate(_StubPolicy())
+
+        assert [
+            call["actor_description_seed"] for call in from_rigid_object_calls
+        ] == [7, 7]
+        assert [
+            call["actor_description_mode"] for call in from_rigid_object_calls
+        ] == [
+            "seen",
+            "seen",
+        ]
+        assert (
+            env.record_manager.episode_user_data_calls[0]["meta_dict"][
+                "instruction"
+            ]
+            == "instruction-template-7-actor-7"
+        )
+
+    def test_evaluate_uses_task_instruction_context_for_rendering(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        env = _StubStepEnv(episodes=[[_StepState()]])
+        orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
+
+        class _ContextTask:
+            def __init__(self) -> None:
+                self.instruction = _StubInstruction(
+                    actor_description_mode="seen"
+                )
+                self.context_calls: list[dict[str, Any]] = []
+
+            def get_validator_actor_names(self) -> list[str]:
+                return ["actor_a", "actor_b"]
+
+            def build_validator(
+                self,
+                actors: list[ValidatorActor],
+            ) -> _StubValidator:
+                return _StubValidator(success_step=1, actors=actors)
+
+            def build_instruction_context(
+                self,
+                env: Any,
+                *,
+                actor_description_seed: int,
+            ) -> dict[str, Any]:
+                self.context_calls.append(
+                    {
+                        "env": env,
+                        "actor_description_seed": actor_description_seed,
+                    }
+                )
+                return {
+                    "actor1": SimpleNamespace(name="pick-actor"),
+                    "actor2": SimpleNamespace(name="place-actor"),
+                }
+
+        context_task = _ContextTask()
+        orchard_env.task = context_task
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
+        env.record_manager = _StubRecordManager()
+
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+            seed=7,
+        )()
+        policy = _ObservationCapturingPolicy()
+
+        evaluator.evaluate(policy)
+
+        assert policy.observations_seen[0]["instruction"] == (
+            "instruction-template-7-actor-7"
+        )
+        assert context_task.context_calls == [
+            {
+                "env": env,
+                "actor_description_seed": 7,
+            }
+        ]
+        assert context_task.instruction.render_calls == [
+            {
+                "actors": {
+                    "actor1": SimpleNamespace(name="pick-actor"),
+                    "actor2": SimpleNamespace(name="place-actor"),
+                },
+                "template_seed": 7,
+                "actor_description_seed": 7,
+            }
+        ]
+        assert (
+            env.record_manager.episode_user_data_calls[0]["meta_dict"][
+                "instruction"
+            ]
+            == "instruction-template-7-actor-7"
+        )
 
     def test_episode_records_distinct_meta_dicts_for_multi_env(
         self,
