@@ -17,7 +17,7 @@
 import math
 import random
 import warnings
-from typing import List, Literal
+from typing import Dict, List, Literal, Tuple
 
 import robo_orchard_core.utils.math as math_utils
 import torch
@@ -248,3 +248,277 @@ def constract_quat_with_vec(
     )  # (..., 3, 3)
     quat = math_utils.matrix_to_quaternion(rotmat)  # Should return wxyz order
     return quat
+
+
+class PoseAugmentor:
+    """Simplified Pose Augmentor for multi-axis rotation combinations.
+
+    Based on the single-axis augment_grasp_poses function
+    """
+
+    @staticmethod
+    def augment_single_axis(
+        grasp_poses: torch.Tensor,
+        axis: str,
+        ang_range: Tuple[float, float],
+        num_poses: int,
+    ) -> torch.Tensor:
+        """Single axis augmentation (wrapper of the original function).
+
+        Args:
+            grasp_poses: Input poses [B, 7] - (x, y, z, w, qx, qy, qz)
+            axis: Rotation axis ('x', 'y', or 'z')
+            ang_range: Angle range (min_deg, max_deg)
+            num_poses: Number of poses to generate
+
+        Returns:
+            Augmented poses [B, num_poses, 7]
+        """
+        if grasp_poses.dim() != 2 or grasp_poses.shape[1] != 7:
+            raise ValueError("The shape of input grasp_poses must be [B, 7]")
+        if axis not in ["x", "y", "z"]:
+            raise ValueError("Parameter axis must be one of 'x', 'y', or 'z'")
+        if not isinstance(ang_range, (tuple, list)) or len(ang_range) != 2:
+            raise ValueError(
+                "Parameter ang_range must be a tuple or list containing two "
+                "elements"
+            )
+        if num_poses < 1:
+            raise ValueError(
+                "Parameter num_poses must be greater than or equal to 1"
+            )
+
+        device = grasp_poses.device
+
+        # 1. Separate position and original quaternion
+        positions = grasp_poses[:, :3]  # Shape: [B, 3]
+        original_quats = grasp_poses[:, 3:]  # Shape: [B, 4]
+
+        # 2. Equally space num_poses angles within the [ang_min, ang_max]
+        ang_min, ang_max = ang_range
+        # Generate angles using torch.linspace and convert to radians
+        angles_rad = torch.deg2rad(
+            torch.linspace(ang_min, ang_max, num_poses, device=device)
+        )
+
+        # 3. Construct rotation quaternions based on the specified axis
+        half_angles = angles_rad / 2.0
+        cos_half = torch.cos(half_angles)
+        sin_half = torch.sin(half_angles)
+
+        # Initialize rotation quaternion tensor
+        rot_quats = torch.zeros(num_poses, 4, device=device)
+        rot_quats[:, 0] = cos_half
+
+        # Fill rotation components based on axis
+        if axis == "x":
+            rot_quats[:, 1] = sin_half
+        elif axis == "y":
+            rot_quats[:, 2] = sin_half
+        else:  # axis == 'z'
+            rot_quats[:, 3] = sin_half
+
+        # 4. Prepare and execute batch quaternion multiplication
+        # Expand original quaternions and rotation quaternions for broadcasting
+        # original_quats: [B, 4] -> [B, 1, 4]
+        # rot_quats:      [N, 4] -> [1, N, 4] (N=num_poses)
+        expanded_orig_quats = original_quats.unsqueeze(1)
+
+        # Perform multiplication: q_new = q_orig * q_rot
+        # Broadcasting mechanism will automatically handle: [B, N, 4]
+        new_quats = math_utils.quaternion_multiply(
+            expanded_orig_quats, rot_quats.unsqueeze(0)
+        )
+
+        # Normalize quaternions to avoid accumulated errors
+        new_quats = new_quats / torch.linalg.norm(
+            new_quats, dim=-1, keepdim=True
+        )
+
+        # 5. Combine new poses
+        # Expand position information to match new quaternions: [B, N, 3]
+        expanded_positions = positions.unsqueeze(1).expand(-1, num_poses, -1)
+
+        augmented_poses = torch.cat((expanded_positions, new_quats), dim=-1)
+
+        return augmented_poses
+
+    @staticmethod
+    def augment_multi_axis(
+        grasp_poses: torch.Tensor,
+        rotation_config: Dict[str, Tuple[float, float, int]],
+    ) -> torch.Tensor:
+        """Multi-axis rotation augmentation.
+
+        Args:
+            grasp_poses: Input poses [B, 7] - (x, y, z, w, qx, qy, qz)
+            rotation_config: Dict with axis config, e.g.:
+                {'x': (min_deg, max_deg, num_poses), 'z': (0, 360, 12)}
+
+        Returns:
+            Augmented poses [B, N, 7] where N is the product of all num_poses
+        """
+        if grasp_poses.dim() != 2 or grasp_poses.shape[1] != 7:
+            raise ValueError("Input grasp_poses must have shape [B, 7]")
+
+        # Generate all angle combinations
+        axis_angles = {}
+        for axis, (min_deg, max_deg, num_poses) in rotation_config.items():
+            if axis not in ["x", "y", "z"]:
+                raise ValueError(f"Invalid axis: {axis}")
+            angles = torch.linspace(
+                min_deg, max_deg, num_poses, device=grasp_poses.device
+            )
+            axis_angles[axis] = angles
+
+        # Create all combinations
+        axes = ["x", "y", "z"]
+        angle_lists = []
+        for axis in axes:
+            if axis in axis_angles:
+                angle_lists.append(axis_angles[axis])
+            else:
+                # No rotation for this axis
+                angle_lists.append(
+                    torch.tensor([0.0], device=grasp_poses.device)
+                )
+
+        # Generate all combinations using meshgrid
+        angle_combinations = torch.meshgrid(*angle_lists, indexing="ij")
+        x_angles = angle_combinations[0].flatten()  # All x angles
+        y_angles = angle_combinations[1].flatten()  # All y angles
+        z_angles = angle_combinations[2].flatten()  # All z angles
+
+        # Apply all rotation combinations
+        result_poses = PoseAugmentor._apply_rotation_combinations(
+            grasp_poses, x_angles, y_angles, z_angles
+        )
+
+        return result_poses
+
+    @staticmethod
+    def augment_z_axis(
+        grasp_poses: torch.Tensor,
+        step_deg: float = 30.0,
+        full_rotation: bool = True,
+    ) -> torch.Tensor:
+        """Z-axis full rotation augmentation (most common case).
+
+        Args:
+            grasp_poses: Input poses [B, 7]
+            step_deg: Angle step in degrees
+            full_rotation: Whether to do full 360 degree rotation
+
+        Returns:
+            Augmented poses [B, N, 7]
+        """
+        if full_rotation:
+            num_poses = int(360 / step_deg)
+            ang_range = (0, 360 - step_deg)  # Avoid duplicate at 0 and 360
+        else:
+            num_poses = int(360 / step_deg) + 1
+            ang_range = (0, 360)
+
+        return PoseAugmentor.augment_single_axis(
+            grasp_poses, "z", ang_range, num_poses
+        )
+
+    @staticmethod
+    def _apply_rotation_combinations(
+        grasp_poses: torch.Tensor,
+        x_angles: torch.Tensor,
+        y_angles: torch.Tensor,
+        z_angles: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply multiple rotation combinations efficiently.
+
+        Args:
+            grasp_poses: Original poses [B, 7]
+            x_angles, y_angles, z_angles: Angle arrays [N]
+
+        Returns:
+            Augmented poses [B, N, 7]
+        """
+        device = grasp_poses.device
+        N = len(x_angles)
+
+        # Extract positions and quaternions
+        positions = grasp_poses[:, :3]  # [B, 3]
+        original_quats = grasp_poses[:, 3:]  # [B, 4] - (w, qx, qy, qz)
+
+        # Create combined rotation quaternions
+        combined_rot_quats = (
+            PoseAugmentor._create_combined_rotation_quaternions(
+                x_angles, y_angles, z_angles, device
+            )
+        )  # [N, 4]
+
+        # Expand for batch multiplication
+        expanded_orig_quats = original_quats.unsqueeze(1)  # [B, 1, 4]
+        expanded_rot_quats = combined_rot_quats.unsqueeze(0)  # [1, N, 4]
+
+        # Apply rotations: q_new = q_orig * q_rot
+        new_quats = math_utils.quaternion_multiply(
+            expanded_orig_quats, expanded_rot_quats
+        )  # [B, N, 4]
+
+        # Normalize quaternions
+        new_quats = new_quats / torch.linalg.norm(
+            new_quats, dim=-1, keepdim=True
+        )
+
+        # Expand positions
+        expanded_positions = positions.unsqueeze(1).expand(
+            -1, N, -1
+        )  # [B, N, 3]
+
+        # Combine results
+        augmented_poses = torch.cat((expanded_positions, new_quats), dim=-1)
+
+        return augmented_poses
+
+    @staticmethod
+    def _create_combined_rotation_quaternions(
+        x_angles: torch.Tensor,
+        y_angles: torch.Tensor,
+        z_angles: torch.Tensor,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Create combined rotation quaternions for XYZ rotations.
+
+        Args:
+            x_angles, y_angles, z_angles: Rotation angles in degrees [N]
+            device: Device to create tensors on
+
+        Returns:
+            Combined rotation quaternions [N, 4] - (w, qx, qy, qz)
+        """
+
+        # Convert to radians and get half angles
+        x_rad = torch.deg2rad(x_angles) / 2.0
+        y_rad = torch.deg2rad(y_angles) / 2.0
+        z_rad = torch.deg2rad(z_angles) / 2.0
+
+        # Create individual axis quaternions
+        cx, sx = torch.cos(x_rad), torch.sin(x_rad)
+        cy, sy = torch.cos(y_rad), torch.sin(y_rad)
+        cz, sz = torch.cos(z_rad), torch.sin(z_rad)
+
+        # X-axis rotation quaternions
+        qx = torch.stack(
+            [cx, sx, torch.zeros_like(cx), torch.zeros_like(cx)], dim=1
+        )
+        # Y-axis rotation quaternions
+        qy = torch.stack(
+            [cy, torch.zeros_like(cy), sy, torch.zeros_like(cy)], dim=1
+        )
+        # Z-axis rotation quaternions
+        qz = torch.stack(
+            [cz, torch.zeros_like(cz), torch.zeros_like(cz), sz], dim=1
+        )
+
+        # Combine rotations: q_combined = qz * qy * qx (ZYX order)
+        temp = math_utils.quaternion_multiply(qz, qy)
+        combined = math_utils.quaternion_multiply(temp, qx)
+
+        return combined

@@ -15,14 +15,11 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
-from dataclasses import replace
-from typing import Any, cast
+from typing import Any
 
+import pytest
 import torch
 
-from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.profile import (
-    DUALARM_PIPER_ROBOT_INFO_CFGS,
-)
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     ResolvedManipulatorProfile,
 )
@@ -32,10 +29,12 @@ from robo_orchard_sim.tasks.trajs_gen.atomic_action_manager import (
 from robo_orchard_sim.tasks.trajs_gen.base_executor import (
     BaseExecutor,
     BaseExecutorCfg,
-    ObjectInfo,
+    DebugTargetPose,
     Trajectories,
 )
-from robo_orchard_sim.tasks.trajs_gen.executors.pick import PickExecutorCfg
+from robo_orchard_sim.tasks.trajs_gen.debug_vis import (
+    AtomicActionDebugVisualizer,
+)
 from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
     BoundManipulatorResolver,
     ManipulatorBindingContext,
@@ -43,59 +42,16 @@ from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
 )
 from robo_orchard_sim.utils.config import ClassType_co
 
+_LEFT_ARM_KEY = "robots/fake/left_arm"
+_RIGHT_ARM_KEY = "robots/fake/right_arm"
+
 
 class _FakePlanner:
     pass
 
 
-class _FakeTrajectoryExecutor(BaseExecutor):
-    cfg: "_FakeTrajectoryExecutorCfg"
-
-    def __init__(self, cfg: "_FakeTrajectoryExecutorCfg") -> None:
-        super().__init__(cfg)
-        self.plan_count = 0
-
-    def plan(
-        self,
-        env: Any,
-        context: ManipulatorBindingContext,
-    ) -> Trajectories:
-        self.plan_count += 1
-        resolved = ResolvedManipulatorProfile(
-            robot_name="robots/fake",
-            manipulator_name=self.cfg.manipulator_name,
-            joint_ids=(0,),
-            joint_names=("joint",),
-            gripper_joint_ids=(),
-            gripper_joint_names=(),
-            body_ids=(),
-            body_names=(),
-            ee_body_id=0,
-            ee_body_name="ee",
-            planner=cast(Any, _FakePlanner()),
-        )
-        self.last_resolved_manipulator = resolved
-        trajectories = [
-            torch.tensor(item, dtype=torch.float32, device=env.device)
-            for item in self.cfg.trajectory
-        ]
-        return Trajectories(
-            trajectories=trajectories,
-            success=self.cfg.success,
-            resolved_manipulator=resolved,
-        )
-
-
-class _FakeTrajectoryExecutorCfg(BaseExecutorCfg):
-    class_type: ClassType_co[_FakeTrajectoryExecutor] = _FakeTrajectoryExecutor
-    manipulator_name: str
-    trajectory: list[list[list[float]]]
-    success: bool = True
-
-
 class _FakePlannerInstance:
     def __init__(self, cfg: "_FakePlannerCfg", env_nums: int) -> None:
-        self.cfg = cfg
         self.env_nums = env_nums
         cfg.instances.append(self)
 
@@ -107,8 +63,86 @@ class _FakePlannerCfg:
         self.instances: list[_FakePlannerInstance] = []
 
 
-class _PlannerProbeExecutor(BaseExecutor):
-    cfg: "_PlannerProbeExecutorCfg"
+class _FakeEnv:
+    def __init__(self, num_envs: int = 1) -> None:
+        self.num_envs = num_envs
+        self.device = torch.device("cpu")
+        self.use_left = True
+
+
+class _StaticManipulatorResolver:
+    def __init__(
+        self,
+        *,
+        robot_name: str = "robots/fake",
+        manipulator_name: str = "left_arm",
+    ) -> None:
+        self.robot_name = robot_name
+        self.manipulator_name = manipulator_name
+
+    def resolve(
+        self,
+        env: Any,
+        context: ManipulatorBindingContext | None = None,
+    ) -> ResolvedManipulatorProfile:
+        del env, context
+        return ResolvedManipulatorProfile(
+            robot_name=self.robot_name,
+            manipulator_name=self.manipulator_name,
+            joint_ids=(0,),
+            joint_names=("joint",),
+            gripper_joint_ids=(),
+            gripper_joint_names=(),
+            body_ids=(),
+            body_names=(),
+            ee_body_id=0,
+            ee_body_name="ee",
+            planner=_FakePlanner(),
+        )
+
+
+class _PlannerResolvingManipulatorResolver:
+    def __init__(
+        self,
+        *,
+        planner_cfg: _FakePlannerCfg,
+        robot_name: str = "robots/fake",
+        manipulator_name: str = "left_arm",
+    ) -> None:
+        self.planner_cfg = planner_cfg
+        self.robot_name = robot_name
+        self.manipulator_name = manipulator_name
+
+    def resolve(
+        self,
+        env: Any,
+        context: ManipulatorBindingContext | None = None,
+    ) -> ResolvedManipulatorProfile:
+        if context is None:
+            raise ValueError("planner resolution requires context")
+        planner = context.resolve_planner_instance(
+            robot_name=self.robot_name,
+            manipulator_name=self.manipulator_name,
+            planner_cfg=self.planner_cfg,
+            env_nums=env.num_envs,
+        )
+        return ResolvedManipulatorProfile(
+            robot_name=self.robot_name,
+            manipulator_name=self.manipulator_name,
+            joint_ids=(0,),
+            joint_names=("joint",),
+            gripper_joint_ids=(),
+            gripper_joint_names=(),
+            body_ids=(),
+            body_names=(),
+            ee_body_id=0,
+            ee_body_name="ee",
+            planner=planner,
+        )
+
+
+class _FakeTrajectoryExecutor(BaseExecutor):
+    cfg: "_FakeTrajectoryExecutorCfg"
 
     def plan(
         self,
@@ -119,229 +153,343 @@ class _PlannerProbeExecutor(BaseExecutor):
             env,
             context=context,
         )
-        trajectory = torch.tensor(
-            [[1.0]],
-            dtype=torch.float32,
-            device=env.device,
+        trajectories = [
+            torch.tensor(item, dtype=torch.float32, device=env.device)
+            for item in self.cfg.trajectories
+        ]
+        target_poses = tuple(
+            DebugTargetPose(
+                name=name,
+                pose_w=torch.tensor(
+                    [[1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 0.0]],
+                    dtype=torch.float32,
+                    device=env.device,
+                ),
+            )
+            for name in self.cfg.debug_target_names
         )
         return Trajectories(
-            trajectories=[trajectory for _ in range(env.num_envs)],
-            success=True,
+            trajectories=trajectories,
+            success=self.cfg.success,
             resolved_manipulator=resolved,
+            debug_target_poses=target_poses,
         )
 
 
-class _PlannerProbeExecutorCfg(BaseExecutorCfg):
-    class_type: ClassType_co[_PlannerProbeExecutor] = _PlannerProbeExecutor
+class _FakeTrajectoryExecutorCfg(BaseExecutorCfg):
+    class_type: ClassType_co[_FakeTrajectoryExecutor] = _FakeTrajectoryExecutor
+    trajectories: list[Any]
+    success: bool = True
+    debug_target_names: tuple[str, ...] = ()
 
 
-class _FakeArticulation:
-    def __init__(self) -> None:
-        self.data = type(
-            "_Data",
-            (),
-            {
-                "root_pos_w": torch.tensor(
-                    [[0.0, 0.0, 0.0]], dtype=torch.float32
-                )
-            },
-        )()
-
-    def find_joints(self, names):
-        mapping = {
-            "left_joint[1-6]": (
-                [0, 1, 2, 3, 4, 5],
-                [f"left_joint{i}" for i in range(1, 7)],
-            ),
-            "left_joint7": ([6], ["left_joint7"]),
-            "left_joint8": ([7], ["left_joint8"]),
-            "right_joint[1-6]": (
-                [8, 9, 10, 11, 12, 13],
-                [f"right_joint{i}" for i in range(1, 7)],
-            ),
-            "right_joint7": ([14], ["right_joint7"]),
-            "right_joint8": ([15], ["right_joint8"]),
-        }
-        ids = []
-        resolved_names = []
-        for name in names:
-            if name not in mapping:
-                continue
-            found_ids, found_names = mapping[name]
-            ids.extend(found_ids)
-            resolved_names.extend(found_names)
-        return ids, resolved_names
-
-    def find_bodies(self, names):
-        mapping = {
-            "left_base_link": ([10], ["left_base_link"]),
-            "left_link6": ([16], ["left_link6"]),
-            "right_base_link": ([20], ["right_base_link"]),
-            "right_link6": ([26], ["right_link6"]),
-        }
-        if isinstance(names, str):
-            return mapping.get(names, ([], []))
-
-        ids = []
-        resolved_names = []
-        for name in names:
-            if name not in mapping:
-                continue
-            found_ids, found_names = mapping[name]
-            ids.extend(found_ids)
-            resolved_names.extend(found_names)
-        return ids, resolved_names
-
-
-class _FakeEnv:
-    def __init__(self) -> None:
-        self.scene: dict[str, Any] = {
-            "robots/dualarm_piper": _FakeArticulation()
-        }
-        self.num_envs = 1
-        self.device = torch.device("cpu")
-        self.use_left = True
-
-
-_FAKE_LEFT_ARM_KEY = "robots/fake/left_arm"
-_FAKE_RIGHT_ARM_KEY = "robots/fake/right_arm"
-_PIPER_LEFT_ARM_KEY = "robots/dualarm_piper/left_arm"
-_PIPER_RIGHT_ARM_KEY = "robots/dualarm_piper/right_arm"
-
-
-def _piper_robot_info_with_fake_planner(arm: str):
-    return replace(
-        DUALARM_PIPER_ROBOT_INFO_CFGS[arm],
-        planner=cast(Any, _FakePlannerCfg()),
-    )
-
-
-def test_atomic_action_manager_pick_get_action_returns_correct_trajectory():
-    manager = AtomicActionManagerCfg()()
-    executor_cfg = PickExecutorCfg(
-        robot_info=_piper_robot_info_with_fake_planner("left_arm"),
-        pick_object_info=ObjectInfo(
-            name="objects/pick_object",
-            mode="active",
-            action="pick",
-            part="gripper",
+def _make_cfg(
+    *,
+    manipulator_name: str = "left_arm",
+    robot_name: str = "robots/fake",
+    trajectories: list[Any] | None = None,
+    priority: int = 0,
+    action_type: str = "fake",
+    success: bool = True,
+    debug_target_names: tuple[str, ...] = (),
+) -> _FakeTrajectoryExecutorCfg:
+    return _FakeTrajectoryExecutorCfg(
+        robot_info=_StaticManipulatorResolver(
+            robot_name=robot_name,
+            manipulator_name=manipulator_name,
         ),
+        priority=priority,
+        action_type=action_type,
+        trajectories=[[[1.0]]] if trajectories is None else trajectories,
+        success=success,
+        debug_target_names=debug_target_names,
     )
 
-    manager.register([executor_cfg])
+
+def _make_manager(
+    *executor_cfgs: BaseExecutorCfg,
+    debug_vis: bool = False,
+) -> Any:
+    manager = AtomicActionManagerCfg(debug_vis=debug_vis)()
+    manager.register(list(executor_cfgs))
+    return manager
+
+
+def _action_values(actions: dict[str, torch.Tensor]) -> dict[str, Any]:
+    return {key: value.tolist() for key, value in actions.items()}
+
+
+def test_get_action_single_step_trajectory_emits_action_command():
+    manager = _make_manager(_make_cfg(trajectories=[[[1.0, 2.0]]]))
+
     actions, _ = manager.get_action(_FakeEnv())
 
-    assert set(actions) == {_PIPER_LEFT_ARM_KEY}
-    assert torch.allclose(
-        actions[_PIPER_LEFT_ARM_KEY],
-        torch.tensor(
-            [[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.04, 0.04]],
-            dtype=torch.float32,
-        ),
-    )
+    assert _action_values(actions) == {_LEFT_ARM_KEY: [[1.0, 2.0]]}
 
 
-def test_atomic_action_manager_pick_get_action_state_shows_running_status():
-    manager = AtomicActionManagerCfg()()
-    executor_cfg = PickExecutorCfg(
-        robot_info=_piper_robot_info_with_fake_planner("left_arm"),
-        pick_object_info=ObjectInfo(
-            name="objects/pick_object",
-            mode="active",
-            action="pick",
-            part="gripper",
-        ),
-    )
+def test_get_action_completed_single_step_reports_completed_state():
+    manager = _make_manager(_make_cfg(trajectories=[[[1.0]]]))
 
-    manager.register([executor_cfg])
     _, state = manager.get_action(_FakeEnv())
 
-    assert state.running_actions[_PIPER_LEFT_ARM_KEY].action_type == "pick"
-    assert state.running_actions[_PIPER_LEFT_ARM_KEY].status == "RUNNING"
-    assert state.running_actions[_PIPER_LEFT_ARM_KEY].success is True
+    assert (
+        state.running_actions[_LEFT_ARM_KEY].status,
+        state.pending_count,
+        state.env_busy.tolist(),
+    ) == ("COMPLETED", 0, [True])
 
 
-def test_atomic_action_manager_output_key_includes_resolved_robot_name():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0]]],
-            )
-        ]
+def test_get_action_multi_step_trajectory_emits_stepwise_commands():
+    manager = _make_manager(_make_cfg(trajectories=[[[1.0], [2.0]]]))
+    env = _FakeEnv()
+
+    outputs = [_action_values(manager.get_action(env)[0]) for _ in range(3)]
+
+    assert outputs == [
+        {_LEFT_ARM_KEY: [[1.0]]},
+        {_LEFT_ARM_KEY: [[2.0]]},
+        {},
+    ]
+
+
+def test_get_action_multi_env_shorter_trajectory_reuses_last_command():
+    manager = _make_manager(_make_cfg(trajectories=[[[1.0], [2.0]], [[10.0]]]))
+    env = _FakeEnv(num_envs=2)
+
+    first_actions, first_state = manager.get_action(env)
+    second_actions, second_state = manager.get_action(env)
+
+    assert (
+        _action_values(first_actions),
+        first_state.env_busy.tolist(),
+        _action_values(second_actions),
+        second_state.env_busy.tolist(),
+    ) == (
+        {_LEFT_ARM_KEY: [[1.0], [10.0]]},
+        [True, True],
+        {_LEFT_ARM_KEY: [[2.0], [10.0]]},
+        [True, False],
+    )
+
+
+def test_get_action_parallel_manipulators_emit_actions_same_tick():
+    manager = _make_manager(
+        _make_cfg(manipulator_name="left_arm", trajectories=[[[1.0]]]),
+        _make_cfg(manipulator_name="right_arm", trajectories=[[[2.0]]]),
     )
 
     actions, _ = manager.get_action(_FakeEnv())
 
-    assert set(actions) == {_FAKE_LEFT_ARM_KEY}
+    assert _action_values(actions) == {
+        _LEFT_ARM_KEY: [[1.0]],
+        _RIGHT_ARM_KEY: [[2.0]],
+    }
 
 
-def test_atomic_action_manager_state_key_includes_resolved_robot_name():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0]]],
-            )
-        ]
+def test_get_action_same_manipulator_sequence_waits_until_idle():
+    manager = _make_manager(
+        _make_cfg(manipulator_name="left_arm", trajectories=[[[1.0], [2.0]]]),
+        _make_cfg(manipulator_name="left_arm", trajectories=[[[3.0]]]),
     )
+    env = _FakeEnv()
 
-    _, state = manager.get_action(_FakeEnv())
+    outputs = [_action_values(manager.get_action(env)[0]) for _ in range(4)]
 
-    assert set(state.running_actions) == {_FAKE_LEFT_ARM_KEY}
+    assert outputs == [
+        {_LEFT_ARM_KEY: [[1.0]]},
+        {_LEFT_ARM_KEY: [[2.0]]},
+        {_LEFT_ARM_KEY: [[3.0]]},
+        {},
+    ]
 
 
-def test_atomic_action_manager_dynamic_resolver_selects_right_action_key():
-    manager = AtomicActionManagerCfg()()
-    robot_info = PredicateManipulatorResolver(
-        predicate=lambda env: False,
-        true_robot_info=_piper_robot_info_with_fake_planner("left_arm"),
-        false_robot_info=_piper_robot_info_with_fake_planner("right_arm"),
-    )
-    executor_cfg = PickExecutorCfg(
-        robot_info=robot_info,
-        pick_object_info=ObjectInfo(
-            name="objects/pick_object",
-            mode="active",
-            action="pick",
-            part="gripper",
+def test_get_action_lower_priority_action_waits_until_current_priority_done():
+    manager = _make_manager(
+        _make_cfg(
+            manipulator_name="left_arm",
+            priority=1,
+            trajectories=[[[1.0]]],
         ),
-    )
-
-    manager.register([executor_cfg])
-    actions, _ = manager.get_action(_FakeEnv())
-    _, state = manager.get_action(_FakeEnv())
-
-    assert set(actions) == {_PIPER_RIGHT_ARM_KEY}
-    assert state.running_actions[_PIPER_RIGHT_ARM_KEY].status == "COMPLETED"
-
-
-def test_atomic_action_manager_reset_sequence_reselects_bound_arm():
-    manager = AtomicActionManagerCfg()()
-    robot_info = BoundManipulatorResolver(
-        binding_key="test.pick_move_place_arm",
-        selector=PredicateManipulatorResolver(
-            predicate=lambda env: env.use_left,
-            true_robot_info=_piper_robot_info_with_fake_planner("left_arm"),
-            false_robot_info=_piper_robot_info_with_fake_planner("right_arm"),
-        ),
-    )
-    executor_cfg = PickExecutorCfg(
-        robot_info=robot_info,
-        pick_object_info=ObjectInfo(
-            name="objects/pick_object",
-            mode="active",
-            action="pick",
-            part="gripper",
+        _make_cfg(
+            manipulator_name="right_arm",
+            priority=2,
+            trajectories=[[[2.0]]],
         ),
     )
     env = _FakeEnv()
 
-    manager.register([executor_cfg, executor_cfg])
+    snapshots = []
+    for _ in range(3):
+        actions, state = manager.get_action(env)
+        snapshots.append((_action_values(actions), state.current_priority))
+
+    assert snapshots == [
+        ({_LEFT_ARM_KEY: [[1.0]]}, 1),
+        ({_RIGHT_ARM_KEY: [[2.0]]}, 2),
+        ({}, None),
+    ]
+
+
+def test_get_action_failed_executor_reports_failed_state():
+    manager = _make_manager(_make_cfg(trajectories=[[[1.0]]], success=False))
+
+    actions, state = manager.get_action(_FakeEnv())
+
+    assert (
+        actions,
+        state.running_actions[_LEFT_ARM_KEY].status,
+        state.running_actions[_LEFT_ARM_KEY].success,
+        state.pending_count,
+    ) == ({}, "FAILED", False, 0)
+
+
+def test_get_action_mismatched_env_trajectory_count_raises_value_error():
+    manager = _make_manager(_make_cfg(trajectories=[[[1.0]]]))
+
+    with pytest.raises(ValueError, match="one trajectory per env"):
+        manager.get_action(_FakeEnv(num_envs=2))
+
+
+def test_get_action_resolved_robot_name_appears_in_action_key():
+    manager = _make_manager(
+        _make_cfg(
+            robot_name="robots/custom",
+            manipulator_name="left_arm",
+            trajectories=[[[1.0]]],
+        )
+    )
+
+    actions, _ = manager.get_action(_FakeEnv())
+
+    assert _action_values(actions) == {"robots/custom/left_arm": [[1.0]]}
+
+
+def test_get_action_resolved_robot_name_appears_in_state_key():
+    manager = _make_manager(
+        _make_cfg(
+            robot_name="robots/custom",
+            manipulator_name="left_arm",
+            trajectories=[[[1.0]]],
+        )
+    )
+
+    _, state = manager.get_action(_FakeEnv())
+
+    assert set(state.running_actions) == {"robots/custom/left_arm"}
+
+
+def test_get_action_status_uses_configured_action_type():
+    manager = _make_manager(
+        _make_cfg(action_type="place", trajectories=[[[1.0], [2.0]]])
+    )
+
+    _, state = manager.get_action(_FakeEnv())
+
+    assert state.running_actions[_LEFT_ARM_KEY].action_type == "place"
+
+
+def test_get_action_missing_action_type_infers_executor_name():
+    manager = _make_manager(
+        _make_cfg(action_type="", trajectories=[[[1.0], [2.0]]])
+    )
+
+    _, state = manager.get_action(_FakeEnv())
+
+    assert state.running_actions[_LEFT_ARM_KEY].action_type == (
+        "_faketrajectory"
+    )
+
+
+def test_get_action_predicate_resolver_false_branch_uses_selected_key():
+    resolver = PredicateManipulatorResolver(
+        predicate=lambda env: False,
+        true_robot_info=_StaticManipulatorResolver(
+            manipulator_name="left_arm"
+        ),
+        false_robot_info=_StaticManipulatorResolver(
+            manipulator_name="right_arm"
+        ),
+    )
+    manager = _make_manager(
+        _FakeTrajectoryExecutorCfg(
+            robot_info=resolver,
+            action_type="fake",
+            trajectories=[[[1.0]]],
+        )
+    )
+
+    actions, _ = manager.get_action(_FakeEnv())
+
+    assert _action_values(actions) == {_RIGHT_ARM_KEY: [[1.0]]}
+
+
+def test_get_action_same_manipulator_reuses_planner_instance():
+    planner_cfg = _FakePlannerCfg()
+    trajectories = [[[1.0]], [[1.0]], [[1.0]]]
+    manager = _make_manager(
+        _FakeTrajectoryExecutorCfg(
+            robot_info=_PlannerResolvingManipulatorResolver(
+                planner_cfg=planner_cfg,
+                manipulator_name="left_arm",
+            ),
+            priority=1,
+            action_type="fake",
+            trajectories=trajectories,
+        ),
+        _FakeTrajectoryExecutorCfg(
+            robot_info=_PlannerResolvingManipulatorResolver(
+                planner_cfg=planner_cfg,
+                manipulator_name="right_arm",
+            ),
+            priority=1,
+            action_type="fake",
+            trajectories=trajectories,
+        ),
+        _FakeTrajectoryExecutorCfg(
+            robot_info=_PlannerResolvingManipulatorResolver(
+                planner_cfg=planner_cfg,
+                manipulator_name="left_arm",
+            ),
+            priority=2,
+            action_type="fake",
+            trajectories=trajectories,
+        ),
+    )
+    env = _FakeEnv(num_envs=3)
+
+    manager.get_action(env)
+    manager.get_action(env)
+
+    assert [instance.env_nums for instance in planner_cfg.instances] == [3, 3]
+
+
+def test_reset_sequence_bound_resolver_reselects_manipulator():
+    resolver = BoundManipulatorResolver(
+        binding_key="test.sequence_arm",
+        selector=PredicateManipulatorResolver(
+            predicate=lambda env: env.use_left,
+            true_robot_info=_StaticManipulatorResolver(
+                manipulator_name="left_arm"
+            ),
+            false_robot_info=_StaticManipulatorResolver(
+                manipulator_name="right_arm"
+            ),
+        ),
+    )
+    manager = _make_manager(
+        _FakeTrajectoryExecutorCfg(
+            robot_info=resolver,
+            action_type="fake",
+            trajectories=[[[1.0]]],
+        ),
+        _FakeTrajectoryExecutorCfg(
+            robot_info=resolver,
+            action_type="fake",
+            trajectories=[[[2.0]]],
+        ),
+    )
+    env = _FakeEnv()
+
     first_actions, _ = manager.get_action(env)
     env.use_left = False
     second_actions, _ = manager.get_action(env)
@@ -352,264 +500,111 @@ def test_atomic_action_manager_reset_sequence_reselects_bound_arm():
         set(first_actions),
         set(second_actions),
         set(third_actions),
-    ] == [{_PIPER_LEFT_ARM_KEY}, {_PIPER_LEFT_ARM_KEY}, {_PIPER_RIGHT_ARM_KEY}]
+    ] == [{_LEFT_ARM_KEY}, {_LEFT_ARM_KEY}, {_RIGHT_ARM_KEY}]
 
 
-def test_atomic_action_manager_parallel_arms_emit_stepwise_actions():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0], [2.0]]],
-            ),
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["right_arm"],
-                manipulator_name="right_arm",
-                trajectory=[[[10.0], [20.0]]],
-            ),
-        ]
-    )
-
-    first_actions, first_state = manager.get_action(_FakeEnv())
-    second_actions, second_state = manager.get_action(_FakeEnv())
-    third_actions, third_state = manager.get_action(_FakeEnv())
-
-    assert {
-        "first": {
-            name: action.tolist() for name, action in first_actions.items()
-        },
-        "second": {
-            name: action.tolist() for name, action in second_actions.items()
-        },
-        "third": third_actions,
-        "busy": [
-            first_state.env_busy.tolist(),
-            second_state.env_busy.tolist(),
-            third_state.env_busy.tolist(),
-        ],
-    } == {
-        "first": {
-            _FAKE_LEFT_ARM_KEY: [[1.0]],
-            _FAKE_RIGHT_ARM_KEY: [[10.0]],
-        },
-        "second": {
-            _FAKE_LEFT_ARM_KEY: [[2.0]],
-            _FAKE_RIGHT_ARM_KEY: [[20.0]],
-        },
-        "third": {},
-        "busy": [[True], [True], [False]],
-    }
-
-
-def test_atomic_action_manager_same_arm_waits_for_previous_completion():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0], [2.0]]],
-            ),
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[3.0]]],
-            ),
-        ]
-    )
-
-    outputs = [manager.get_action(_FakeEnv())[0] for _ in range(4)]
-
-    left_arm_outputs = [
-        output.get(_FAKE_LEFT_ARM_KEY, torch.empty(0)).tolist()
-        for output in outputs
-    ]
-
-    assert left_arm_outputs == [
-        [[1.0]],
-        [[2.0]],
-        [[3.0]],
-        [],
-    ]
-
-
-def test_atomic_action_manager_planner_cfg_per_manipulator_shares_instance():
-    manager = AtomicActionManagerCfg()()
-    planner_cfg = _FakePlannerCfg()
-    manager.register(
-        [
-            _PlannerProbeExecutorCfg(
-                robot_info=replace(
-                    DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                    planner=planner_cfg,
-                ),
-                priority=1,
-            ),
-            _PlannerProbeExecutorCfg(
-                robot_info=replace(
-                    DUALARM_PIPER_ROBOT_INFO_CFGS["right_arm"],
-                    planner=planner_cfg,
-                ),
-                priority=1,
-            ),
-            _PlannerProbeExecutorCfg(
-                robot_info=replace(
-                    DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                    planner=planner_cfg,
-                ),
-                priority=2,
-            ),
-        ]
-    )
-
+def test_clear_completed_segment_allows_new_registered_segment():
+    manager = _make_manager(_make_cfg(trajectories=[[[1.0]]]))
     env = _FakeEnv()
     manager.get_action(env)
     manager.get_action(env)
 
-    assert [instance.env_nums for instance in planner_cfg.instances] == [
-        env.num_envs,
-        env.num_envs,
-    ]
-
-
-def test_atomic_action_manager_lower_priority_blocks_higher_priority():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                priority=1,
-                trajectory=[[[1.0]]],
-            ),
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["right_arm"],
-                manipulator_name="right_arm",
-                priority=2,
-                trajectory=[[[2.0]]],
-            ),
-        ]
-    )
-
-    states = []
-    outputs = []
-    for _ in range(3):
-        actions, state = manager.get_action(_FakeEnv())
-        outputs.append(set(actions))
-        states.append(state.current_priority)
-
-    assert outputs == [{_FAKE_LEFT_ARM_KEY}, {_FAKE_RIGHT_ARM_KEY}, set()]
-    assert states == [1, 2, None]
-
-
-def test_atomic_action_manager_failed_executor_emits_no_actions():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0]]],
-                success=False,
-            )
-        ]
-    )
-
-    actions, _ = manager.get_action(_FakeEnv())
-
-    assert actions == {}
-
-
-def test_atomic_action_manager_failed_executor_state_shows_failed_status():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0]]],
-                success=False,
-            )
-        ]
-    )
-
-    _, state = manager.get_action(_FakeEnv())
-
-    assert state.running_actions[_FAKE_LEFT_ARM_KEY].status == "FAILED"
-    assert state.running_actions[_FAKE_LEFT_ARM_KEY].success is False
-
-
-def test_atomic_action_manager_mismatched_env_trajs_raises_value_error():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0]], [[2.0]]],
-            )
-        ]
-    )
-
-    try:
-        manager.get_action(_FakeEnv())
-    except ValueError as exc:
-        assert "one trajectory per env" in str(exc)
-    else:
-        raise AssertionError(
-            "Expected ValueError for mismatched trajectories."
-        )
-
-
-def test_atomic_action_manager_segment_runs_until_all_actions_complete():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0]]],
-            )
-        ]
-    )
-
-    actions, _ = manager.get_action(_FakeEnv())
-    _, state = manager.get_action(_FakeEnv())
-
-    assert set(actions) == {_FAKE_LEFT_ARM_KEY}
-    assert state.pending_count == 0
-
-
-def test_atomic_action_manager_clear_allows_registering_new_segment():
-    manager = AtomicActionManagerCfg()()
-    manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["left_arm"],
-                manipulator_name="left_arm",
-                trajectory=[[[1.0]]],
-            )
-        ]
-    )
-    # Run first segment to completion
-    manager.get_action(_FakeEnv())
-    manager.get_action(_FakeEnv())
-
     manager.clear()
     manager.register(
-        [
-            _FakeTrajectoryExecutorCfg(
-                robot_info=DUALARM_PIPER_ROBOT_INFO_CFGS["right_arm"],
-                manipulator_name="right_arm",
-                trajectory=[[[2.0]]],
-            )
-        ]
+        [_make_cfg(manipulator_name="right_arm", trajectories=[[[2.0]]])]
+    )
+    actions, _ = manager.get_action(env)
+
+    assert _action_values(actions) == {_RIGHT_ARM_KEY: [[2.0]]}
+
+
+def test_manager_cfg_debug_vis_disabled_skips_target_marker(monkeypatch):
+    records: list[str] = []
+
+    def _record_pose(
+        self: AtomicActionDebugVisualizer,
+        *,
+        marker_name: str,
+        pose_w: torch.Tensor,
+    ) -> None:
+        del self, pose_w
+        records.append(marker_name)
+
+    monkeypatch.setattr(
+        AtomicActionDebugVisualizer,
+        "visualize_pose",
+        _record_pose,
+    )
+    manager = _make_manager(
+        _make_cfg(debug_target_names=("target",)),
+        debug_vis=False,
     )
 
-    actions, state = manager.get_action(_FakeEnv())
+    manager.get_action(_FakeEnv())
 
-    assert set(actions) == {_FAKE_RIGHT_ARM_KEY}
-    assert _FAKE_LEFT_ARM_KEY not in actions
-    assert state.running_actions[_FAKE_RIGHT_ARM_KEY].status == "COMPLETED"
+    assert records == []
+
+
+def test_manager_cfg_debug_vis_enabled_publishes_target_marker(monkeypatch):
+    records: list[str] = []
+
+    def _record_pose(
+        self: AtomicActionDebugVisualizer,
+        *,
+        marker_name: str,
+        pose_w: torch.Tensor,
+    ) -> None:
+        del self, pose_w
+        records.append(marker_name)
+
+    monkeypatch.setattr(
+        AtomicActionDebugVisualizer,
+        "visualize_pose",
+        _record_pose,
+    )
+    manager = _make_manager(
+        _make_cfg(debug_target_names=("target",)),
+        debug_vis=True,
+    )
+
+    manager.get_action(_FakeEnv())
+
+    assert records == ["robots_fake_left_arm_target"]
+
+
+def test_clear_debug_vis_enabled_clears_markers(monkeypatch):
+    records: list[str] = []
+
+    def _record_pose(
+        self: AtomicActionDebugVisualizer,
+        *,
+        marker_name: str,
+        pose_w: torch.Tensor,
+    ) -> None:
+        del self, marker_name, pose_w
+        records.append("visualize")
+
+    def _record_clear(self: AtomicActionDebugVisualizer) -> None:
+        del self
+        records.append("clear")
+
+    monkeypatch.setattr(
+        AtomicActionDebugVisualizer,
+        "visualize_pose",
+        _record_pose,
+    )
+    monkeypatch.setattr(
+        AtomicActionDebugVisualizer,
+        "clear",
+        _record_clear,
+        raising=False,
+    )
+    manager = _make_manager(
+        _make_cfg(debug_target_names=("target",)),
+        debug_vis=True,
+    )
+
+    manager.get_action(_FakeEnv())
+    manager.clear()
+
+    assert records == ["visualize", "clear"]

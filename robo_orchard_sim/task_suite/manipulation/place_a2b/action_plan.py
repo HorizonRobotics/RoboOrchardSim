@@ -20,7 +20,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from robo_orchard_sim.tasks.trajs_gen.base_executor import ObjectInfo
-from robo_orchard_sim.tasks.trajs_gen.executors.pick import PickExecutorCfg
+from robo_orchard_sim.tasks.trajs_gen.executors import (
+    BackToDefaultExecutorCfg,
+    PickExecutorCfg,
+    PlaceExecutorCfg,
+)
+from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
+    BoundManipulatorResolver,
+    PredicateManipulatorResolver,
+)
+from robo_orchard_sim.tasks.trajs_gen.pose_generator import (
+    MoveByJointOffsetCfg,
+)
 
 if TYPE_CHECKING:
     from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
@@ -33,32 +44,51 @@ def build_task_atomic_action_plan(
     """Build the default atomic action plan for place-a2b."""
     task = cast(Any, orchard_env.task)
     pick_obj = task.pick_object.scene_name
+    place_obj = task.place_object.scene_name
     left_arm = orchard_env.embodiment.get_robot_info_cfg("left_arm")
     right_arm = orchard_env.embodiment.get_robot_info_cfg("right_arm")
 
+    def pick_object_is_on_left(env: Any) -> bool:
+        object_data = env.scene[pick_obj].data.root_pos_w
+        return bool(object_data[0, 1].item() > 0.0)
+
+    selector = PredicateManipulatorResolver(
+        predicate=pick_object_is_on_left,
+        true_robot_info=left_arm,
+        false_robot_info=right_arm,
+    )
+    arm = BoundManipulatorResolver(binding_key="pick-move", selector=selector)
+
     return [
         PickExecutorCfg(
-            robot_info=left_arm,
+            robot_info=arm,
             pick_object_info=ObjectInfo(
-                name=pick_obj, mode="active", action="pick", part="gripper"
+                name=pick_obj, mode="passive", action="pick", part="body"
             ),
-            priority=1,
+            pre_grasp=MoveByJointOffsetCfg(
+                joint_id_idxs=[1],
+                joint_offsets=[-0.15],
+            ),
+            grasp_mode="Top-down",
+            priority=0,
         ),
-        PickExecutorCfg(
-            robot_info=right_arm,
+        PlaceExecutorCfg(
+            robot_info=arm,
             pick_object_info=ObjectInfo(
-                name=pick_obj, mode="active", action="pick", part="gripper"
+                name=pick_obj, mode="active", action="place", part="body"
             ),
-            priority=2,
+            place_object_info=ObjectInfo(
+                name=place_obj, mode="passive", action="place", part="body"
+            ),
+            pre_place_cfg=MoveByJointOffsetCfg(
+                joint_id_idxs=[1],
+                joint_offsets=[-0.15],
+            ),
+            constrain="free",
+            priority=0,
         ),
-        # MoveExecutorCfg(
-        #     robot_info=left_arm,
-        #     target_pose=[0.38, -0.25, 0.25, 0.265, 0.092, 0.963, 0.0374],
-        #     priority=0,
-        # ),
-        # MoveExecutorCfg(
-        #     robot_info=right_arm,
-        #     target_pose=[0.38, 0.25, 0.25, 0.245, -0.097, 0.963, -0.044],
-        #     priority=0,
-        # ),
+        BackToDefaultExecutorCfg(
+            robot_info=arm,
+            priority=0,
+        ),
     ]

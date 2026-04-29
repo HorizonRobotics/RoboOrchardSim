@@ -33,9 +33,13 @@ from robo_orchard_core.utils.config import (
 )
 from typing_extensions import Literal, TypeAlias
 
+from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
+    ResolvedManipulatorProfile,
+)
 from robo_orchard_sim.tasks.trajs_gen.base_executor import (
     BaseExecutor,
     BaseExecutorCfg,
+    DebugTargetPose,
 )
 from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
     ManipulatorBindingContext,
@@ -172,6 +176,7 @@ class AtomicActionManager:
         self._registered_actions: list[_RegisteredAction] = []
         self._active_actions: dict[str, _ActiveAction] = {}
         self._manipulator_context = ManipulatorBindingContext()
+        self._debug_visualizer: Any | None = None
 
     def register(self, atomic_actions: list[BaseExecutorCfg]) -> None:
         for action_cfg in atomic_actions:
@@ -198,6 +203,8 @@ class AtomicActionManager:
         self._registered_actions.clear()
         self._active_actions.clear()
         self._manipulator_context.reset()
+        if self._debug_visualizer is not None:
+            self._debug_visualizer.clear()
 
     def reset_sequence(self) -> None:
         """Reset sequence-scoped manipulator binding decisions."""
@@ -285,11 +292,23 @@ class AtomicActionManager:
             if registered.priority != priority:
                 continue
 
+            resolved = registered.executor.cfg.resolve_manipulator_info(
+                env,
+                context=self._manipulator_context,
+            )
+            if resolved.manipulator_name in self._active_actions:
+                continue
+
             trajectories = registered.executor.plan(
                 env,
                 context=self._manipulator_context,
             )
             resolved = trajectories.resolved_manipulator
+            if self.cfg.debug_vis:
+                self._visualize_debug_target_poses(
+                    resolved=resolved,
+                    target_poses=trajectories.debug_target_poses,
+                )
             manipulator_name = resolved.manipulator_name
             action_key = f"{resolved.robot_name}/{resolved.manipulator_name}"
             registered.manipulator_name = manipulator_name
@@ -348,11 +367,56 @@ class AtomicActionManager:
             success=registered.success,
         )
 
+    def _get_debug_visualizer(self) -> Any:
+        if self._debug_visualizer is not None:
+            return self._debug_visualizer
+
+        from robo_orchard_sim.tasks.trajs_gen.debug_vis import (
+            AtomicActionDebugVisualizer,
+        )
+
+        self._debug_visualizer = AtomicActionDebugVisualizer(
+            marker_scale=self.cfg.debug_vis_marker_scale,
+        )
+        return self._debug_visualizer
+
+    def _visualize_debug_target_poses(
+        self,
+        *,
+        resolved: ResolvedManipulatorProfile,
+        target_poses: tuple[DebugTargetPose, ...],
+    ) -> None:
+        visualizer = self._get_debug_visualizer()
+        for target_pose in target_poses:
+            visualizer.visualize_pose(
+                marker_name=self._debug_marker_name(
+                    resolved=resolved,
+                    target_name=target_pose.name,
+                ),
+                pose_w=target_pose.pose_w,
+            )
+
+    def _debug_marker_name(
+        self,
+        *,
+        resolved: ResolvedManipulatorProfile,
+        target_name: str,
+    ) -> str:
+        return "_".join(
+            (
+                resolved.robot_name,
+                resolved.manipulator_name,
+                target_name,
+            )
+        ).replace("/", "_")
+
 
 class AtomicActionManagerCfg(ClassConfig):
     """Configuration for :class:`AtomicActionManager`."""
 
     class_type: ClassType_co[AtomicActionManager] = AtomicActionManager
+    debug_vis: bool = False
+    debug_vis_marker_scale: tuple[float, float, float] = (0.1, 0.1, 0.1)
 
     def __call__(self, **kwargs: Any) -> AtomicActionManager:
         return self.class_type(self, **kwargs)
