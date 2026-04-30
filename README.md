@@ -226,6 +226,55 @@ python3 examples/manipulation-app/scripts/simple_orchard_env_example.py \
   --output configs/place_a2b_orchard_env_example.json
 ```
 
+#### Run `data_synthesis_example.py`
+
+This example resamples task assets per seed, builds a fresh `OrchardEnv` for
+each episode, executes the task atomic action plan, and optionally records the
+result as MCAP data.
+
+If `ORCHARD_ASSET_LIBRARY` is not set, pass the asset library explicitly:
+
+```bash
+python3 examples/manipulation-app/scripts/data_synthesis_example.py \
+  --task place_a2b_easy \
+  --asset-root ${ASSETS_DIR} \
+  --episodes 3 \
+  --seed 0
+```
+
+By default, recordings are written under:
+
+```bash
+logs/data_synthesis/<task>_<timestamp>/
+```
+
+and the per-episode serialized env configs are written under:
+
+```bash
+configs/data_synthesis/
+```
+
+Useful optional flags:
+
+```bash
+python3 examples/manipulation-app/scripts/data_synthesis_example.py \
+  --task place_a2b_easy \
+  --asset-root ${ASSETS_DIR} \
+  --config path/to/task.yaml \
+  --max-steps 300 \
+  --record-dir logs/my_synthesis \
+  --output-config-dir configs/my_synthesis
+```
+
+To run the synthesis loop without MCAP recording:
+
+```bash
+python3 examples/manipulation-app/scripts/data_synthesis_example.py \
+  --task place_a2b_easy \
+  --asset-root ${ASSETS_DIR} \
+  --disable-recording
+```
+
 #### Run `eval_policy.py`
 
 You can override the evaluation seed, number of episodes, maximum steps, and

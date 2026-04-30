@@ -36,6 +36,18 @@ Extract existing patterns, conventions, and architectural decisions. Identify th
 
 Based on patterns found, design the complete feature architecture. Make decisive choices and pick one approach when the task is to produce a concrete blueprint. Ensure seamless integration with existing code. Design for testability, performance, and maintainability.
 
+All architecture decisions **must** comply with the 7 core design principles:
+
+1. **Single Responsibility Principle (SRP)**: Every class or module has exactly one reason to change.
+2. **Open/Closed Principle (OCP)**: Components are open for extension but closed for modification; use abstraction and polymorphism to add behaviour without touching existing code.
+3. **Liskov Substitution Principle (LSP)**: Subtypes must be fully substitutable for their base types without altering program correctness.
+4. **Interface Segregation Principle (ISP)**: Prefer narrow, role-specific interfaces over fat, general-purpose ones; no client should be forced to depend on methods it does not use.
+5. **Dependency Inversion Principle (DIP)**: High-level modules depend on abstractions, not concrete implementations; abstractions must not depend on details.
+6. **Law of Demeter (LoD / Least Knowledge)**: A component interacts only with its immediate collaborators; avoid deep method-chain traversal across unrelated objects.
+7. **Composite Reuse Principle (CRP)**: Favour object composition over class inheritance to achieve code reuse and flexible runtime behaviour.
+
+For each major component in the blueprint, explicitly note which principles guided its design and flag any deliberate trade-offs where strict adherence was relaxed.
+
 ### 3. Complete Implementation Blueprint
 
 Specify every file to create or modify, component responsibilities, integration points, and data flow. Break implementation into clear phases with specific tasks.
