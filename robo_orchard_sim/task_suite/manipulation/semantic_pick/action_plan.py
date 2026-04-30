@@ -77,7 +77,7 @@ def build_task_atomic_action_plan(
             robot_info=arm,
             target=MoveByJointOffsetCfg(
                 joint_id_idxs=[1],
-                joint_offsets=[-0.2],
+                joint_offsets=[-0.3],
             ),
             gripper_state="CLOSED",
             priority=0,

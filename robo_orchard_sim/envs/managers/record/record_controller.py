@@ -100,6 +100,8 @@ class StationaryEpisodeRecordController(RecordController):
     ) -> RecordControlDecision:
         if self._started:
             return RecordControlDecision()
+        if self.env.step_count < self.cfg.min_wait_step:
+            return RecordControlDecision()
         if self._scene_is_stationary() or (
             self.env.step_count >= self.cfg.max_wait_step
         ):
@@ -147,4 +149,5 @@ class StationaryEpisodeRecordControllerCfg(RecordControllerCfg):
     )
     linear_velocity_threshold: float = 0.02
     angular_velocity_threshold: float = 0.1
+    min_wait_step: int = 10
     max_wait_step: int = 100

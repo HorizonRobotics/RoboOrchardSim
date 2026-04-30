@@ -404,7 +404,10 @@ class TestRecordManagerLifecycle:
                 fps=10.0,
                 key="obs/value",
             ),
-            controller=StationaryEpisodeRecordControllerCfg(max_wait_step=100),
+            controller=StationaryEpisodeRecordControllerCfg(
+                min_wait_step=0,
+                max_wait_step=100,
+            ),
         )
         env.scene = {
             "moving": _StubAsset(
@@ -445,7 +448,10 @@ class TestRecordManagerLifecycle:
                 fps=10.0,
                 key="obs/value",
             ),
-            controller=StationaryEpisodeRecordControllerCfg(max_wait_step=100),
+            controller=StationaryEpisodeRecordControllerCfg(
+                min_wait_step=0,
+                max_wait_step=100,
+            ),
         )
         env.scene = {
             "camera": _StubAsset(),
@@ -466,6 +472,44 @@ class TestRecordManagerLifecycle:
 
         assert [call.data for call in term.calls] == [{"obs/value": 1}]
 
+    def test_stationary_controller_before_min_wait_step_waits_to_record(
+        self, tmp_path
+    ):
+        manager, env, term = _make_manager_with_single_term(
+            tmp_path,
+            term_cfg=_StubRecordTermCfg(
+                topic="/step",
+                fps=10.0,
+                key="obs/value",
+            ),
+            controller=StationaryEpisodeRecordControllerCfg(
+                max_wait_step=100,
+            ),
+        )
+        env.scene = {
+            "object": _StubAsset(
+                root_state_w=_make_root_state(
+                    lin_vel=(0.0, 0.0, 0.0),
+                    ang_vel=(0.0, 0.0, 0.0),
+                )
+            )
+        }
+
+        manager.record_post_reset(
+            {"obs": {"value": 0}},
+            dt.datetime(2026, 1, 1, 12, 0, 0),
+        )
+        for step in range(1, 10):
+            env.step_count = step
+            manager.record_step({"obs": {"value": step}})
+
+        assert term.calls == []
+
+        env.step_count = 10
+        manager.record_step({"obs": {"value": 10}})
+
+        assert [call.data for call in term.calls] == [{"obs/value": 10}]
+
     def test_stationary_controller_at_max_wait_step_starts_recording(
         self, tmp_path
     ):
@@ -476,7 +520,10 @@ class TestRecordManagerLifecycle:
                 fps=10.0,
                 key="obs/value",
             ),
-            controller=StationaryEpisodeRecordControllerCfg(max_wait_step=3),
+            controller=StationaryEpisodeRecordControllerCfg(
+                min_wait_step=0,
+                max_wait_step=3,
+            ),
         )
         env.scene = {
             "moving": _StubAsset(
@@ -512,7 +559,10 @@ class TestRecordManagerLifecycle:
                 fps=10.0,
                 key="obs/value",
             ),
-            controller=StationaryEpisodeRecordControllerCfg(max_wait_step=2),
+            controller=StationaryEpisodeRecordControllerCfg(
+                min_wait_step=0,
+                max_wait_step=2,
+            ),
         )
         env.scene = {"camera": _StubAsset()}
 
@@ -539,7 +589,10 @@ class TestRecordManagerLifecycle:
                 fps=10.0,
                 key="obs/value",
             ),
-            controller=StationaryEpisodeRecordControllerCfg(max_wait_step=100),
+            controller=StationaryEpisodeRecordControllerCfg(
+                min_wait_step=0,
+                max_wait_step=100,
+            ),
         )
         env.scene = {
             "terrain": None,
@@ -570,7 +623,10 @@ class TestRecordManagerLifecycle:
                 fps=10.0,
                 key="obs/value",
             ),
-            controller=StationaryEpisodeRecordControllerCfg(max_wait_step=100),
+            controller=StationaryEpisodeRecordControllerCfg(
+                min_wait_step=0,
+                max_wait_step=100,
+            ),
         )
         env.scene = {
             "pose_only": _StubAsset(root_state_w=_make_pose_only_root_state()),

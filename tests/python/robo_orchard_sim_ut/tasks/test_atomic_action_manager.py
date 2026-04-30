@@ -518,6 +518,68 @@ def test_clear_completed_segment_allows_new_registered_segment():
     assert _action_values(actions) == {_RIGHT_ARM_KEY: [[2.0]]}
 
 
+def test_clear_default_keeps_cached_planner_instance():
+    planner_cfg = _FakePlannerCfg()
+    manager = _make_manager(
+        _FakeTrajectoryExecutorCfg(
+            robot_info=_PlannerResolvingManipulatorResolver(
+                planner_cfg=planner_cfg
+            ),
+            action_type="fake",
+            trajectories=[[[1.0]]],
+        )
+    )
+    env = _FakeEnv()
+
+    manager.get_action(env)
+    manager.clear()
+    manager.register(
+        [
+            _FakeTrajectoryExecutorCfg(
+                robot_info=_PlannerResolvingManipulatorResolver(
+                    planner_cfg=planner_cfg
+                ),
+                action_type="fake",
+                trajectories=[[[2.0]]],
+            )
+        ]
+    )
+    manager.get_action(env)
+
+    assert len(planner_cfg.instances) == 1
+
+
+def test_clear_clear_planner_instances_discards_cached_planner_instance():
+    planner_cfg = _FakePlannerCfg()
+    manager = _make_manager(
+        _FakeTrajectoryExecutorCfg(
+            robot_info=_PlannerResolvingManipulatorResolver(
+                planner_cfg=planner_cfg
+            ),
+            action_type="fake",
+            trajectories=[[[1.0]]],
+        )
+    )
+    env = _FakeEnv()
+
+    manager.get_action(env)
+    manager.clear(clear_planner_instances=True)
+    manager.register(
+        [
+            _FakeTrajectoryExecutorCfg(
+                robot_info=_PlannerResolvingManipulatorResolver(
+                    planner_cfg=planner_cfg
+                ),
+                action_type="fake",
+                trajectories=[[[2.0]]],
+            )
+        ]
+    )
+    manager.get_action(env)
+
+    assert len(planner_cfg.instances) == 2
+
+
 def test_manager_cfg_debug_vis_disabled_skips_target_marker(monkeypatch):
     records: list[str] = []
 

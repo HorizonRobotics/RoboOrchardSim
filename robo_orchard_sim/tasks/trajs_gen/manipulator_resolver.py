@@ -80,9 +80,17 @@ class ManipulatorBindingContext:
             )
         return self._planner_instances[key]
 
-    def reset(self) -> None:
-        """Clear all selected manipulators for the next action sequence."""
+    def reset(self, *, clear_planner_instances: bool = False) -> None:
+        """Clear context state for the next action sequence.
+
+        Args:
+            clear_planner_instances: Whether to also discard cached planner
+                instances. Defaults to ``False`` so expensive planner setup can
+                be reused across independent action sequences.
+        """
         self._selected.clear()
+        if clear_planner_instances:
+            self._planner_instances.clear()
 
 
 class PredicateManipulatorResolver:

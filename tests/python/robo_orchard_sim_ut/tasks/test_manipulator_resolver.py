@@ -34,6 +34,19 @@ class _FakePlanner:
     pass
 
 
+class _FakePlannerInstance:
+    def __init__(self, cfg: "_FakePlannerCfg", env_nums: int) -> None:
+        self.env_nums = env_nums
+        cfg.instances.append(self)
+
+
+class _FakePlannerCfg:
+    class_type = _FakePlannerInstance
+
+    def __init__(self) -> None:
+        self.instances: list[_FakePlannerInstance] = []
+
+
 class _RobotInfo:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -161,3 +174,45 @@ def test_bound_resolver_context_reset_reselects_robot_info():
         second.manipulator_name,
         third.manipulator_name,
     ] == ["left_arm", "left_arm", "right_arm"]
+
+
+def test_manipulator_context_reset_default_keeps_planner_instance():
+    context = ManipulatorBindingContext()
+    planner_cfg = _FakePlannerCfg()
+
+    first = context.resolve_planner_instance(
+        robot_name="robots/fake",
+        manipulator_name="left_arm",
+        planner_cfg=planner_cfg,
+        env_nums=1,
+    )
+    context.reset()
+    second = context.resolve_planner_instance(
+        robot_name="robots/fake",
+        manipulator_name="left_arm",
+        planner_cfg=planner_cfg,
+        env_nums=1,
+    )
+
+    assert (first is second, len(planner_cfg.instances)) == (True, 1)
+
+
+def test_manipulator_context_reset_clear_planner_instances_creates_new_one():
+    context = ManipulatorBindingContext()
+    planner_cfg = _FakePlannerCfg()
+
+    first = context.resolve_planner_instance(
+        robot_name="robots/fake",
+        manipulator_name="left_arm",
+        planner_cfg=planner_cfg,
+        env_nums=1,
+    )
+    context.reset(clear_planner_instances=True)
+    second = context.resolve_planner_instance(
+        robot_name="robots/fake",
+        manipulator_name="left_arm",
+        planner_cfg=planner_cfg,
+        env_nums=1,
+    )
+
+    assert (first is second, len(planner_cfg.instances)) == (False, 2)

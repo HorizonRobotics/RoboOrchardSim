@@ -86,6 +86,41 @@ class AtomicActionManagerState:
     env_busy: torch.Tensor
 
 
+class ActionStatusLogger:
+    """Throttle status logging for atomic actions."""
+
+    def __init__(self, running_interval: int = 50) -> None:
+        self.running_interval = running_interval
+        self._last_status_by_action_key: dict[str, AtomicActionLifecycle] = {}
+
+    def collect(
+        self,
+        *,
+        running_actions: dict[str, AtomicActionStatus],
+        step_idx: int,
+    ) -> list[str]:
+        """Return formatted status lines for the current step."""
+        log_lines: list[str] = []
+        for action_key, action_status in sorted(running_actions.items()):
+            status = action_status.status
+            previous_status = self._last_status_by_action_key.get(action_key)
+            if status == "RUNNING":
+                if step_idx % self.running_interval != 0:
+                    continue
+            elif previous_status == status:
+                continue
+
+            log_lines.append(
+                f"[{action_key}]:{action_status.action_type}---{status}"
+            )
+
+        self._last_status_by_action_key = {
+            action_key: action_status.status
+            for action_key, action_status in running_actions.items()
+        }
+        return log_lines
+
+
 @dataclass
 class _RegisteredAction:
     executor: BaseExecutor
@@ -194,15 +229,22 @@ class AtomicActionManager:
                 )
             )
 
-    def clear(self) -> None:
+    def clear(self, clear_planner_instances: bool = False) -> None:
         """Remove all registered actions and reset runtime state.
 
         Use this between task segments to discard completed actions
         before registering a new plan on the same manager instance.
+
+        Args:
+            clear_planner_instances: Whether to also discard cached planner
+                instances. Defaults to ``False`` so planner setup can be reused
+                across independent environments in a long-running process.
         """
         self._registered_actions.clear()
         self._active_actions.clear()
-        self._manipulator_context.reset()
+        self._manipulator_context.reset(
+            clear_planner_instances=clear_planner_instances
+        )
         if self._debug_visualizer is not None:
             self._debug_visualizer.clear()
 
