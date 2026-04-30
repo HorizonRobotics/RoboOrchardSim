@@ -25,7 +25,10 @@ logs/
 *.pid
 *.log*
 eval_result/
-configs/
+/configs/
+tools/asset_pipeline/configs/*
+!tools/asset_pipeline/configs/gpt_config_template.yaml
+outputs/
 
 # editor and notebook state
 .idea/
@@ -74,4 +77,3 @@ torchelastic*
 *_pb2.py
 
 #agent doc
-

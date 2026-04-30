@@ -16,6 +16,9 @@
 
 """Public runtime helpers for the task suite."""
 
-from robo_orchard_sim.task_suite.registry import build_task
+from robo_orchard_sim.task_suite.registry import (
+    build_task,
+    build_task_atomic_action_plan,
+)
 
-__all__ = ["build_task"]
+__all__ = ["build_task", "build_task_atomic_action_plan"]

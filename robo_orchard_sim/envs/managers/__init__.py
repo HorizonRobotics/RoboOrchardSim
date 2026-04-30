@@ -15,3 +15,7 @@
 # permissions and limitations under the License.
 
 """Environment managers for Isaac."""
+
+from . import record
+
+__all__ = ["record"]

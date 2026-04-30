@@ -18,6 +18,7 @@ import argparse
 import atexit
 import importlib
 import os
+import subprocess
 import sys
 import time
 from abc import ABCMeta, abstractmethod
@@ -29,6 +30,45 @@ from typing import TYPE_CHECKING, Callable, Generator
 os.environ["OMNI_KIT_ACCEPT_EULA"] = "YES"
 os.environ["OMNI_KIT_ALLOW_ROOT"] = "1"
 
+
+def _configure_torch_cuda_arch_list() -> None:
+    """Configure Torch CUDA JIT arch for the current host.
+
+    Priority:
+    1. `ROBO_ORCHARD_TORCH_CUDA_ARCH_LIST` explicit override.
+    2. Auto-detect the current GPU compute capability and use
+       ``<capability>+PTX``.
+    """
+    override = os.environ.get("ROBO_ORCHARD_TORCH_CUDA_ARCH_LIST")
+    if override:
+        os.environ["TORCH_CUDA_ARCH_LIST"] = override
+        return
+
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=compute_cap",
+                "--format=csv,noheader",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return
+
+    for line in result.stdout.splitlines():
+        capability = line.strip()
+        if not capability:
+            continue
+        os.environ["TORCH_CUDA_ARCH_LIST"] = f"{capability}+PTX"
+        return
+
+
+_configure_torch_cuda_arch_list()
+
+import torch  # isort:skip # noqa: E402
 from isaaclab.app import AppLauncher  # isort:skip # noqa: E402
 from robo_orchard_core.utils.misc import (  # isort:skip # noqa: E402
     SingletonMixin,
@@ -37,6 +77,46 @@ from robo_orchard_core.utils.misc import (  # isort:skip # noqa: E402
 if TYPE_CHECKING:
     from isaacsim.simulation_app import SimulationApp
     from pyvirtualdisplay.smartdisplay import SmartDisplay as Display
+
+
+def _disable_torch_jit_gpu_fusion() -> None:
+    """Disable TorchScript GPU fusion paths that trigger NVRTC failures.
+
+    Only applied on Blackwell (compute capability >= 12.0) where these paths
+    cause NVRTC failures. Older GPUs (e.g. RTX 4090, compute 8.9) benefit from
+    these optimisations and are left untouched.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=compute_cap",
+                "--format=csv,noheader",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        capability = result.stdout.strip().splitlines()[0].strip()
+        major = int(capability.split(".")[0])
+    except Exception:
+        return
+
+    if major < 12:
+        return
+
+    for name, value in (
+        ("_jit_override_can_fuse_on_gpu", False),
+        ("_jit_set_texpr_fuser_enabled", False),
+        ("_jit_set_profiling_executor", False),
+        ("_jit_set_profiling_mode", False),
+    ):
+        fn = getattr(torch._C, name, None)
+        if fn is not None:
+            fn(value)
+
+
+_disable_torch_jit_gpu_fusion()
 
 
 def close_app(
@@ -340,6 +420,7 @@ class SimpleIsaacAppLauncher(SingletonMixin):
     ):
         self._closed = False
         self._display = None
+        _configure_torch_cuda_arch_list()
 
         if virtual_display:
             from pyvirtualdisplay.smartdisplay import SmartDisplay as Display

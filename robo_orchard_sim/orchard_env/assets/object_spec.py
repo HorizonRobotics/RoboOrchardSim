@@ -32,6 +32,9 @@ from robo_orchard_sim.orchard_env.assets.asset_spec import AssetSpec
 class ObjectSpec(AssetSpec, ABC):
     """Abstract base class for task-usable object assets."""
 
+    usd_path: str | None = None
+    scale: tuple[float, float, float] | None = None
+    mass: float | None = None
     initial_pos: tuple[float, float, float] | None = None
     initial_rot: tuple[float, float, float, float] | None = None
 
@@ -39,15 +42,20 @@ class ObjectSpec(AssetSpec, ABC):
 class RigidObjectSpec(ObjectSpec):
     """User-facing description for rigid object assets."""
 
-    usd_path: str
-    scale: tuple[float, float, float] | None = None
     interaction_path: str | None = None
-    mass: float | None = None
-    tag: str = ""
+    caption_path: str | None = None
+    uuid: str | None = None
+    category: str | None = None
+    actor_type: str = "object"
+    attributes: tuple[str, ...] = ()
 
     def to_isaac_cfg(self) -> RigidObjectCfg:
         """Convert this spec into a rigid object cfg."""
-        return RigidObjectCfg(
+        if self.usd_path is None:
+            raise ValueError(
+                "RigidObjectSpec.usd_path must be set before conversion"
+            )
+        cfg = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/" + self.name,
             init_state=RigidObjectCfg.InitialStateCfg(
                 pos=list(self.initial_pos or (0.0, 0.0, 0.0)),
@@ -56,9 +64,7 @@ class RigidObjectSpec(ObjectSpec):
             spawn=UsdFileCfg(
                 usd_path=self.usd_path,
                 scale=self.scale or (1.0, 1.0, 1.0),
-                semantic_tags=[
-                    ("class", self.tag),
-                ],
+                semantic_tags=[],
                 rigid_props=RigidBodyPropertiesCfg(
                     solver_position_iteration_count=4,
                     solver_velocity_iteration_count=1,
@@ -71,8 +77,14 @@ class RigidObjectSpec(ObjectSpec):
                     mass=0.05 if self.mass is None else self.mass
                 ),
             ),
-            object_elements_path=self.interaction_path,
+            interaction_path=self.interaction_path,
+            caption_path=self.caption_path,
+            uuid=self.uuid,
+            category=self.category,
+            actor_type=self.actor_type,
+            attributes=self.attributes,
         )
+        return cfg
 
 
 class ArticulationSpec(ObjectSpec):

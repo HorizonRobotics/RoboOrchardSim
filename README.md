@@ -29,7 +29,7 @@ Installation consists of four steps:
 1. **Prepare assets** — download simulation data from Hugging Face
 2. **Set up environment** — pull/build the Docker image, or install prerequisites locally
 3. **Launch container** — start with GPU and X11 forwarding, then register the Vulkan ICD
-4. **Install package** — install `robo_orchard_sim` in editable mode and pin the protobuf version
+4. **Install package** — install `robo_orchard_sim` in editable mode with the repository bootstrap flow
 
 #### Prepare Assets
 
@@ -154,24 +154,26 @@ chmod +x /usr/local/bin/base64
 - The image includes Isaac Sim, Isaac Lab, and cuRobo, so users must follow the
   applicable NVIDIA software terms.
 
-After cloning the repository, install the package from the repository root:
+After cloning the repository, install the package from the repository root
+with the repository `Makefile`:
 
 ```bash
 git clone <your-repo-url> robo_orchard_sim
 cd robo_orchard_sim
-python3 -m pip install -e .
-```
-
-You can also install it with the repository `Makefile`:
-
-```bash
 make install-editable
 ```
 
-Reinstall protobuf with the compatible version:
+The `make install-editable` target first bootstraps the runtime dependency
+combination required by this repository: it installs `robo_orchard_sim` with
+normal dependency resolution first, then reapplies the explicit versions from
+[`scm/install_constraints.txt`](scm/install_constraints.txt) so that
+`robo_orchard_schemas==0.2.0` and `protobuf==5.29.5` are present in the final
+runtime environment.
+
+If you need a non-editable install, use:
 
 ```bash
-pip install protobuf==5.29.5
+make install
 ```
 
 ### 2. Development Workflow
@@ -200,9 +202,12 @@ make test-cluster
 
 #### Run `simple_orchard_env_example.py`
 
-The example below assembles a `place_a2b` orchard environment, serializes the
-generated environment config, resets the runtime environment, and steps the
-simulation for a few frames.
+The example below builds the default `place_a2b` task via
+`PlaceA2BTaskDefinition.build()`, serializes the generated environment config,
+resets the runtime environment, and steps the simulation for a few frames.
+For the current implementation, scene and embodiment are resolved from
+`place_a2b.yaml`, while task assets are defined in
+`PlaceA2BTaskDefinition.build()`.
 
 ```bash
 python3 examples/manipulation-app/scripts/simple_orchard_env_example.py
@@ -214,17 +219,60 @@ By default, the script writes the generated config to:
 configs/place_a2b_orchard_env_example.json
 ```
 
-You can also override runtime parameters such as output path, number of
-environments, and simulation frequencies:
+You can override the output path:
 
 ```bash
 python3 examples/manipulation-app/scripts/simple_orchard_env_example.py \
-  --output configs/place_a2b_orchard_env_example.json \
-  --num_envs 1 \
-  --env_spacing 2.5 \
-  --physics_fps 600 \
-  --render_fps 30 \
-  --action_fps 30
+  --output configs/place_a2b_orchard_env_example.json
+```
+
+#### Run `data_synthesis_example.py`
+
+This example resamples task assets per seed, builds a fresh `OrchardEnv` for
+each episode, executes the task atomic action plan, and optionally records the
+result as MCAP data.
+
+If `ORCHARD_ASSET_LIBRARY` is not set, pass the asset library explicitly:
+
+```bash
+python3 examples/manipulation-app/scripts/data_synthesis_example.py \
+  --task place_a2b_easy \
+  --asset-root ${ASSETS_DIR} \
+  --episodes 3 \
+  --seed 0
+```
+
+By default, recordings are written under:
+
+```bash
+logs/data_synthesis/<task>_<timestamp>/
+```
+
+and the per-episode serialized env configs are written under:
+
+```bash
+configs/data_synthesis/
+```
+
+Useful optional flags:
+
+```bash
+python3 examples/manipulation-app/scripts/data_synthesis_example.py \
+  --task place_a2b_easy \
+  --asset-root ${ASSETS_DIR} \
+  --config path/to/task.yaml \
+  --max-steps 300 \
+  --record-dir logs/my_synthesis \
+  --output-config-dir configs/my_synthesis
+```
+
+To run the synthesis loop without MCAP recording:
+
+```bash
+python3 examples/manipulation-app/scripts/data_synthesis_example.py \
+  --task place_a2b_easy \
+  --asset-root ${ASSETS_DIR} \
+  --disable-recording
 ```
 
 #### Run `eval_policy.py`

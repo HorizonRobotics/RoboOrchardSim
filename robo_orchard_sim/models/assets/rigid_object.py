@@ -112,7 +112,7 @@ class RigidObject(_RigidObject):
 
     def __init__(self, cfg: RigidObjectCfg):
         super().__init__(cfg)
-        self._element_path = cfg.object_elements_path
+        self._element_path = cfg.interaction_path
         self._interactive_pose: dict = {}
 
         # get obj scale from cfg
@@ -336,5 +336,9 @@ class RigidObjectCfg(_RigidObjectCfg[SpawnerCfgType_co, RigidObject]):
 
     class_type: ClassType_co[RigidObject] = RigidObject
 
-    object_elements_path: str | None = None
-    """Object interactive pose file path."""
+    interaction_path: str | None = None
+    caption_path: str | None = None
+    uuid: str | None = None
+    category: str | None = None
+    actor_type: str = "object"
+    attributes: tuple[str, ...] = ()

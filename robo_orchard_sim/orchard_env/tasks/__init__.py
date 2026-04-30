@@ -14,9 +14,13 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+from robo_orchard_sim.orchard_env.tasks.pick_task import (  # noqa: F401
+    PickAssets,
+    PickTask,
+)
 from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (  # noqa: F401
-    PlaceA2BRole,
     PlaceA2BTask,
+    PlaceA2BTaskAssets,
 )
 from robo_orchard_sim.orchard_env.tasks.task_base import (  # noqa: F401
     TaskBase,
@@ -24,6 +28,8 @@ from robo_orchard_sim.orchard_env.tasks.task_base import (  # noqa: F401
 
 __all__ = [
     "TaskBase",
-    "PlaceA2BRole",
+    "PickAssets",
+    "PickTask",
+    "PlaceA2BTaskAssets",
     "PlaceA2BTask",
 ]

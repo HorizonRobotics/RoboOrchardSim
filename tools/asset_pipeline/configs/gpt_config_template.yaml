@@ -1,0 +1,35 @@
+# GPT Client Configuration Template
+#
+# Fill in the real values below, then rename this file to gpt_config.yaml
+# in the same directory. gpt_config.yaml is gitignored; only this
+# template is tracked.
+#
+# Environment variables override the YAML values when set:
+#   ENDPOINT, API_KEY, API_VERSION, MODEL_NAME
+#
+# Usage:
+#   # 1. edit the api_key (and other fields) below, or:
+#   export API_KEY="your-real-key"
+#   # 2. rename the template:
+#   mv gpt_config_template.yaml gpt_config.yaml
+#   # 3. run:
+#   python tools/asset_pipeline/run_labeller.py ...
+
+# Selects which agent block below is active.
+agent_type: "openai"
+
+# Standard OpenAI (or any OpenAI-compatible endpoint).
+# Leave api_version null and set api_key via the API_KEY env var.
+openai:
+  endpoint: "https://api.openai.com/v1"
+  api_key: ""           # set via API_KEY env var, or paste here
+  api_version: null     # null = non-Azure
+  model_name: "gpt-4o"
+
+# Azure OpenAI deployment.
+# api_version is required; model_name must match your Azure deployment name.
+azure:
+  endpoint: "https://<your-resource>.openai.azure.com"
+  api_key: ""           # set via API_KEY env var, or paste here
+  api_version: "2025-03-01-preview"
+  model_name: "<your-azure-deployment-name>"

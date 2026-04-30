@@ -22,6 +22,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from robo_orchard_sim.envs.manager_based_env import IsaacManagerBasedEnv
+    from robo_orchard_sim.models.assets.rigid_object import RigidObject
 
 
 @dataclass
@@ -33,6 +34,50 @@ class ValidatorOutput:
     metrics: dict[str, Any]  # Additional metrics for logging
 
 
+@dataclass(slots=True)
+class ValidatorActor:
+    """Validator-side actor snapshot for metadata and boundary state."""
+
+    # TODO: Add ValidatorContext for step-wise checker evaluation.
+
+    name: str
+    uuid: str = "unknown"
+    category: str = "unknown"
+    actor_type: str = "unknown"
+    init_state: np.ndarray | None = None
+    final_state: np.ndarray | None = None
+
+    @classmethod
+    def from_rigid_object(
+        cls,
+        name: str,
+        rigid_object: "RigidObject",
+    ) -> "ValidatorActor":
+        """Create a validator snapshot shell from a runtime rigid object."""
+        cfg = rigid_object.cfg
+        return cls(
+            name=name,
+            uuid=cfg.uuid or "unknown",
+            category=cfg.category or "unknown",
+            actor_type=cfg.actor_type or "unknown",
+        )
+
+    def capture_init_state(self, rigid_object: "RigidObject") -> None:
+        """Capture the actor's initial world-pose snapshot."""
+        self.init_state = get_world_pose(rigid_object)
+
+    def capture_final_state(self, rigid_object: "RigidObject") -> None:
+        """Capture the actor's final world-pose snapshot."""
+        self.final_state = get_world_pose(rigid_object)
+
+
+def get_world_pose(rigid_object: "RigidObject") -> np.ndarray:
+    """Return concatenated world pose as [pos, quat]."""
+    obj_pos = rigid_object.data.root_pos_w.cpu().numpy()
+    obj_quat = rigid_object.data.root_quat_w.cpu().numpy()  # w, x, y, z
+    return np.concatenate([obj_pos, obj_quat], axis=-1)
+
+
 class Validator:
     """Validators compute success/progress by inspecting simulation state.
 
@@ -42,7 +87,7 @@ class Validator:
 
     def __init__(
         self,
-        actors: list[str] | str,
+        actors: list[ValidatorActor],
         criteria: list[Callable | tuple[Callable, list[int]]],
         criteria_name: list[str],
         **kwargs,
@@ -50,88 +95,22 @@ class Validator:
         """Initialize the validator rubric.
 
         Args:
-            actors (list[str] | str): Object identifiers used for scene
-                lookup.
+            actors (list[ValidatorActor]): Validator actor snapshots.
             criteria (list[Callable | tuple[Callable, list[int]]]): Criteria
                 callables or dependency tuples used to compute progress.
             criteria_name (list[str]): Human-readable names for each
                 criterion.
             **kwargs: Task-specific validator configuration.
         """
-        actor_list = actors if isinstance(actors, list) else [actors]
-        self.actors = actor_list
+        self.actors = list(actors)
         self.config = kwargs
         self.criteria = criteria
         self.criteria_reached = [False] * len(criteria)
         self.criteria_name = criteria_name
 
-        # -------------------------
-        # internal cache (private)
-        # -------------------------
-        self._actor_tags: dict[str, dict[str, Any]] = {}
-        self._actor_category: dict[str, str] = {}
-        self._actor_type: dict[str, str] = {}
-        self._actor_uuid: dict[str, str] = {}
-        self._init_state: dict[str, Any] = {}
-        self._final_state: dict[str, Any] = {}
-
-    def _get_semantic_tags(self, scene):
-        """Cache semantic information once."""
-        self._actor_tags.clear()
-        self._actor_category.clear()
-        self._actor_type.clear()
-        self._actor_uuid.clear()
-
-        for actor in self.actors:
-            tags = dict(scene[actor].cfg.spawn.semantic_tags)
-
-            self._actor_tags[actor] = tags
-            self._actor_category[actor] = tags.get("class", "unknown")
-            self._actor_type[actor] = tags.get("actor_type", "unknown")
-            self._actor_uuid[actor] = tags.get("uuid", "unknown")
-
     @property
-    def actor_tags(self):
-        return self._actor_tags
-
-    @property
-    def actor_category(self):
-        return self._actor_category
-
-    @property
-    def actor_type(self):
-        return self._actor_type
-
-    @property
-    def actor_uuid(self):
-        return self._actor_uuid
-
-    @property
-    def init_state(self):
-        return self._init_state
-
-    @property
-    def final_state(self):
-        return self._final_state
-
-    def set_init_state(self, scene):
-        """Capture initial state + semantic info."""
-        self._get_semantic_tags(scene)
-
-        self._init_state = {
-            actor: self._get_world_pose(scene[actor]) for actor in self.actors
-        }
-
-    def set_final_state(self, scene):
-        """Capture final state."""
-        self._final_state = {
-            actor: self._get_world_pose(scene[actor]) for actor in self.actors
-        }
-
-    def _get_world_pose(self, obj):
-        obj_pos = obj.data.root_pos_w.cpu().numpy()
-        obj_quat = obj.data.root_quat_w.cpu().numpy()  # w, x, y, z
-        return np.concatenate([obj_pos, obj_quat], axis=-1)
+    def actor_names(self) -> list[str]:
+        return [actor.name for actor in self.actors]
 
     def _call_criterion(self, criterion: Callable, env, env_idx: int) -> bool:
         """Call criteria with env_idx when the callable supports it."""

@@ -67,7 +67,7 @@ def scene_with_interactive_cube():
                     pos=(0.5, 0, 0.555), rot=(1, 0, 0, 0)
                 ),
                 spawn=usd_cfg,
-                object_elements_path=str(INTERACTION_JSON_ABS_PATH),
+                interaction_path=str(INTERACTION_JSON_ABS_PATH),
             )
         ),
     )

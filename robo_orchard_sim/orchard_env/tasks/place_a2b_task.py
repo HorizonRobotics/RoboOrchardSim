@@ -17,10 +17,11 @@
 """Place-a2b task definition built on ``TaskBase``."""
 
 from __future__ import annotations
-import math
-from enum import Enum
+from typing import Any
 
 from robo_orchard_core.envs.managers.events import EventManagerCfg
+from robo_orchard_core.utils.config import Config
+from typing_extensions import Literal
 
 from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
@@ -28,9 +29,21 @@ from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
 from robo_orchard_sim.envs.managers.events.pose_reset import (
     PoseResetTermCfg,
 )
-from robo_orchard_sim.orchard_env.assets import AssetSpec, ObjectSpec
-from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
-from robo_orchard_sim.tasks.validators.base import Validator
+from robo_orchard_sim.envs.managers.record import (
+    RecordTermBaseCfg,
+)
+from robo_orchard_sim.envs.managers.record.mcap import McapDictTermCfg
+from robo_orchard_sim.orchard_env.assets import ObjectSpec
+from robo_orchard_sim.orchard_env.tasks.task_base import (
+    TaskAssetsBase,
+    TaskBase,
+)
+from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
+from robo_orchard_sim.tasks.instructions.base import (
+    InstructionActor,
+    InstructionWrapper,
+)
+from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
 from robo_orchard_sim.tasks.validators.checkers import (
     is_within_xy,
     lift,
@@ -38,12 +51,36 @@ from robo_orchard_sim.tasks.validators.checkers import (
 )
 
 
-class PlaceA2BRole(str, Enum):
-    """Supported asset roles for the place-a2b task."""
+class PlaceA2BTaskParams(Config):
+    """Task-level parameters for place-a2b."""
 
-    PICK = "pick"
-    PLACE = "place"
-    OTHER = "other"
+    mode: Literal[
+        "random",
+        "random_non_overlap",
+        "orderly",
+        "default",
+        "drop",
+    ] = "random_non_overlap"
+    pose_range: PoseRangeConfig = PoseRangeConfig()
+    min_separation: float = 0.03
+
+
+class PlaceA2BTaskAssets(TaskAssetsBase):
+    """Task-specific asset schema for place-a2b scenes."""
+
+    required_object_fields = ("pick", "place")
+
+    pick: ObjectSpec
+    place: ObjectSpec
+
+    def flatten(self) -> dict[str, ObjectSpec]:
+        """Return task assets in the flattened shape expected by TaskBase."""
+        flattened: dict[str, ObjectSpec] = {
+            "pick": self.pick,
+            "place": self.place,
+        }
+        flattened.update(self.flatten_distractors())
+        return flattened
 
 
 class PlaceA2BTask(TaskBase):
@@ -51,84 +88,67 @@ class PlaceA2BTask(TaskBase):
 
     def __init__(
         self,
-        assets: dict[PlaceA2BRole, AssetSpec] | None = None,
+        assets: PlaceA2BTaskAssets,
+        params: PlaceA2BTaskParams | None = None,
+        instruction: InstructionWrapper | None = None,
     ):
-        if assets is None:
-            raise ValueError(
-                "PlaceA2BTask requires an assets dict mapping roles to "
-                "AssetSpec instances."
-            )
-        self._validate_assets(assets)
-        super().__init__(assets)
-        self.pick_object = self._assets[PlaceA2BRole.PICK]
-        self.place_object = self._assets[PlaceA2BRole.PLACE]
+        self.assets = assets
+        self.params = params or PlaceA2BTaskParams()
+        flattened_assets = assets.flatten()
+        super().__init__(flattened_assets, instruction=instruction)
 
-    def _validate_assets(self, assets: dict[PlaceA2BRole, AssetSpec]) -> None:
-        """Require ``PICK`` and ``PLACE`` keys; other roles are allowed."""
-        required = {PlaceA2BRole.PICK, PlaceA2BRole.PLACE}
-        missing = required - set(assets)
-        if missing:
-            raise ValueError(
-                "PlaceA2BTask assets must include "
-                f"{PlaceA2BRole.PICK!r} and {PlaceA2BRole.PLACE!r}; "
-                f"missing: {sorted(missing, key=lambda r: r.value)}."
-            )
-        for role in (PlaceA2BRole.PICK, PlaceA2BRole.PLACE):
-            if not isinstance(assets[role], ObjectSpec):
-                raise TypeError(
-                    "PlaceA2BTask pick/place assets must be ObjectSpec "
-                    "instances."
-                )
+        self.pick_object = self._assets["pick"]
+        self.place_object = self._assets["place"]
+        self.distractors = [
+            self._assets[role]
+            for role in flattened_assets
+            if role.startswith("distractor_")
+        ]
 
     def get_event_cfg(self) -> EventManagerCfg:
-        """Return pose-reset events for place and pick objects."""
+        """Return a shared pose-reset event for task objects."""
+        asset_cfgs = [
+            SceneEntityCfg(name=self.place_object.scene_name),
+            SceneEntityCfg(name=self.pick_object.scene_name),
+        ]
+        asset_cfgs.extend(
+            SceneEntityCfg(name=spec.scene_name) for spec in self.distractors
+        )
         return EventManagerCfg(
             terms={
-                "random_place_pose_event": PoseResetTermCfg(
-                    asset_cfgs=[
-                        SceneEntityCfg(name=self.place_object.scene_name)
-                    ],
+                "random_pose_event": PoseResetTermCfg(
+                    asset_cfgs=asset_cfgs,
                     trigger_topic="reset",
-                    mode="random_non_overlap",
-                    pose_range={
-                        "x": [0.5, 0.55],
-                        "y": [-0.05, 0.05],
-                        "z": [0.0, 0.0],
-                        "roll": [0.0, 0.0],
-                        "pitch": [0.0, 0.0],
-                        "yaw": [math.radians(-5.0), math.radians(5.0)],
-                    },
+                    mode=self.params.mode,
+                    pose_range=dict(self.params.pose_range),
                     absolute_sampling=True,
-                    min_separation=0.03,
+                    min_separation=self.params.min_separation,
                     max_retries=256,
                     group_key="manipulation_objects",
                     clear_cross_group_cache=True,
                 ),
-                "random_pick_pose_event": PoseResetTermCfg(
-                    asset_cfgs=[
-                        SceneEntityCfg(name=self.pick_object.scene_name)
-                    ],
-                    trigger_topic="reset",
-                    # mode="drop",
-                    mode="random_non_overlap",
-                    pose_range={
-                        "x": [0.25, 0.4],
-                        "y": [-0.35, 0.35],
-                        "z": [0.0, 0.5],
-                        "roll": [0.0, 0.0],
-                        "pitch": [0.0, 0.0],
-                        "yaw": [math.radians(-180.0), math.radians(180.0)],
-                    },
-                    absolute_sampling=True,
-                    min_separation=0.03,
-                    max_retries=256,
-                    group_key="manipulation_objects",
-                    clear_cross_group_cache=False,
-                ),
             }
         )
 
-    def build_validator(self) -> Validator:
+    def get_record_terms(self) -> dict[str, RecordTermBaseCfg]:
+        return {
+            "meta_dict_term": McapDictTermCfg(
+                topic="/meta_data",
+                fps=1.0,
+                # Use the task-level metadata record key contract.
+                key=TaskBase.EPISODE_META_RECORD_KEY,
+                record_mode="once",
+            )
+        }
+
+    def get_validator_actor_names(self) -> list[str]:
+        """Return scene actors used by the place-a2b validator."""
+        return [
+            self.pick_object.scene_name,
+            self.place_object.scene_name,
+        ]
+
+    def build_validator(self, actors: list[ValidatorActor]) -> Validator:
         """Build the task validator for place-a2b evaluation.
 
         Returns:
@@ -137,7 +157,7 @@ class PlaceA2BTask(TaskBase):
         pick_name = self.pick_object.scene_name
         place_name = self.place_object.scene_name
         return Validator(
-            actors=[pick_name, place_name],
+            actors=actors,
             criteria=[
                 reach(pick_name, 0.2),
                 (lift(pick_name, 0.03), [0]),
@@ -156,3 +176,25 @@ class PlaceA2BTask(TaskBase):
                 "place_within_xy",
             ],
         )
+
+    def build_instruction_context(
+        self,
+        env: Any,
+        *,
+        actor_description_seed: int,
+    ) -> dict[str, InstructionActor]:
+        if self.instruction is None:
+            return {}
+
+        return {
+            "actor1": InstructionActor.from_rigid_object(
+                env.scene[self.pick_object.scene_name],
+                actor_description_mode=self.instruction.actor_description_mode,
+                actor_description_seed=actor_description_seed,
+            ),
+            "actor2": InstructionActor.from_rigid_object(
+                env.scene[self.place_object.scene_name],
+                actor_description_mode=self.instruction.actor_description_mode,
+                actor_description_seed=actor_description_seed,
+            ),
+        }

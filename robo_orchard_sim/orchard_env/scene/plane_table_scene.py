@@ -21,6 +21,7 @@ import os
 from robo_orchard_core.utils.logging import LoggerManager
 
 from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
+from robo_orchard_sim.cfg_wrappers.materials import PreviewSurfaceCfg
 from robo_orchard_sim.cfg_wrappers.sim.schemas import (
     RigidBodyPropertiesCfg,
 )
@@ -31,6 +32,7 @@ from robo_orchard_sim.cfg_wrappers.sim.spawners.from_files import (
 from robo_orchard_sim.cfg_wrappers.sim.spawners.lights_cfg import (
     DomeLightCfg,
 )
+from robo_orchard_sim.cfg_wrappers.sim.spawners.shapes_cfg import CuboidCfg
 from robo_orchard_sim.models.assets.asset_cfg import (  # noqa: F401
     NV_ISAAC_DIR,
     ORCHARD_ASSET,
@@ -136,7 +138,25 @@ class PlaneTableScene(SceneBase):
                         # ),
                         # mass_props=MassPropertiesCfg(mass=10000),
                     ),
-                    object_elements_path=f"{ORCHARD_ASSET}/PUBLIC_OBJECTS/evaluation_assets/tables/table_001/table_interaction.json",  # noqa: E501
+                    interaction_path=f"{ORCHARD_ASSET}/PUBLIC_OBJECTS/evaluation_assets/tables/table_001/table_interaction.json",  # noqa: E501
+                ),
+                wall=AssetBaseCfg(
+                    class_type=XFormPrimAsset,
+                    prim_path="{ENV_REGEX_NS}/wall",
+                    init_state=RigidObjectCfg.InitialStateCfg(
+                        pos=[1.8, 0.0, 0.35],
+                        rot=[1, 0, 0, 0],
+                    ),
+                    spawn=CuboidCfg(
+                        size=(0.5, 5.0, 5.0),
+                        semantic_tags=[("class", "wall")],
+                        rigid_props=RigidBodyPropertiesCfg(
+                            kinematic_enabled=True
+                        ),
+                        visual_material=PreviewSurfaceCfg(
+                            diffuse_color=(0.8, 0.8, 0.8),
+                        ),
+                    ),
                 ),
                 light=AssetBaseCfg(
                     class_type=XFormPrimAsset,

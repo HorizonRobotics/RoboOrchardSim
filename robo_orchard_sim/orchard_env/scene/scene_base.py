@@ -17,6 +17,7 @@
 """Base class for scene providers used by ``EnvBuilder``."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 
 from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
@@ -31,6 +32,7 @@ from robo_orchard_sim.cfg_wrappers.sim.simulation_cfg import (
     PhysxCfg,
     SimulationCfg,
 )
+from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 
 
@@ -98,3 +100,7 @@ class SceneBase(ABC):
     def get_event_cfg(self) -> EventManagerCfg:
         """Return scene-level event cfg fragment."""
         return EventManagerCfg(terms={})
+
+    def get_record_terms(self) -> Mapping[str, RecordTermBaseCfg]:
+        """Return scene-level record term fragments."""
+        return {}

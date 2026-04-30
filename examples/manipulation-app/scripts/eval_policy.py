@@ -39,6 +39,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Base random seed for evaluation episodes.",
     )
     parser.add_argument(
+        "--asset-root",
+        type=str,
+        required=True,
+        help="Asset root directory used to construct AssetRegistry.",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Optional task YAML config path.",
+    )
+    parser.add_argument(
         "--episode-num",
         type=int,
         default=3,
@@ -56,6 +68,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default="eval_result/isaac_eval/eval_result.json",
         help="Output path for serialized evaluation result.",
     )
+    parser.add_argument(
+        "--enable-recording",
+        action="store_true",
+        help="Enable MCAP recording during evaluation.",
+    )
+    parser.add_argument(
+        "--record-dir",
+        type=str,
+        default="logs/records",
+        help="Output directory for MCAP recording files.",
+    )
     return parser
 
 
@@ -71,6 +94,10 @@ def main() -> None:
 
     evaluator_cfg = EvaluatorCfg(
         task_name=args.task_name,
+        asset_root=args.asset_root,
+        task_config_path=args.config,
+        enable_recording=args.enable_recording,
+        record_dir=args.record_dir,
         launch=LaunchConfig(
             headless=True,
             enable_cameras=True,

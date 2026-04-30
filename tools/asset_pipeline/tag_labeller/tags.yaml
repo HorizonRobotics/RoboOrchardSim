@@ -1,0 +1,15 @@
+# Tag vocabulary for the tag labeller skill.
+# Add a new tag by appending an entry under `tags:`.
+# Each tag requires:
+#   description: one-line summary (max 200 chars)
+#   criteria:    judgement criteria shown to GPT (use common-sense framing)
+#
+# Tag names must be snake_case.
+
+tags:
+  is_container:
+    description: Whether this asset is commonly understood as a container that holds things.
+    criteria: A common everyday container that typically holds or contains other objects.
+  is_graspable:
+    description: Whether this asset is commonly graspable by hand.
+    criteria: An everyday object that a person would commonly pick up and hold in one hand.

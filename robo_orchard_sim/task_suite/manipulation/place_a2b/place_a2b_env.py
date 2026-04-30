@@ -1,7 +1,6 @@
-# ruff: noqa: E402
 # Project RoboOrchard
 #
-# Copyright (c) 2024 Horizon Robotics. All Rights Reserved.
+# Copyright (c) 2026 Horizon Robotics. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,107 +14,118 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""Example showing how to assemble a placeA2B ``OrchardEnv``.
-
-This script demonstrates the user-facing `orchard_env` API:
-1) define pick/place/table assets
-2) assemble ``PlaneTableScene + DualArmPiperEmbodiment + PlaceA2BTask``
-3) return an ``OrchardEnv``
-4) optionally convert it to ``IsaacManagerBasedEnvCfg`` and run a reset
-"""
+"""Shared env/task definitions for place-a2b task variants."""
 
 from __future__ import annotations
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from robo_orchard_sim.models.assets.asset_cfg import ORCHARD_ASSET
-from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
 from robo_orchard_sim.task_suite.base import TaskDefinition
+from robo_orchard_sim.task_suite.manipulation.place_a2b.action_plan import (
+    build_task_atomic_action_plan,
+)
 from robo_orchard_sim.task_suite.registration import register_task
+from robo_orchard_sim.tasks.trajs_gen.executors.pick import PickExecutorCfg
 
-DEFAULT_PLACE_A2B_ENV_KWARGS = {
-    "num_envs": 1,
-    "env_spacing": 2.5,
-    "physics_fps": 600,
-    "render_fps": 30,
-    "step_fps": 30,
-}
+if TYPE_CHECKING:
+    from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
+        AssetResolver,
+    )
+    from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+
+_DIR = Path(__file__).resolve().parent
+_CONFIG_DIR = _DIR / "configs"
 
 
-@register_task
-class PlaceA2BTaskDefinition(TaskDefinition):
-    namespace: str = "place_a2b"
-    default_env_kwargs = DEFAULT_PLACE_A2B_ENV_KWARGS
+class PlaceA2BTaskDefinitionBase(TaskDefinition):
+    """Shared definition logic for resolver-backed place-a2b tasks."""
 
-    @staticmethod
-    def get_env(
-        num_envs: int,
-        env_spacing: float,
-        physics_fps: int,
-        render_fps: int,
-        step_fps: int,
-    ) -> OrchardEnv:
-        from robo_orchard_sim.orchard_env.assets import RigidObjectSpec
-        from robo_orchard_sim.orchard_env.embodiments.dualarm_piper import (
-            DualArmPiperEmbodiment,
-        )
+    @classmethod
+    def build(
+        cls,
+        resolver: "AssetResolver | None" = None,
+        config_path: str | None = None,
+    ) -> "OrchardEnv":
         from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
-        from robo_orchard_sim.orchard_env.scene.plane_table_scene import (
-            PlaneTableScene,
-        )
         from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
-            PlaceA2BRole,
             PlaceA2BTask,
+            PlaceA2BTaskAssets,
+            PlaceA2BTaskParams,
         )
 
-        PICK_USD_PATH = f"{ORCHARD_ASSET}/PUBLIC_OBJECTS/evaluation_assets/fruits/lemon_001/lemon_001.usd"  # noqa: E501
-        PICK_INTERACTION_PATH = f"{ORCHARD_ASSET}/PUBLIC_OBJECTS/evaluation_assets/fruits/lemon_001/interaction.json"  # noqa: E501
+        if resolver is None:
+            raise ValueError(
+                f"{cls.__name__}.build() requires an AssetResolver. "
+                "Construct one from an AssetRegistry and pass it as "
+                "resolver=..."
+            )
+        asset_configs = cls.resolve_asset_configs(config_path=config_path)
+        if asset_configs is None:
+            raise ValueError(
+                f"{cls.__name__} needs asset_configs in the task YAML "
+                f"at {config_path or cls.config_path}."
+            )
 
-        PLACE_USD_PATH = f"{ORCHARD_ASSET}/PUBLIC_OBJECTS/evaluation_assets/containers/plate_001/plate_001.usd"  # noqa: E501
-        PLACE_INTERACTION_PATH = f"{ORCHARD_ASSET}/PUBLIC_OBJECTS/evaluation_assets/containers/plate_001/interaction.json"  # noqa: E501
-
-        pick_asset = RigidObjectSpec(
-            name="pick_object",
-            usd_path=PICK_USD_PATH,
-            interaction_path=PICK_INTERACTION_PATH,
-            mass=0.05,
-            initial_pos=(0.35, 0.30, 0.02),
-        )
-        place_asset = RigidObjectSpec(
-            name="place_object",
-            usd_path=PLACE_USD_PATH,
-            interaction_path=PLACE_INTERACTION_PATH,
-            mass=100.0,
-            initial_pos=(0.35, 0.0, 0.000036),
+        resolved = resolver.resolve(asset_configs)
+        task_assets = PlaceA2BTaskAssets(**resolved)
+        task_params = PlaceA2BTaskParams(
+            **cls.resolve_task_params(config_path=config_path)
         )
 
-        scene = PlaneTableScene(
-            num_envs=num_envs,
-            env_spacing=env_spacing,
-            physics_fps=physics_fps,
-            render_fps=render_fps,
-            step_fps=step_fps,
-            assets=None,
-        )
-        embodiment = DualArmPiperEmbodiment(
-            namespace="robots",
-            name="dualarm_piper",
-            initial_pos=(0.0, 0.3, 0.0),
-        )
-        task = PlaceA2BTask(
-            assets={
-                PlaceA2BRole.PICK: pick_asset,
-                PlaceA2BRole.PLACE: place_asset,
-            }
-        )
         return OrchardEnv(
-            scene=scene,
-            embodiment=embodiment,
-            task=task,
+            scene=cls.resolve_scene(config_path=config_path),
+            embodiment=cls.resolve_embodiment(config_path=config_path),
+            task=PlaceA2BTask(
+                assets=task_assets,
+                params=task_params,
+                instruction=cls.resolve_instruction(config_path=config_path),
+            ),
         )
 
     @classmethod
-    def build(cls) -> OrchardEnv:
-        """Build the default place_a2b orchard env used by evaluator."""
-        return cls.get_env(**cls.default_env_kwargs)
+    def build_atomic_action_plan(
+        cls,
+        orchard_env: "OrchardEnv",
+    ) -> list[PickExecutorCfg]:
+        """Build the default atomic action plan for place-a2b."""
+        del cls
+        return build_task_atomic_action_plan(orchard_env)
 
 
-PlaceA2BEnv = PlaceA2BTaskDefinition
+def _make_place_a2b_task_definition_class(
+    *,
+    class_name: str,
+    namespace: str,
+    yaml_name: str,
+) -> type[PlaceA2BTaskDefinitionBase]:
+    task_cls = type(
+        class_name,
+        (PlaceA2BTaskDefinitionBase,),
+        {
+            "__doc__": (
+                f"Task definition for the '{namespace}' place-a2b variant."
+            ),
+            "__module__": __name__,
+            "namespace": namespace,
+            "config_path": str(_CONFIG_DIR / yaml_name),
+        },
+    )
+    return register_task(task_cls)
+
+
+PlaceA2BEasyTaskDefinition = _make_place_a2b_task_definition_class(
+    class_name="PlaceA2BEasyTaskDefinition",
+    namespace="place_a2b_easy",
+    yaml_name="place_a2b_easy.yaml",
+)
+PlaceA2BHardTaskDefinition = _make_place_a2b_task_definition_class(
+    class_name="PlaceA2BHardTaskDefinition",
+    namespace="place_a2b_hard",
+    yaml_name="place_a2b_hard.yaml",
+)
+
+__all__ = [
+    "PlaceA2BTaskDefinitionBase",
+    "PlaceA2BEasyTaskDefinition",
+    "PlaceA2BHardTaskDefinition",
+]

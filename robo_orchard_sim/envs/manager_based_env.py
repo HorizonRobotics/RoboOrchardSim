@@ -18,6 +18,7 @@
 """Manager-based Env for Isaac."""
 
 from __future__ import annotations
+import datetime
 from typing import Generic
 
 import torch
@@ -43,6 +44,11 @@ from typing_extensions import Dict, Sequence, TypeAlias, TypeVar
 
 from robo_orchard_sim.cfg_wrappers.scenes_cfg import InteractiveSceneCfg
 from robo_orchard_sim.envs.env_base import IsaacEnv, IsaacEnvCfg
+from robo_orchard_sim.envs.managers.record import (
+    RecordManager,
+    RecordManagerCfg,
+    RecordTermBaseCfg,
+)
 from robo_orchard_sim.utils.config import ClassType_co
 
 # EnvReturnType: TypeAlias = Tuple[ObsReturnType, dict]
@@ -83,6 +89,8 @@ class IsaacManagerBasedEnv(
     def __init__(self, cfg: IsaacManagerBasedEnvCfg):
         IsaacEnv.__init__(self, cfg=cfg)
         self._load_managers()
+        self._step_count = 0
+        self.record_manager = RecordManager(self.cfg.records, self)
         # allocate dictionary to store metrics
         self.extras = {}
 
@@ -132,8 +140,13 @@ class IsaacManagerBasedEnv(
                 ),
             )
 
+        # step end
+        observations = self.observation_manager.get_observations()
+        self._step_count += 1
+        self.record_manager.record_step(observations)
+
         return EnvStepReturn(
-            observations=self.observation_manager.get_observations(),
+            observations=observations,
             rewards=None,  # TODO: Add rewards
             terminated=None,  # TODO: support termination
             truncated=None,  # TODO:  support truncation
@@ -143,15 +156,23 @@ class IsaacManagerBasedEnv(
     def reset(
         self, seed: int | None = None, env_ids: Sequence[int] | None = None
     ) -> EnvReturnType:
+        self.record_manager.record_pre_reset()
+
         # reset the environment.
         # _reset_idx is called in IsaacEnv.reset
         IsaacEnv.reset(self, seed=seed, env_ids=env_ids)
+        self._step_count = 0
         # notify the reset event
         self.event_manager.notify(
             self.RESET[0], self.RESET[1](env_ids=env_ids, seed=seed)
         )
+        observations = self.observation_manager.get_observations()
+        self.record_manager.record_post_reset(
+            observations, datetime.datetime.now()
+        )
+
         return EnvStepReturn(
-            observations=self.observation_manager.get_observations(),
+            observations=observations,
             rewards=None,  # TODO: Add rewards
             terminated=None,  # TODO: support termination
             truncated=None,  # TODO:  support truncation
@@ -177,9 +198,16 @@ class IsaacManagerBasedEnv(
 
     def close(self):
         """Cleanup for the environment."""
+        if hasattr(self.record_manager, "close"):
+            self.record_manager.close()
         IsaacEnv.close(self)
         # We don't need to call `del` on the managers since they are weak
         # references and will be garbage collected automatically.
+
+    @property
+    def step_count(self) -> int:
+        """Get the current step count."""
+        return self._step_count
 
 
 InteractiveSceneCfgType_co = TypeVar(
@@ -208,6 +236,10 @@ class IsaacManagerBasedEnvCfg(
     actions: ActionManagerCfg[ActionTermCfg] = ActionManagerCfg(terms={})
 
     events: EventManagerCfg[EventTermBaseCfg] = EventManagerCfg(terms={})
+    records: RecordManagerCfg[RecordTermBaseCfg] = RecordManagerCfg(
+        file_path="",
+        terms={},
+    )
 
     apply_action_when_no_action: bool = False
     """Whether to apply the action when no action is provided in step."""

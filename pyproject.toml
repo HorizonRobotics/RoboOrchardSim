@@ -17,6 +17,7 @@ classifiers = [
 dependencies = [
     "deprecated",
     "pillow>=11.0.0",
+    "pyyaml",
     "pyvirtualdisplay",
     "scipy>=1.15.0",
     "numpy<2.0.0,>=1.26.4",
@@ -25,9 +26,10 @@ dependencies = [
     "torchvision>=0.20.1",
     "isaacsim[all,extscache]==4.5.0",
     "isaaclab==2.0.2",
-    "protobuf<5.0.0,>=3.20.2",
     "h5py",
+    "pyarrow>=14.0.0",
     "robo_orchard_core==0.4.0",
+    "mcap-protobuf-support"
 ]
 
 [project.optional-dependencies]
@@ -38,6 +40,9 @@ RoboOrchard-SimLauncher = "robo_orchard_sim.launcher:main"
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.package-data]
+"robo_orchard_sim" = ["**/*.yaml", "**/*.yml"]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -91,13 +96,12 @@ avoid-escape = false
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["TID252", "F401"]
-"robo_orchard_sim/cfg_wrappers/*.py" = ["F403"]
 "robo_orchard_sim/cfg_wrappers/**/*.py" = ["F403"]
 "robo_orchard_sim/envs/__init__.py" = ["F403"]
 "robo_orchard_sim/models/spawners/__init__.py" = ["F403"]
-"robo_orchard_sim/sim/*.py" = ["F403"]
 "robo_orchard_sim/sim/**/*.py" = ["F403"]
 "robo_orchard_sim/sim_ctx.py" = ["F403"]
+"robo_orchard_sim/tasks/instructions/registry.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
