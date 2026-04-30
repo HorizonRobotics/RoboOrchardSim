@@ -21,6 +21,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from robo_orchard_sim.task_suite.base import TaskDefinition
+from robo_orchard_sim.task_suite.manipulation.semantic_pick import (
+    action_plan,
+)
 from robo_orchard_sim.task_suite.registration import register_task
 
 if TYPE_CHECKING:
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
         AssetResolver,
     )
     from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+    from robo_orchard_sim.tasks.trajs_gen.base_executor import BaseExecutorCfg
 
 _DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _DIR / "configs"
@@ -78,6 +82,15 @@ class PickTaskDefinitionBase(TaskDefinition):
                 instruction=cls.resolve_instruction(config_path=config_path),
             ),
         )
+
+    @classmethod
+    def build_atomic_action_plan(
+        cls,
+        orchard_env: "OrchardEnv",
+    ) -> list["BaseExecutorCfg"]:
+        """Build the default atomic action plan for semantic pick."""
+        del cls
+        return action_plan.build_task_atomic_action_plan(orchard_env)
 
 
 def _make_pick_task_definition_class(
