@@ -58,6 +58,8 @@ task:
 asset_configs:
 
   pick:
+    # uuid: <asset-uuid>            # pin a specific asset; takes precedence
+    #                                 over filter/split (mismatch -> warning).
     filter:
       # tags: [graspable]           # AND-match; requires URDF <tags>
       super_category: fruits          # ware / tableware / ornaments / ...

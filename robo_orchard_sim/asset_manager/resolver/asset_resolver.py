@@ -25,6 +25,7 @@ import numpy as np
 from robo_orchard_sim.asset_manager.registry.errors import (
     EmptyPoolError,
     InsufficientPoolError,
+    UnknownAssetError,
 )
 from robo_orchard_sim.asset_manager.registry.registry import (
     AssetRegistry,
@@ -70,7 +71,7 @@ _SPLIT_FIELDS = frozenset({"seen", "unseen_category", "unseen_instance"})
 # Allowed keys per entry kind. Typos (e.g. ``macth`` instead of ``match``)
 # would otherwise silently no-op — validate up-front so authoring errors
 # surface on the first resolve call.
-_TARGET_ENTRY_KEYS = frozenset({"filter", "prim_name", "split"})
+_TARGET_ENTRY_KEYS = frozenset({"filter", "prim_name", "split", "uuid"})
 _DISTRACTOR_ENTRY_KEYS = frozenset(
     {
         "anchor",
@@ -177,6 +178,9 @@ class AssetResolver:
         self, role: str, entry: dict
     ) -> tuple[AssetMeta, "RigidObjectSpec"]:
         """Resolve a single target-kind role. Returns (meta, spec)."""
+        if "uuid" in entry:
+            return self._resolve_target_by_uuid(role, entry)
+
         try:
             filter_dict = dict(entry["filter"])
         except KeyError as exc:
@@ -217,6 +221,66 @@ class AssetResolver:
                 filter_repr=repr(asset_filter),
                 cause=exc,
             ) from exc
+
+        return meta, self._registry.build_spec(meta, name=prim_name, role=role)
+
+    def _resolve_target_by_uuid(
+        self, role: str, entry: dict
+    ) -> tuple[AssetMeta, "RigidObjectSpec"]:
+        """Resolve a target pinned by uuid.
+
+        uuid is authoritative: the asset is fetched directly from the
+        registry. ``filter`` and ``split`` are still parsed for
+        consistency checks but only emit a warning on mismatch — they do
+        not override the explicit uuid.
+        """
+        uuid = entry["uuid"]
+        try:
+            meta = self._registry.get_meta(uuid)
+        except UnknownAssetError as exc:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=exc,
+            ) from exc
+
+        try:
+            prim_name = entry["prim_name"]
+        except KeyError as exc:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=exc,
+            ) from exc
+
+        if "filter" in entry:
+            try:
+                filter_check = AssetFilter(**dict(entry["filter"]))
+            except TypeError as exc:
+                raise AssetResolutionError(
+                    role=role,
+                    filter_repr=str(entry["filter"]),
+                    cause=exc,
+                ) from exc
+            if not filter_check.matches(meta):
+                logger.warning(
+                    "role %r: pinned uuid %r does not satisfy filter %r; "
+                    "uuid takes precedence.",
+                    role,
+                    uuid,
+                    filter_check,
+                )
+
+        only_in = self._resolve_split_only_in(role, entry, err_repr=str(entry))
+        if only_in is not None and uuid not in only_in:
+            split_name = entry.get("split")
+            logger.warning(
+                "role %r: pinned uuid %r is not in split %r; "
+                "uuid takes precedence.",
+                role,
+                uuid,
+                split_name,
+            )
 
         return meta, self._registry.build_spec(meta, name=prim_name, role=role)
 

@@ -35,7 +35,7 @@ from robo_orchard_sim.asset_manager.registry.urdf_parser import (
     parse_urdf_extra_info,
 )
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 INDEX_FILENAME = "asset_index.parquet"
 
 DEFAULT_CACHE_ROOT = Path("/tmp/.cache/robo_orchard_sim/asset_index")
@@ -67,9 +67,9 @@ _EMPTY_SCHEMA = pa.schema(
         ("category", pa.string()),
         ("name", pa.string()),
         ("description", pa.string()),
-        ("color", pa.string()),
-        ("shape", pa.string()),
-        ("material", pa.string()),
+        ("color", pa.list_(pa.string())),
+        ("shape", pa.list_(pa.string())),
+        ("material", pa.list_(pa.string())),
         ("real_height", pa.float64()),
         ("real_mass", pa.float64()),
         ("min_height", pa.float64()),
@@ -154,9 +154,9 @@ def _row_from_parsed(
         "category": parsed.category,
         "name": parsed.name,
         "description": parsed.description,
-        "color": parsed.color,
-        "shape": parsed.shape,
-        "material": parsed.material,
+        "color": sorted(parsed.color) if parsed.color else None,
+        "shape": sorted(parsed.shape) if parsed.shape else None,
+        "material": sorted(parsed.material) if parsed.material else None,
         "real_height": parsed.real_height,
         "real_mass": parsed.real_mass,
         "min_height": parsed.min_height,

@@ -68,9 +68,9 @@ def test_parse_full_urdf():
     assert p.super_category == "fruits"
     assert p.category == "lemon"
     assert p.name == "yellow lemon"
-    assert p.color == "yellow"
-    assert p.shape == "ellipsoid"
-    assert p.material == "organic"
+    assert p.color == frozenset({"yellow"})
+    assert p.shape == frozenset({"ellipsoid"})
+    assert p.material == frozenset({"organic"})
     assert p.description == "realistic yellow lemon"
     assert p.real_height == pytest.approx(0.0846)
     assert p.min_height == pytest.approx(0.05)
@@ -164,3 +164,48 @@ def test_parse_tags_missing_warns():
     p = parse_urdf_extra_info(urdf)
     assert p.tags == frozenset()
     assert any("tags" in w for w in p.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Multi-value color/shape/material parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_color_multi_token_case_and_whitespace():
+    urdf = FULL_URDF.replace(
+        "<color>yellow</color>", "<color>Beige, Black</color>"
+    )
+    p = parse_urdf_extra_info(urdf)
+    assert p.color == frozenset({"beige", "black"})
+
+
+def test_parse_color_trailing_comma_tolerated():
+    urdf = FULL_URDF.replace("<color>yellow</color>", "<color>red,</color>")
+    p = parse_urdf_extra_info(urdf)
+    assert p.color == frozenset({"red"})
+
+
+def test_parse_color_all_empty_tokens_returns_none_with_warning():
+    urdf = FULL_URDF.replace("<color>yellow</color>", "<color>,, ,</color>")
+    p = parse_urdf_extra_info(urdf)
+    assert p.color is None
+    assert any("color" in w for w in p.warnings)
+
+
+def test_parse_color_empty_element_returns_none_with_warning():
+    urdf = FULL_URDF.replace("<color>yellow</color>", "<color></color>")
+    p = parse_urdf_extra_info(urdf)
+    assert p.color is None
+    assert any("color" in w for w in p.warnings)
+
+
+def test_parse_shape_and_material_also_multi_value():
+    urdf = FULL_URDF.replace(
+        "<shape>ellipsoid</shape>", "<shape>Ellipsoid, Tapered</shape>"
+    ).replace(
+        "<material>organic</material>",
+        "<material>plastic , metal</material>",
+    )
+    p = parse_urdf_extra_info(urdf)
+    assert p.shape == frozenset({"ellipsoid", "tapered"})
+    assert p.material == frozenset({"plastic", "metal"})

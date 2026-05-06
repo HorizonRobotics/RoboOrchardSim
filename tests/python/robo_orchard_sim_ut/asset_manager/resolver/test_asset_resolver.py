@@ -379,3 +379,137 @@ class TestConfigShapeValidation:
             mini_resolver.resolve(configs)
         assert exc_info.value.role == "distractors"
         assert isinstance(exc_info.value.cause, KeyError)
+
+
+class TestResolveByUuid:
+    """`uuid` entry key pins a target to a specific registry asset."""
+
+    def test_resolve_by_uuid_pins_specific_asset(self, mini_resolver):
+        configs = {
+            "pick": {
+                "uuid": "u-banana-001",
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].name == "pick_object"
+        assert result["pick"].usd_path.endswith("banana_001.usd")
+
+    def test_resolve_by_uuid_filter_optional(self, mini_resolver):
+        """`filter` is optional when `uuid` is given."""
+        configs = {
+            "pick": {
+                "uuid": "u-orange-001",
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].usd_path.endswith("orange_001.usd")
+
+    def test_resolve_by_uuid_with_consistent_filter_ok(self, mini_resolver):
+        configs = {
+            "pick": {
+                "uuid": "u-apple-001",
+                "filter": {"category": "apple", "color": "red"},
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].usd_path.endswith("apple_001.usd")
+
+    def test_resolve_by_uuid_with_conflicting_filter_warns_but_resolves(
+        self, mini_resolver, caplog
+    ):
+        """Uuid takes precedence; mismatched filter only emits a warning."""
+        import logging
+
+        configs = {
+            "pick": {
+                "uuid": "u-apple-001",
+                "filter": {"category": "orange"},
+                "prim_name": "pick_object",
+            },
+        }
+        with caplog.at_level(logging.WARNING):
+            result = mini_resolver.resolve(configs)
+        assert result["pick"].usd_path.endswith("apple_001.usd")
+        assert any(
+            "u-apple-001" in r.message and r.levelno == logging.WARNING
+            for r in caplog.records
+        )
+
+    def test_resolve_by_uuid_with_conflicting_filter_no_warn_on_match(
+        self, mini_resolver, caplog
+    ):
+        """No warning when uuid matches the filter."""
+        import logging
+
+        configs = {
+            "pick": {
+                "uuid": "u-apple-001",
+                "filter": {"category": "apple"},
+                "prim_name": "pick_object",
+            },
+        }
+        with caplog.at_level(logging.WARNING):
+            mini_resolver.resolve(configs)
+        assert not any("u-apple-001" in r.message for r in caplog.records)
+
+    def test_resolve_by_uuid_unknown_raises(self, mini_resolver):
+        configs = {
+            "pick": {
+                "uuid": "u-not-real",
+                "prim_name": "pick_object",
+            },
+        }
+        with pytest.raises(AssetResolutionError) as exc_info:
+            mini_resolver.resolve(configs)
+        assert exc_info.value.role == "pick"
+        assert "u-not-real" in str(exc_info.value.cause)
+
+    def test_resolve_by_uuid_inside_split_ok(
+        self, mini_resolver_with_splits, mini_registry
+    ):
+        apple_001_uuid = mini_registry.resolve_asset_id("apple_001")
+        configs = {
+            "pick": {
+                "uuid": apple_001_uuid,
+                "prim_name": "pick_object",
+                "split": "seen",
+            },
+        }
+        result = mini_resolver_with_splits.resolve(configs)
+        assert result["pick"].usd_path.endswith("apple_001.usd")
+
+    def test_resolve_by_uuid_outside_split_warns_but_resolves(
+        self, mini_resolver_with_splits, mini_registry, caplog
+    ):
+        """Uuid takes precedence; mismatched split only emits a warning."""
+        import logging
+
+        plate_uuid = mini_registry.resolve_asset_id("plate_001")
+        configs = {
+            "pick": {
+                "uuid": plate_uuid,
+                "prim_name": "pick_object",
+                "split": "seen",
+            },
+        }
+        with caplog.at_level(logging.WARNING):
+            result = mini_resolver_with_splits.resolve(configs)
+        assert result["pick"].usd_path.endswith("plate_001.usd")
+        assert any(
+            plate_uuid in r.message and r.levelno == logging.WARNING
+            for r in caplog.records
+        )
+
+    def test_resolve_by_uuid_still_requires_prim_name(self, mini_resolver):
+        configs = {
+            "pick": {
+                "uuid": "u-apple-001",
+            },
+        }
+        with pytest.raises(AssetResolutionError) as exc_info:
+            mini_resolver.resolve(configs)
+        assert exc_info.value.role == "pick"
+        assert isinstance(exc_info.value.cause, KeyError)

@@ -31,9 +31,9 @@ def _meta(**overrides) -> AssetMeta:
         category="apple",
         name="red apple",
         description="",
-        color="red",
-        shape="sphere",
-        material="organic",
+        color=frozenset({"red"}),
+        shape=frozenset({"sphere"}),
+        material=frozenset({"organic"}),
         real_height=0.08,
         real_mass=0.15,
         min_height=0.05,
@@ -136,3 +136,38 @@ def test_distractor_spec_accepts_match_and_differ():
     )
     assert s.match == ("super_category",)
     assert s.differ == ("category",)
+
+
+# ---------------------------------------------------------------------------
+# Multi-value color/shape/material filter semantics
+# ---------------------------------------------------------------------------
+
+
+def test_filter_color_case_insensitive_input_matches_lowercase_asset():
+    """AssetFilter(color='Red') still matches an asset with color={'red'}."""
+    assert AssetFilter(color="Red").matches(_meta())
+
+
+def test_filter_color_against_multi_color_asset():
+    """Single-color filter matches asset whose color set contains it."""
+    multi = _meta(color=frozenset({"black", "transparent"}))
+    assert AssetFilter(color="black").matches(multi)
+    assert AssetFilter(color="transparent").matches(multi)
+    assert not AssetFilter(color="red").matches(multi)
+
+
+def test_filter_color_against_none_asset_misses():
+    no_color = _meta(color=None)
+    assert not AssetFilter(color="red").matches(no_color)
+    # ...but a filter that doesn't constrain color still matches.
+    assert AssetFilter(category="apple").matches(no_color)
+
+
+def test_filter_shape_and_material_use_same_containment_rule():
+    multi = _meta(
+        shape=frozenset({"sphere", "tapered"}),
+        material=frozenset({"plastic", "metal"}),
+    )
+    assert AssetFilter(shape="tapered").matches(multi)
+    assert AssetFilter(material="metal").matches(multi)
+    assert not AssetFilter(shape="cube").matches(multi)

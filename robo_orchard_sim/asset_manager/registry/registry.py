@@ -59,6 +59,15 @@ def _num(v: Any, default: float = 0.0) -> float:
     return float(v) if v is not None else default
 
 
+def _row_set(row: dict[str, Any], key: str) -> frozenset[str] | None:
+    """Convert a pyarrow list<string> column value to frozenset, or None."""
+    val = row.get(key)
+    if val is None:
+        return None
+    fs = frozenset(val)
+    return fs or None
+
+
 def _row_to_meta(row: dict[str, Any]) -> AssetMeta:
     """Convert a parquet row dict to an AssetMeta.
 
@@ -75,9 +84,9 @@ def _row_to_meta(row: dict[str, Any]) -> AssetMeta:
         category=row["category"],
         name=row.get("name") or "",
         description=row.get("description") or "",
-        color=row.get("color"),
-        shape=row.get("shape"),
-        material=row.get("material"),
+        color=_row_set(row, "color"),
+        shape=_row_set(row, "shape"),
+        material=_row_set(row, "material"),
         real_height=_num(row.get("real_height")),
         real_mass=_num(row.get("real_mass")),
         min_height=_num(row.get("min_height")),
@@ -324,12 +333,41 @@ class AssetRegistry:
 # AssetSampler — stateless sampling primitives over an AssetRegistry.
 # ---------------------------------------------------------------------------
 
-# Fields comparable via match/differ on a DistractorSpec. Single-valued
-# taxonomy/attribute fields only — excludes tags (set-valued), identity
-# fields (uuid/asset_id), and physics floats (fragile equality).
+# Fields allowed in DistractorSpec.match / .differ. Excludes tags
+# (filtered by AssetFilter, not by match/differ), identity fields
+# (uuid/asset_id), and physics floats (fragile equality).
+# color/shape/material use set-overlap / set-disjoint via
+# _attr_match / _attr_differ; scalar fields use ==/!=.
 _MATCH_DIFFER_ALLOWED = frozenset(
     ("super_category", "category", "color", "shape", "material", "size_bucket")
 )
+
+_SET_VALUED_FIELDS = frozenset(("color", "shape", "material"))
+
+
+def _attr_match(a: Any, c: Any, field: str) -> bool:
+    """match=(field,) test: set any-overlap, scalar equality.
+
+    None on either side never counts as a match.
+    """
+    if field in _SET_VALUED_FIELDS:
+        if a is None or c is None:
+            return False
+        return bool(a & c)
+    return a == c
+
+
+def _attr_differ(a: Any, c: Any, field: str) -> bool:
+    """differ=(field,) test: set disjoint, scalar inequality.
+
+    None on either side counts as differing.
+    """
+    if field in _SET_VALUED_FIELDS:
+        if a is None or c is None:
+            return True
+        return not (a & c)
+    return a != c
+
 
 _COMPATIBLE_PAIR_MAX_ATTEMPTS = 10
 
@@ -373,11 +411,12 @@ class AssetSampler:
     ) -> list[AssetMeta]:
         """Sample distractors relative to an anchor asset.
 
-        Pool is built by: (1) every meta whose listed ``spec.match``
-        fields equal the anchor's values for those fields, (2) and whose
-        listed ``spec.differ`` fields differ from the anchor's, (3) and
-        which passes ``spec.absolute_filter``. The anchor itself is
-        always excluded.
+        Pool is built by: (1) assets whose listed ``spec.match`` fields
+        are compatible with the anchor (equality for scalar fields;
+        set-overlap for color/shape/material), (2) and whose listed
+        ``spec.differ`` fields are incompatible (inequality for scalar;
+        set-disjoint for color/shape/material), (3) and which passes
+        ``spec.absolute_filter``. The anchor itself is always excluded.
 
         Raises:
             InsufficientPoolError: the pool has fewer unique assets
@@ -401,11 +440,13 @@ class AssetSampler:
             if m.uuid == anchor.uuid:
                 continue
             if not all(
-                getattr(m, f) == getattr(anchor, f) for f in spec.match
+                _attr_match(getattr(anchor, f), getattr(m, f), f)
+                for f in spec.match
             ):
                 continue
             if not all(
-                getattr(m, f) != getattr(anchor, f) for f in spec.differ
+                _attr_differ(getattr(anchor, f), getattr(m, f), f)
+                for f in spec.differ
             ):
                 continue
             if not spec.absolute_filter.matches(m):

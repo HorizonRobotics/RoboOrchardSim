@@ -138,7 +138,7 @@ def test_get_meta_by_uuid(mini_asset_root: Path):
     reg = AssetRegistry(str(mini_asset_root))
     meta = reg.get_meta("u-apple-001")
     assert meta.asset_id == "apple_001"
-    assert meta.color == "red"
+    assert meta.color == frozenset({"red"})
     assert "graspable" in meta.tags
 
 

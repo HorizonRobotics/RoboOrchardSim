@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from xml.etree import ElementTree as ET
 
 REQUIRED_FIELDS = ("uuid", "domain", "super_category", "category")
-OPTIONAL_ATTR_FIELDS = ("color", "shape", "material")
+OPTIONAL_SET_FIELDS = ("color", "shape", "material")
 STRING_FIELDS = ("name", "description", "version", "generate_time")
 FLOAT_FIELDS = (
     "min_height",
@@ -42,9 +42,9 @@ class ParsedUrdf:
     category: str = ""
     name: str = ""
     description: str = ""
-    color: str | None = None
-    shape: str | None = None
-    material: str | None = None
+    color: frozenset[str] | None = None
+    shape: frozenset[str] | None = None
+    material: frozenset[str] | None = None
     real_height: float = 0.0
     min_height: float = 0.0
     max_height: float = 0.0
@@ -71,6 +71,14 @@ def _float(elem: ET.Element | None) -> float | None:
         return float(txt)
     except ValueError:
         return None
+
+
+def _parse_set_attr(text: str | None) -> frozenset[str] | None:
+    """Lowercase + strip + split on comma. None if missing or all empty."""
+    if text is None:
+        return None
+    tokens = frozenset(t.strip().lower() for t in text.split(",") if t.strip())
+    return tokens or None
 
 
 def parse_urdf_extra_info(
@@ -100,10 +108,12 @@ def parse_urdf_extra_info(
             return None
         setattr(out, fname, val)
 
-    for fname in OPTIONAL_ATTR_FIELDS:
-        val = _text(extra.find(fname))
+    for fname in OPTIONAL_SET_FIELDS:
+        val = _parse_set_attr(_text(extra.find(fname)))
         if val is None:
-            out.warnings.append(f"missing optional attribute '{fname}'")
+            out.warnings.append(
+                f"missing or empty optional attribute '{fname}'"
+            )
         else:
             setattr(out, fname, val)
 
