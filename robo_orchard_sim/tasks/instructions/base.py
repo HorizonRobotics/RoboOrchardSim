@@ -6,7 +6,7 @@ import random
 import string
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.registry.registry import (
@@ -18,6 +18,7 @@ __all__ = [
     "InstructionActor",
     "InstructionWrapper",
     "InstructionRenderError",
+    "render_instruction_from_registry",
 ]
 
 
@@ -48,38 +49,45 @@ def _parse_caption_payload(
             "Caption payload uuid mismatch: "
             f"expected '{uuid}', got '{payload_uuid}'"
         )
-    missing = [
-        field for field in ("raw", "seen", "unseen") if field not in payload
-    ]
-    if missing:
-        raise InstructionRenderError(
-            "Caption payload missing required fields: " + ", ".join(missing)
-        )
     raw_description_val = payload.get("raw")
-    if not isinstance(raw_description_val, str):
+    if raw_description_val is not None and not isinstance(
+        raw_description_val, str
+    ):
         raise InstructionRenderError(
             "Caption payload field 'raw' must be a string"
         )
     raw_description = raw_description_val or fallback_description or category
     seen_descriptions: list[str] = []
     unseen_descriptions: list[str] = []
-    for field_name, target in (
-        ("seen", seen_descriptions),
-        ("unseen", unseen_descriptions),
-    ):
-        values = payload.get(field_name)
+
+    def _extend_string_list(
+        source_field_name: str,
+        error_field_name: str,
+        target: list[str],
+    ) -> None:
+        values = payload.get(source_field_name)
+        if values is None:
+            return
         if not isinstance(values, Sequence) or isinstance(
             values, (str, bytes)
         ):
             raise InstructionRenderError(
-                f"Caption payload field '{field_name}' must be a string list"
+                "Caption payload field "
+                f"'{error_field_name}' must be a string list"
             )
         if not all(isinstance(item, str) for item in values):
             raise InstructionRenderError(
-                f"Caption payload field '{field_name}' must "
+                f"Caption payload field '{error_field_name}' must "
                 "contain only strings"
             )
         target.extend(values)
+
+    _extend_string_list("unseen", "unseen", unseen_descriptions)
+    _extend_string_list("seen", "seen", seen_descriptions)
+    if not seen_descriptions:
+        # Temporary compatibility: keep default `seen` mode working while
+        # caption payloads are still being unified on the `seen` field.
+        _extend_string_list("candidates", "candidates", seen_descriptions)
     return raw_description, seen_descriptions, unseen_descriptions
 
 
@@ -94,6 +102,10 @@ def _select_description(
 ) -> str:
     if actor_description_mode == "raw":
         return raw_description
+    if actor_description_mode not in {"seen", "unseen"}:
+        raise InstructionRenderError(
+            f"Unsupported actor_description_mode: '{actor_description_mode}'"
+        )
     if actor_description_seed is None:
         raise InstructionRenderError(
             "actor_description_seed is required when "
@@ -260,6 +272,60 @@ class InstructionRenderError(ValueError):
     """Raised when strict rendering cannot resolve one or more placeholders."""
 
 
+def _resolve_registry(
+    *,
+    registry: Optional["AssetRegistry"],
+    asset_root: str | None,
+) -> "AssetRegistry":
+    if registry is not None:
+        return registry
+    if asset_root is None:
+        raise ValueError("Either registry or asset_root is required")
+    from robo_orchard_sim.asset_manager.registry import AssetRegistry
+
+    return AssetRegistry(asset_root)
+
+
+def render_instruction_from_registry(
+    *,
+    template_name: str,
+    # Mapping from template actor names to asset uuids, e.g.
+    # {"actor1": "uuid-pick", "actor2": "uuid-place"}.
+    actor_uuids: Mapping[str, str],
+    registry: Optional["AssetRegistry"] = None,
+    asset_root: str | None = None,
+    template_mode: Literal["fixed", "variants"] | None = None,
+    actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
+    template_seed: int | None = None,
+    actor_description_seed: int | None = None,
+) -> str:
+    """Render one instruction from a template name and actor-uuid mapping."""
+    resolved_registry = _resolve_registry(
+        registry=registry,
+        asset_root=asset_root,
+    )
+
+    actors = {
+        actor_name: InstructionActor.from_registry(
+            actor_uuid,
+            resolved_registry,
+            actor_description_mode=actor_description_mode,
+            actor_description_seed=actor_description_seed,
+        )
+        for actor_name, actor_uuid in actor_uuids.items()
+    }
+    wrapper = InstructionWrapper(
+        template_name,
+        template_mode=template_mode,
+        actor_description_mode=actor_description_mode,
+    )
+    return wrapper.render(
+        actors=actors,
+        template_seed=template_seed,
+        actor_description_seed=actor_description_seed,
+    )
+
+
 class InstructionWrapper:
     """Wrap an instruction template and render text from actor/context values.
 
@@ -278,16 +344,16 @@ class InstructionWrapper:
         self,
         template: str,
         *,
-        template_mode: Literal["fixed", "variants"] = "fixed",
+        template_mode: Literal["fixed", "variants"] | None = None,
         actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
         strict: bool = True,
     ) -> None:
         self.template = template
-        self.template_mode = template_mode
         self.actor_description_mode = actor_description_mode
         self.strict = strict
         self._formatter = string.Formatter()
         self._template_payload = self._load_template_payload(template)
+        self.template_mode = self._resolve_template_mode(template_mode)
 
     def _load_template_payload(self, template: str) -> Mapping[str, Any]:
         from robo_orchard_sim.tasks.instructions.registry import (
@@ -303,6 +369,20 @@ class InstructionWrapper:
                 "Template payload must be a mapping with fixed/variants"
             )
         return payload
+
+    def _resolve_template_mode(
+        self,
+        template_mode: Literal["fixed", "variants"] | None,
+    ) -> Literal["fixed", "variants"]:
+        if template_mode is not None:
+            return template_mode
+        variants = self._template_payload.get("variants")
+        if isinstance(variants, Sequence) and not isinstance(
+            variants, (str, bytes)
+        ):
+            if variants:
+                return "variants"
+        return "fixed"
 
     def _select_template(self, seed: int | None = None) -> str:
         if self.template_mode == "fixed":
