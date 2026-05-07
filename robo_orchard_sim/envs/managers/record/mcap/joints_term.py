@@ -144,7 +144,10 @@ class McapJointsTerm(
             value = self._parse_data_from_dict(data, key)[key]
         except KeyError:
             return None
-        return value.cpu().numpy()
+        value = value.cpu().numpy()
+        if value.size == 0:
+            return None
+        return value
 
 
 class McapJointsTermCfg(RecordTermBaseCfg):

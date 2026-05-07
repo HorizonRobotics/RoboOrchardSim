@@ -356,3 +356,14 @@ def test_mcap_joints_term_with_joint_ids_returns_selected_joint_positions(
 
     [message] = messages["/joint_states"]
     assert [state.position for state in message.data.states] == [2.0, 5.0]
+
+
+def test_mcap_joints_term_with_empty_joint_positions_skips_recording(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    messages = _record_messages(
+        monkeypatch,
+        obs={"joint_pos": _FakeTensor(np.array([]))},
+    )
+
+    assert messages == {}

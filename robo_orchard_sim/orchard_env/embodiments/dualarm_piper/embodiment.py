@@ -45,6 +45,9 @@ from robo_orchard_sim.envs.managers.observations.asset_obs import (
 from robo_orchard_sim.envs.managers.observations.camera import (
     CameraObservationTermCfg,
 )
+from robo_orchard_sim.envs.managers.observations.last_action import (
+    LastActionObservationTermCfg,
+)
 from robo_orchard_sim.envs.managers.observations.transform_frame import (
     FrameTransformTermCfg,
 )
@@ -353,6 +356,22 @@ class DualArmPiperEmbodiment(EmbodimentBase):
                     ),
                 }
             ),
+            "/last_action": ObservationGroupCfg(
+                terms={
+                    "left_robot_joint_position": LastActionObservationTermCfg(
+                        action_name="left_robot_joint_position",
+                    ),
+                    "left_robot_gripper_control": LastActionObservationTermCfg(
+                        action_name="left_robot_gripper_control",
+                    ),
+                    "right_robot_joint_position": LastActionObservationTermCfg(
+                        action_name="right_robot_joint_position",
+                    ),
+                    "right_robot_gripper_control": LastActionObservationTermCfg(  # noqa: E501
+                        action_name="right_robot_gripper_control",
+                    ),
+                }
+            ),
             "/tf": ObservationGroupCfg(
                 terms={
                     **self._generate_arm_tf_terms(
@@ -502,6 +521,26 @@ class DualArmPiperEmbodiment(EmbodimentBase):
                 velocity_key="/robot/right_joint_velocity",
                 effort_key="/robot/right_joint_effort",
                 joint_name_prefix="right_joint",
+            ),
+            "left_arm_action_joint": McapJointsTermCfg(
+                topic="/action/robot_state/left_joint/joint_states",
+                fps=ACTION_FPS,
+                position_key="/last_action/left_robot_joint_position",
+            ),
+            "left_arm_action_gripper_joint": McapJointsTermCfg(
+                topic="/action/robot_state/left_gripper/joint_states",
+                fps=ACTION_FPS,
+                position_key="/last_action/left_robot_gripper_control",
+            ),
+            "right_arm_action_joint": McapJointsTermCfg(
+                topic="/action/robot_state/right_joint/joint_states",
+                fps=ACTION_FPS,
+                position_key="/last_action/right_robot_joint_position",
+            ),
+            "right_arm_action_gripper_joint": McapJointsTermCfg(
+                topic="/action/robot_state/right_gripper/joint_states",
+                fps=ACTION_FPS,
+                position_key="/last_action/right_robot_gripper_control",
             ),
             **self._generate_arm_tf_record_terms(arm_prefix="left"),
             **self._generate_arm_tf_record_terms(arm_prefix="right"),
