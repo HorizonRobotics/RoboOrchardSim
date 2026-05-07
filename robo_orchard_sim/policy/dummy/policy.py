@@ -32,11 +32,11 @@ DummyAction = dict[str, torch.Tensor] | torch.Tensor
 class DummyPolicy(PolicyMixin[dict[str, Any], DummyAction]):
     """Policy that emits fixed actions for end-to-end flow tests."""
 
-    cfg: DummyPolicyCfg
+    cfg: "DummyPolicyCfg"
 
     def __init__(
         self,
-        cfg: DummyPolicyCfg,
+        cfg: "DummyPolicyCfg",
         observation_space: gym.Space | None = None,
         action_space: gym.Space | None = None,
     ) -> None:
