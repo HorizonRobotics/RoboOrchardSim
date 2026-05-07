@@ -53,12 +53,27 @@ class DataSynthesisConfig:
     seed: int = 0
     episode_num: int = 1
     max_steps: int = 1000
-    settle_steps: int = 50
+    settle_steps: int = 100
     enable_recording: bool = True
     record_dir: str = "logs/data_synthesis"
     output_config_dir: str | None = "configs/data_synthesis"
     launch: LaunchConfig = field(default_factory=LaunchConfig)
     debug_vis: bool = False
+
+
+@dataclass
+class EpisodeStopReason:
+    """String constants for episode stop reasons."""
+
+    MAX_STEPS: str = "max_steps"
+    SIM_APP_STOPPED: str = "sim_app_stopped"
+    ACTION_PLAN_COMPLETE: str = "action_plan_complete"
+    SCENE_NOT_SETTLED: str = "scene_not_settled"
+    SUCCESS: str = "success"
+    EPISODE_ERROR: str = "episode_error"
+
+
+STOP_REASON = EpisodeStopReason()
 
 
 @dataclass
@@ -82,6 +97,10 @@ class DataSynthesisRunner:
             self.cfg.record_dir,
             f"{self.cfg.task}_{timestamp}",
         )
+        print(
+            "Data synthesis recordings will be written to: "
+            f"{self._record_run_dir}"
+        )
 
     def iter_episode_seeds(self) -> range:
         """Return the deterministic seed sequence used by this run."""
@@ -96,14 +115,33 @@ class DataSynthesisRunner:
         try:
             summaries = []
             for episode_index, seed in enumerate(self.iter_episode_seeds()):
-                summaries.append(
-                    self.run_episode(
-                        episode_index=episode_index,
-                        seed=seed,
-                        sim_app=sim_app,
-                        action_manager=action_manager,
+                try:
+                    summaries.append(
+                        self.run_episode(
+                            episode_index=episode_index,
+                            seed=seed,
+                            sim_app=sim_app,
+                            action_manager=action_manager,
+                        )
                     )
-                )
+                except Exception as exc:
+                    print(
+                        f"Episode {episode_index + 1}/"
+                        f"{self.cfg.episode_num} failed with "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    summaries.append(
+                        EpisodeSummary(
+                            episode_index=episode_index,
+                            seed=seed,
+                            steps=0,
+                            stop_reason=(
+                                f"episode_error:{type(exc).__name__}"
+                            ),
+                            success=False,
+                        )
+                    )
+            self._write_successful_recording_paths(summaries)
             return summaries
         finally:
             launcher.close()
@@ -171,6 +209,7 @@ class DataSynthesisRunner:
             with_new_stage=True,
             disable_exit_on_stop=False,
         )
+        episode_success = False
         with env_manager as env:
             plan = build_task_atomic_action_plan(
                 task_name=self.cfg.task,
@@ -180,7 +219,12 @@ class DataSynthesisRunner:
             action_manager.register(plan)
 
             _ = env.reset(seed=seed)
-            self.settle_until_recording_starts(env)
+
+            # you should set the init action
+            actions = self.translate_actions({}, env)
+            _ = env.step(actions)
+
+            scene_settled = self.settle_until_recording_starts(env)
             self._update_episode_record_data(
                 env,
                 {
@@ -212,6 +256,12 @@ class DataSynthesisRunner:
                 )
             )
 
+            if not scene_settled:
+                stop_reason = STOP_REASON.SCENE_NOT_SETTLED
+                episode_success = False
+            else:
+                episode_success = bool(validator_output.success)
+
             self.capture_final_states(scene=env.scene, actors=actors)
             self.record_validator_metadata(
                 env=env,
@@ -234,14 +284,14 @@ class DataSynthesisRunner:
         print(
             f"Episode {episode_index + 1} finished: "
             f"steps={steps}, stop_reason={stop_reason}, "
-            f"success={validator_output.success}"
+            f"success={episode_success}"
         )
         return EpisodeSummary(
             episode_index=episode_index,
             seed=seed,
             steps=steps,
             stop_reason=stop_reason,
-            success=bool(validator_output.success),
+            success=episode_success,
         )
 
     def build_orchard_env(self, *, seed: int):
@@ -299,13 +349,80 @@ class DataSynthesisRunner:
             ),
         )
 
-    def settle_until_recording_starts(self, env: Any) -> None:
-        """Step after reset until stationary recording starts or times out."""
+    def scene_is_stationary(
+        self,
+        env: Any,
+        lin_vel: float = 0.02,
+        ang_vel: float = 0.1,
+    ) -> bool:
+        """Return whether all scene assets with root state are stationary."""
+        if not hasattr(env.scene, "keys"):
+            return True
+
+        checked_assets = 0
+        moving_assets: list[tuple[str, str, float, float]] = []
+        for name in env.scene.keys():
+            asset = env.scene[name]
+            if asset is None:
+                continue
+            data = getattr(asset, "data", None)
+            root_state_w = getattr(data, "root_state_w", None)
+            if not isinstance(root_state_w, torch.Tensor):
+                continue
+            if root_state_w.shape[-1] != 13:
+                continue
+
+            lin_norm = torch.linalg.vector_norm(
+                root_state_w[..., 7:10],
+                dim=-1,
+            )
+            ang_norm = torch.linalg.vector_norm(
+                root_state_w[..., 10:13],
+                dim=-1,
+            )
+            checked_assets += 1
+            if not torch.all(lin_norm < lin_vel) or not torch.all(
+                ang_norm < ang_vel
+            ):
+                moving_assets.append(
+                    (
+                        name,
+                        self._asset_usd_path(asset),
+                        float(torch.max(lin_norm).detach().cpu()),
+                        float(torch.max(ang_norm).detach().cpu()),
+                    )
+                )
+
+        for name, usd_path, max_lin_vel, max_ang_vel in moving_assets:
+            print(
+                f"[Scene asset is not stationary]: "
+                f"name={name}, usd_path={usd_path}, "
+                f"lin_vel={max_lin_vel:.6f}, ang_vel={max_ang_vel:.6f}",
+            )
+
+        return checked_assets > 0 and not moving_assets
+
+    def _asset_usd_path(self, asset: Any) -> str:
+        cfg = getattr(asset, "cfg", None)
+        spawn = getattr(cfg, "spawn", None)
+        usd_path = getattr(spawn, "usd_path", None)
+        if isinstance(usd_path, str):
+            return usd_path
+        return "<unknown>"
+
+    def settle_until_recording_starts(self, env: Any) -> bool:
+        """Step until stationary recording starts and report scene settling."""
         record_manager = env.record_manager
-        for _ in range(self.cfg.settle_steps):
+        if record_manager is None:
+            for _ in range(self.cfg.settle_steps):
+                _ = env.step()
+            return True
+
+        for _i in range(self.cfg.settle_steps):
             _ = env.step()
-            if record_manager is not None and record_manager.running:
-                return
+            if record_manager.running:
+                return self.scene_is_stationary(env)
+        return self.scene_is_stationary(env)
 
     def build_validator_actors(
         self,
@@ -406,28 +523,38 @@ class DataSynthesisRunner:
 
         record_manager.update_episode_user_data({"meta_dict": meta_dict})
 
-    def translate_actions(self, act: Any, env: Any) -> dict[str, Any]:
+    def translate_actions(
+        self, act: Any, env: Any, default_action: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Translate atomic-action output into env action terms."""
         # TODO: remove hard code of robot seeting in future
-        robot = env.scene[_ROBOT_SCENE_NAME]
-        left_arm_ids, _ = robot.find_joints(["left_joint[1-6]"])
-        left_gripper_ids, _ = robot.find_joints(["left_joint[7-8]"])
-        right_arm_ids, _ = robot.find_joints(["right_joint[1-6]"])
-        right_gripper_ids, _ = robot.find_joints(["right_joint[7-8]"])
 
-        joint_pos = robot.data.joint_pos
-        action = {
-            "left_robot_joint_position": joint_pos[:, left_arm_ids].clone(),
-            "left_robot_gripper_control": joint_pos[
-                :,
-                left_gripper_ids,
-            ].clone(),
-            "right_robot_joint_position": joint_pos[:, right_arm_ids].clone(),
-            "right_robot_gripper_control": joint_pos[
-                :,
-                right_gripper_ids,
-            ].clone(),
-        }
+        if default_action is not None:
+            action = default_action.copy()
+        else:
+            robot = env.scene[_ROBOT_SCENE_NAME]
+            left_arm_ids, _ = robot.find_joints(["left_joint[1-6]"])
+            left_gripper_ids, _ = robot.find_joints(["left_joint[7-8]"])
+            right_arm_ids, _ = robot.find_joints(["right_joint[1-6]"])
+            right_gripper_ids, _ = robot.find_joints(["right_joint[7-8]"])
+
+            joint_pos = robot.data.joint_pos
+            action = {
+                "left_robot_joint_position": joint_pos[
+                    :, left_arm_ids
+                ].clone(),
+                "left_robot_gripper_control": joint_pos[
+                    :,
+                    left_gripper_ids,
+                ].clone(),
+                "right_robot_joint_position": joint_pos[
+                    :, right_arm_ids
+                ].clone(),
+                "right_robot_gripper_control": joint_pos[
+                    :,
+                    right_gripper_ids,
+                ].clone(),
+            }
 
         if _LEFT_ARM_KEY in act:
             action["left_robot_joint_position"] = act[_LEFT_ARM_KEY][:, :-2]
@@ -444,14 +571,12 @@ class DataSynthesisRunner:
 
         lin_vel = torch.linalg.vector_norm(body_link_vel_w[..., :3], dim=-1)
         ang_vel = torch.linalg.vector_norm(body_link_vel_w[..., 3:6], dim=-1)
-        return bool(torch.all(lin_vel < 0.06) and torch.all(ang_vel < 0.1))
+        return bool(torch.all(lin_vel < 0.05) and torch.all(ang_vel < 0.1))
 
     def wait_until_robot_stationary(self, env: Any, sim_app: Any) -> None:
         """Keep stepping after task completion until the robot settles."""
-        for _ in range(self.cfg.settle_steps):
+        for _ in range(20):
             if not sim_app.is_running():
-                return
-            if self.robot_is_stationary(env):
                 return
             _ = env.step()
 
@@ -464,16 +589,19 @@ class DataSynthesisRunner:
         sim_app: Any,
         validator: Any,
     ) -> tuple[int, str, ValidatorOutput]:
-        stop_reason = "max_steps"
+        stop_reason = STOP_REASON.MAX_STEPS
         steps = 0
         validator_output = ValidatorOutput(
             success=False,
             progress=0.0,
             metrics={},
         )
+
+        actions = self.translate_actions({}, env)
+
         while steps < self.cfg.max_steps:
             if not sim_app.is_running():
-                stop_reason = "sim_app_stopped"
+                stop_reason = STOP_REASON.SIM_APP_STOPPED
                 break
 
             manager_actions, state = manager.get_action(env)
@@ -483,17 +611,17 @@ class DataSynthesisRunner:
             ):
                 print(log_line)
 
-            actions = self.translate_actions(manager_actions, env)
+            actions = self.translate_actions(manager_actions, env, actions)
             _ = env.step(actions)
             validator_output = validator.evaluate(env, env_idx=0)
             steps += 1
 
             # if validator_output.success:
-            #     stop_reason = "success"
+            #     stop_reason = STOP_REASON.SUCCESS
             #     self.wait_until_robot_stationary(env, sim_app)
             #     break
             if not state.env_busy:
-                stop_reason = "action_plan_complete"
+                stop_reason = STOP_REASON.ACTION_PLAN_COMPLETE
                 self.wait_until_robot_stationary(env, sim_app)
                 break
 
@@ -516,6 +644,37 @@ class DataSynthesisRunner:
             self._record_run_dir,
             f"episode_{episode_index:04d}_seed_{seed}",
         )
+
+    def successful_recording_paths_file(self) -> str | None:
+        """Return the output file for successful episode recording paths."""
+        if self.cfg.output_config_dir is None:
+            return None
+        return os.path.join(
+            self.cfg.output_config_dir,
+            f"successful_recording_paths_{self.cfg.task}.txt",
+        )
+
+    def _write_successful_recording_paths(
+        self,
+        summaries: list[EpisodeSummary],
+    ) -> None:
+        output_path = self.successful_recording_paths_file()
+        if output_path is None:
+            return
+
+        os.makedirs(self.cfg.output_config_dir, exist_ok=True)
+        successful_paths = [
+            self.episode_record_dir(
+                episode_index=summary.episode_index,
+                seed=summary.seed,
+            )
+            for summary in summaries
+            if summary.success
+        ]
+        with open(output_path, "w", encoding="utf-8") as fw:
+            fw.write("\n".join(successful_paths))
+            if successful_paths:
+                fw.write("\n")
 
     def _write_env_cfg(
         self,
@@ -642,6 +801,10 @@ def main() -> None:
             f"steps={summary.steps}, stop_reason={summary.stop_reason}, "
             f"success={summary.success}"
         )
+    total = len(summaries)
+    successful = sum(summary.success for summary in summaries)
+    success_rate = successful / total if total else 0.0
+    print(f"Overall success rate: {successful}/{total} ({success_rate:.2%})")
 
 
 if __name__ == "__main__":
