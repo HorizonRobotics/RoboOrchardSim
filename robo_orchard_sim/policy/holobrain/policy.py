@@ -121,6 +121,7 @@ class HolobrainPolicyCfg(PolicyConfig[HolobrainPolicy]):
     class_type: ClassType[HolobrainPolicy] = HolobrainPolicy
 
     model_dir: str | None = None
+    logging_tag: str | None = None
     inference_prefix: str
     joint_num: int = 7
     device: str | None = None

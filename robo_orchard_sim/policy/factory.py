@@ -18,6 +18,7 @@ from typing import Any
 
 from robo_orchard_sim.policy.dummy.policy import DummyPolicyCfg
 from robo_orchard_sim.policy.holobrain.policy import HolobrainPolicyCfg
+from robo_orchard_sim.policy.server import ServerPolicyCfg
 
 
 def _cfg_get(model_cfg: Any, name: str, default=None):
@@ -34,9 +35,16 @@ def create_policy_from_model_cfg(model_cfg: Any):
     if policy_name == "holobrain":
         return HolobrainPolicyCfg(
             model_dir=_cfg_get(model_cfg, "model_dir"),
+            logging_tag=_cfg_get(model_cfg, "logging_tag"),
             inference_prefix=_cfg_get(model_cfg, "inference_prefix"),
             joint_num=_cfg_get(model_cfg, "joint_num", 7),
             device=_cfg_get(model_cfg, "device"),
             valid_action_step=_cfg_get(model_cfg, "valid_action_step"),
+        )
+    if policy_name == "server":
+        return ServerPolicyCfg(
+            host=_cfg_get(model_cfg, "host", "127.0.0.1"),
+            port=_cfg_get(model_cfg, "port", 8765),
+            logging_tag=_cfg_get(model_cfg, "logging_tag"),
         )
     raise ValueError(f"Invalid policy: {policy_name}")

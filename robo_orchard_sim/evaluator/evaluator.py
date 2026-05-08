@@ -19,6 +19,7 @@
 from __future__ import annotations
 import os
 import warnings
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -124,6 +125,13 @@ class Evaluator:
         self._env_cm: IsaacEnvContextManager | None = None
         self._env: IsaacManagerBasedEnv | None = None
         self._task: OrchardEnv | None = None
+        self._record_run_dir: str | None = None
+        if self.cfg.enable_recording:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            self._record_run_dir = os.path.join(
+                self.cfg.record_dir,
+                f"{self.cfg.task_name}_{timestamp}",
+            )
 
     def __enter__(self) -> "Evaluator":
         self._ensure_env()
@@ -154,13 +162,22 @@ class Evaluator:
         Returns:
             EvaluationResult: Aggregated episode evaluation statistics.
         """
-        env = self._ensure_env()
         policy = self._normalize_policy(policy_or_cfg)
+        env = self._ensure_env()
 
         episode_results = []
         for episode_idx in range(self.cfg.episode_num):
             seed = self.cfg.seed + episode_idx
-            result = self._run_episode(env=env, policy=policy, seed=seed)
+            if self.cfg.enable_recording:
+                env = self._prepare_episode_env(
+                    episode_idx=episode_idx,
+                    seed=seed,
+                )
+            result = self._run_episode(
+                env=env,
+                policy=policy,
+                seed=seed,
+            )
             episode_results.append(result)
 
         success_count = sum(1 for x in episode_results if x.success)
@@ -224,8 +241,6 @@ class Evaluator:
             resolver=resolver,
             config_path=config_path,
         )
-        if self.cfg.enable_recording:
-            task.configure_recording(file_path=self.cfg.record_dir)
         return task
 
     def _open_env(
@@ -265,6 +280,35 @@ class Evaluator:
     ) -> IsaacManagerBasedEnv:
         self._close_env()
         return self._open_env(task=task)
+
+    def _episode_record_dir(self, *, episode_idx: int, seed: int) -> str:
+        if self._record_run_dir is None:
+            raise RuntimeError("Recording directory requested when disabled.")
+        return os.path.join(
+            self._record_run_dir,
+            f"episode_{episode_idx:04d}_seed_{seed}",
+        )
+
+    def _prepare_episode_env(
+        self,
+        *,
+        episode_idx: int,
+        seed: int,
+    ) -> IsaacManagerBasedEnv:
+        from robo_orchard_sim.envs.managers.record import (
+            StationaryEpisodeRecordControllerCfg,
+        )
+
+        task = self._build_task_from_cfg().configure_recording(
+            file_path=self._episode_record_dir(
+                episode_idx=episode_idx,
+                seed=seed,
+            ),
+            controller=StationaryEpisodeRecordControllerCfg(
+                max_wait_step=self.cfg.max_settle_steps,
+            ),
+        )
+        return self._reload_env(task=task)
 
     def _get_runtime_task(self) -> Any:
         """Return the task bound to the current evaluator environment."""
@@ -315,6 +359,17 @@ class Evaluator:
         if isinstance(policy_or_cfg, PolicyMixin):
             return policy_or_cfg
         return policy_or_cfg()
+
+    def _resolve_policy_tag(self, policy: PolicyMixin) -> str | None:
+        """Return unified logging tag from policy or policy cfg."""
+        logging_tag = getattr(policy, "logging_tag", None)
+        if isinstance(logging_tag, str):
+            return logging_tag
+        cfg = getattr(policy, "cfg", None)
+        cfg_logging_tag = getattr(cfg, "logging_tag", None)
+        if isinstance(cfg_logging_tag, str):
+            return cfg_logging_tag
+        return None
 
     def _extract_done_flag(self, done: bool | torch.Tensor | None) -> bool:
         if done is None:
@@ -519,6 +574,7 @@ class Evaluator:
     ) -> tuple[int, str, ValidatorOutput]:
         stop_reason = "max_steps"
         steps = 0
+        policy_tag = self._resolve_policy_tag(policy)
         validator_output = ValidatorOutput(
             success=False,
             progress=0.0,
@@ -532,6 +588,17 @@ class Evaluator:
             observations = step_return.observations
             validator_output = validator.evaluate(env, env_idx=0)
             steps = step_idx + 1
+            if step_idx % 50 == 0:
+                if policy_tag is None:
+                    print(
+                        f"[step={step_idx}] "
+                        f"validator_output={validator_output}"
+                    )
+                else:
+                    print(
+                        f"[{policy_tag}] [step={step_idx}] "
+                        f"validator_output={validator_output}"
+                    )
 
             if validator_output.success:
                 stop_reason = "success"

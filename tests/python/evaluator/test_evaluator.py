@@ -830,9 +830,44 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        import robo_orchard_sim.evaluator.evaluator as evaluator_module
+
         explicit_env = _StubStepEnv(episodes=[[_StepState()]])
         explicit_task = _StubOrchardEnv(env=explicit_env, success_steps=[1])
         self.patch_runtime(monkeypatch, tasks=[explicit_task])
+
+        class _FixedDateTime:
+            @staticmethod
+            def now():
+                from datetime import datetime
+
+                return datetime(2026, 5, 8, 12, 34, 56, 789000)
+
+        def _fake_prepare_episode_env(
+            self,
+            *,
+            episode_idx: int,
+            seed: int,
+        ) -> _StubStepEnv:
+            if self._task is None:
+                self._task = self._build_task_from_cfg()
+            self._task.configure_recording(
+                file_path=self._episode_record_dir(
+                    episode_idx=episode_idx,
+                    seed=seed,
+                ),
+                controller=SimpleNamespace(
+                    max_wait_step=self.cfg.max_settle_steps
+                ),
+            )
+            return self._open_env(task=self._task)
+
+        monkeypatch.setattr(evaluator_module, "datetime", _FixedDateTime)
+        monkeypatch.setattr(
+            Evaluator,
+            "_prepare_episode_env",
+            _fake_prepare_episode_env,
+        )
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
             asset_root="/tmp/assets",
@@ -845,7 +880,70 @@ class TestEvaluator:
         evaluator.evaluate(_StubPolicy())
 
         assert explicit_env.record_manager is not None
-        assert explicit_env.record_manager.file_path == "logs/eval_records"
+        assert explicit_env.record_manager.file_path == (
+            "logs/eval_records/place_a2b_easy_20260508_123456_789/"
+            "episode_0000_seed_0"
+        )
+
+    def test_evaluate_recording_uses_task_timestamp_and_episode_seed_path(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import robo_orchard_sim.evaluator.evaluator as evaluator_module
+
+        explicit_env = _StubStepEnv(episodes=[[_StepState()]])
+        explicit_task = _StubOrchardEnv(env=explicit_env, success_steps=[1])
+        self.patch_runtime(monkeypatch, tasks=[explicit_task])
+
+        class _FixedDateTime:
+            @staticmethod
+            def now():
+                from datetime import datetime
+
+                return datetime(2026, 5, 8, 12, 34, 56, 789000)
+
+        def _fake_prepare_episode_env(
+            self,
+            *,
+            episode_idx: int,
+            seed: int,
+        ) -> _StubStepEnv:
+            if self._task is None:
+                self._task = self._build_task_from_cfg()
+            self._task.configure_recording(
+                file_path=self._episode_record_dir(
+                    episode_idx=episode_idx,
+                    seed=seed,
+                ),
+                controller=SimpleNamespace(
+                    max_wait_step=self.cfg.max_settle_steps
+                ),
+            )
+            return self._open_env(task=self._task)
+
+        monkeypatch.setattr(evaluator_module, "datetime", _FixedDateTime)
+        monkeypatch.setattr(
+            Evaluator,
+            "_prepare_episode_env",
+            _fake_prepare_episode_env,
+        )
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            enable_recording=True,
+            record_dir="logs/eval_records",
+            episode_num=1,
+            max_steps=1,
+            seed=7,
+        )()
+
+        evaluator.evaluate(_StubPolicy())
+
+        assert explicit_env.record_manager is not None
+        assert explicit_env.record_manager.file_path == (
+            "logs/eval_records/place_a2b_easy_20260508_123456_789/"
+            "episode_0000_seed_7"
+        )
 
     def test_episode_waits_for_scene_to_settle_before_evaluation(
         self,
