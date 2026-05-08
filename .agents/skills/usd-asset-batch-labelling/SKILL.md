@@ -177,18 +177,20 @@ Reads each URDF's `<extra_info>` fields (text-only, no rendered images), asks GP
 ```bash
 python3 tools/asset_pipeline/run_caption_labeller.py \
     --asset-root <dst_root>/ \
-    --num-candidates 20 \
+    --seen-count 15 \
+    --unseen-count 5 \
     --max-workers 4 \
     2>&1 | tee nohup_caption_<batch>.out
 ```
 
-Multimodal: reads each asset's `renders/` images and asks GPT for `--num-candidates` short noun phrases (color/texture/shape framings) suitable as VLM training labels. Phrases are deduplicated (Jaccard ≥ 0.85 on normalized tokens). Writes `caption_candidates.json` next to the URDF and adds a `<caption_candidates>` link element to `<extra_info>`.
+Multimodal: reads each asset's `renders/` images and asks GPT for `seen_count + unseen_count` short noun phrases (color/texture/shape framings) suitable as VLM training labels. Phrases are deduplicated (Jaccard ≥ 0.85 on normalized tokens), then sorted and split deterministically by uuid-seeded RNG into `seen` (training) and `unseen` (held-out) lists. Writes `caption_candidates.json` next to the URDF and adds a `<caption_candidates>` link element to `<extra_info>`.
 
 **Key flags:**
 | Flag | Default | Why |
 |------|---------|-----|
 | `--asset-root` | (required) | Recursively scans for `*.urdf` |
-| `--num-candidates` | (required) | Target phrases per asset (e.g. 20) |
+| `--seen-count` | 15 | Phrases per asset written to the `seen` list |
+| `--unseen-count` | 5 | Phrases per asset written to the `unseen` list |
 | `--force` | off | Regenerate even if `caption_candidates.json` exists |
 | `--max-workers` | 4 | Parallel GPT calls |
 | `--dry-run` | off | List URDFs without calling GPT |

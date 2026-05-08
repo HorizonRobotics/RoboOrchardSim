@@ -10,7 +10,8 @@ Example:
     python3 tools/asset_pipeline/run_caption_labeller.py \\
         --asset-root outputs/labelled \\
         --config tools/asset_pipeline/configs/gpt_config.yaml \\
-        --num-candidates 20
+        --seen-count 15 \\
+        --unseen-count 5
 """
 
 import argparse
@@ -47,7 +48,8 @@ def _parse_args() -> argparse.Namespace:
             "gpt_config.yaml",
         ),
     )
-    p.add_argument("--num-candidates", type=int, default=20)
+    p.add_argument("--seen-count", type=int, default=15)
+    p.add_argument("--unseen-count", type=int, default=5)
     p.add_argument("--force", action="store_true")
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--dry-run", action="store_true")
@@ -78,7 +80,8 @@ def main() -> int:
     client = load_client_from_config(args.config)
     labeller = CaptionLabeller(
         gpt_client=client,
-        num_candidates=args.num_candidates,
+        seen_count=args.seen_count,
+        unseen_count=args.unseen_count,
         force=args.force,
     )
 

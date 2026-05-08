@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -286,18 +287,28 @@ class CaptionLabeller:
         gpt_client: an object exposing ``query(text_prompt, images=...)``
             and returning a string (matches
             ``asset_labeller.gpt_client.GPTClient``).
-        num_candidates: target number of candidates per asset.
+        seen_count: number of phrases to write into the ``seen`` list.
+        unseen_count: number of phrases to write into the ``unseen`` list.
         force: regenerate even if ``<caption_candidates>`` already present.
     """
 
     def __init__(
         self,
         gpt_client,
-        num_candidates: int = 20,
+        seen_count: int = 15,
+        unseen_count: int = 5,
         force: bool = False,
     ) -> None:
+        if seen_count < 0 or unseen_count < 0:
+            raise ValueError(
+                "seen_count and unseen_count must be non-negative"
+            )
+        if seen_count + unseen_count == 0:
+            raise ValueError("seen_count + unseen_count must be > 0")
         self.gpt_client = gpt_client
-        self.num_candidates = num_candidates
+        self.seen_count = seen_count
+        self.unseen_count = unseen_count
+        self.num_candidates = seen_count + unseen_count
         self.force = force
 
     def process(self, urdf_path: str) -> ProcessResult:
@@ -407,10 +418,33 @@ class CaptionLabeller:
                 self.num_candidates,
             )
 
+        # Slicing below assumes the pool fits inside seen + unseen so the
+        # two lists never overlap; line 412 above caps the pool length.
+        assert len(phrases) <= self.num_candidates
+        # Sort first so the split depends only on (uuid, phrase set), not
+        # on GPT's response order. Seed by uuid so re-runs reproduce the
+        # same split.
+        pool = sorted(phrases)
+        random.Random(fields["uuid"]).shuffle(pool)
+        seen = pool[: self.seen_count]
+        unseen = pool[self.seen_count : self.seen_count + self.unseen_count]
+        # Shortage policy: seen fills first, unseen takes the remainder.
+        # Warn separately so operators can tell which list degraded.
+        if len(unseen) < self.unseen_count:
+            logger.warning(
+                "unseen short: %s got %d/%d (seen=%d/%d)",
+                urdf_path,
+                len(unseen),
+                self.unseen_count,
+                len(seen),
+                self.seen_count,
+            )
+
         payload = {
             "raw": fields["category"],
             "uuid": fields["uuid"],
-            "candidates": phrases,
+            "seen": seen,
+            "unseen": unseen,
         }
         json_path = os.path.join(
             os.path.dirname(os.path.abspath(urdf_path)), CAPTION_JSON_NAME
