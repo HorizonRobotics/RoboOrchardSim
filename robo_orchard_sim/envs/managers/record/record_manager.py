@@ -29,6 +29,7 @@ from robo_orchard_core.envs.managers.manager_base import (
 from typing_extensions import TypeAlias, TypeVar
 
 from robo_orchard_sim.envs.managers.record.record_controller import (
+    ManualRecordController,
     NoOpRecordControllerCfg,
     RecordController,
     RecordControllerCfg,
@@ -225,6 +226,37 @@ class RecordManager(ManagerBase[EnvType_co, "RecordManagerCfg"]):
             return True
         sample = max(1, int(round(1 / (fps * step_dt))))
         return self._record_step_count % sample == 0
+
+    def start_record(
+        self,
+        *,
+        prefix: str | None = None,
+    ) -> bool:
+        """Manually start recording for a manual record controller.
+
+        Returns:
+            True if recording starts from this call. False if recording was
+            already running.
+
+        Raises:
+            RuntimeError: If this manager is not configured with
+                ManualRecordController, or if episode timing has not been
+                initialized by record_post_reset().
+        """
+        if not isinstance(self._controller, ManualRecordController):
+            raise RuntimeError(
+                "RecordManager.start_record() requires ManualRecordController."
+            )
+        if self._running:
+            return False
+        start_time = self._get_episode_datetime(self._env.step_count)
+
+        self._start_recording(
+            prefix=prefix or "",
+            start_time=start_time,
+        )
+        self._controller.on_manual_start()
+        return True
 
     def _start_recording(
         self,

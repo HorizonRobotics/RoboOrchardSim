@@ -513,12 +513,17 @@ class _StubRecordManager:
         self.file_path = file_path
         self.episode_user_data_calls: list[dict[str, Any]] = []
         self.record_pre_reset_calls = 0
+        self.start_record_calls = 0
 
     def set_episode_user_data(self, data: dict[str, Any]) -> None:
         self.episode_user_data_calls.append(data)
 
     def record_pre_reset(self) -> None:
         self.record_pre_reset_calls += 1
+
+    def start_record(self) -> bool:
+        self.start_record_calls += 1
+        return self.start_record_calls == 1
 
 
 class TestEvaluator:
@@ -884,6 +889,7 @@ class TestEvaluator:
             "logs/eval_records/place_a2b_easy_20260508_123456_789/"
             "episode_0000_seed_0"
         )
+        assert explicit_env.record_manager.start_record_calls == 1
 
     def test_evaluate_recording_uses_task_timestamp_and_episode_seed_path(
         self,
@@ -944,6 +950,7 @@ class TestEvaluator:
             "logs/eval_records/place_a2b_easy_20260508_123456_789/"
             "episode_0000_seed_7"
         )
+        assert explicit_env.record_manager.start_record_calls == 1
 
     def test_episode_waits_for_scene_to_settle_before_evaluation(
         self,
@@ -980,9 +987,10 @@ class TestEvaluator:
         assert env.step_calls == [{"joint_action": 1}]
         assert len(record) == 0
 
-    def test_episode_warns_when_scene_fails_to_settle_in_time(
+    def test_episode_settle_timeout_prints_moving_asset_report(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         moving = torch.tensor(
             [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.3, 0.0]]
@@ -1004,8 +1012,11 @@ class TestEvaluator:
             max_settle_steps=2,
         )()
 
-        with pytest.warns(UserWarning, match="objects/cube, robots/arm"):
-            evaluator.evaluate(_StubPolicy())
+        evaluator.evaluate(_StubPolicy())
+
+        captured = capsys.readouterr()
+        assert "name=objects/cube, usd_path=<unknown>" in captured.out
+        assert "name=robots/arm, usd_path=<unknown>" in captured.out
 
     def test_episode_passes_instruction_wrapped_with_observations_to_policy(
         self,

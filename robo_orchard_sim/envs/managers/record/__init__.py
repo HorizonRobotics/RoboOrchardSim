@@ -16,6 +16,8 @@
 from .record_controller import (
     EpisodeRecordController,
     EpisodeRecordControllerCfg,
+    ManualRecordController,
+    ManualRecordControllerCfg,
     NoOpRecordController,
     NoOpRecordControllerCfg,
     RecordControlDecision,
@@ -30,6 +32,8 @@ from .record_term_base import RecordTermBase, RecordTermBaseCfg
 __all__ = [
     "EpisodeRecordController",
     "EpisodeRecordControllerCfg",
+    "ManualRecordController",
+    "ManualRecordControllerCfg",
     "NoOpRecordController",
     "NoOpRecordControllerCfg",
     "RecordControlDecision",

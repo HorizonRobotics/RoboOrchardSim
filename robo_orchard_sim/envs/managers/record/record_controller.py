@@ -48,6 +48,9 @@ class RecordController:
     ) -> RecordControlDecision:
         return RecordControlDecision(stop=True)
 
+    def on_manual_start(self) -> None:
+        return None
+
 
 class RecordControllerCfg(ClassConfig[RecordController]):
     class_type: ClassType_co[RecordController] = RecordController
@@ -62,6 +65,16 @@ class NoOpRecordController(RecordController):
 
 class NoOpRecordControllerCfg(RecordControllerCfg):
     class_type: ClassType_co[NoOpRecordController] = NoOpRecordController
+
+
+class ManualRecordController(RecordController):
+    """Controller for externally started episode recording."""
+
+    pass
+
+
+class ManualRecordControllerCfg(RecordControllerCfg):
+    class_type: ClassType_co[ManualRecordController] = ManualRecordController
 
 
 class EpisodeRecordController(RecordController):

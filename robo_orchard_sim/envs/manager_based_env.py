@@ -142,8 +142,8 @@ class IsaacManagerBasedEnv(
 
         # step end
         observations = self.observation_manager.get_observations()
-        self._step_count += 1
         self.record_manager.record_step(observations)
+        self._step_count += 1
 
         return EnvStepReturn(
             observations=observations,

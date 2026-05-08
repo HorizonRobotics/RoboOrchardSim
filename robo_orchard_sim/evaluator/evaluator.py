@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 import os
-import warnings
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -296,7 +295,7 @@ class Evaluator:
         seed: int,
     ) -> IsaacManagerBasedEnv:
         from robo_orchard_sim.envs.managers.record import (
-            StationaryEpisodeRecordControllerCfg,
+            ManualRecordControllerCfg,
         )
 
         task = self._build_task_from_cfg().configure_recording(
@@ -304,9 +303,7 @@ class Evaluator:
                 episode_idx=episode_idx,
                 seed=seed,
             ),
-            controller=StationaryEpisodeRecordControllerCfg(
-                max_wait_step=self.cfg.max_settle_steps,
-            ),
+            controller=ManualRecordControllerCfg(),
         )
         return self._reload_env(task=task)
 
@@ -384,16 +381,22 @@ class Evaluator:
     def _extract_truncated(self, step_return: EnvStepReturn) -> bool:
         return self._extract_done_flag(step_return.truncated)
 
-    def _get_non_stationary_entities(
+    def scene_is_stationary(
         self,
         env: IsaacManagerBasedEnv,
-    ) -> list[str]:
+        lin_vel: float = 0.02,
+        ang_vel: float = 0.1,
+        print_report: bool = True,
+    ) -> bool:
+        """Return whether all scene assets with root state are stationary."""
         if not hasattr(env.scene, "keys"):
-            return []
+            return True
 
-        non_stationary = []
+        moving_assets: list[tuple[str, str, float, float]] = []
         for name in env.scene.keys():
             asset = env.scene[name]
+            if asset is None:
+                continue
             data = getattr(asset, "data", None)
             root_state_w = getattr(data, "root_state_w", None)
             if not isinstance(root_state_w, torch.Tensor):
@@ -401,35 +404,66 @@ class Evaluator:
             if root_state_w.shape[-1] < 13:
                 continue
 
-            lin_vel = torch.linalg.vector_norm(root_state_w[..., 7:10], dim=-1)
-            ang_vel = torch.linalg.vector_norm(
-                root_state_w[..., 10:13], dim=-1
+            lin_norm = torch.linalg.vector_norm(
+                root_state_w[..., 7:10],
+                dim=-1,
             )
-            if bool((lin_vel > 0.01).any()) or bool((ang_vel > 0.01).any()):
-                non_stationary.append(name)
-        return non_stationary
+            ang_norm = torch.linalg.vector_norm(
+                root_state_w[..., 10:13],
+                dim=-1,
+            )
+            if not torch.all(lin_norm < lin_vel) or not torch.all(
+                ang_norm < ang_vel
+            ):
+                moving_assets.append(
+                    (
+                        name,
+                        self._asset_usd_path(asset),
+                        float(torch.max(lin_norm).detach().cpu()),
+                        float(torch.max(ang_norm).detach().cpu()),
+                    )
+                )
+
+        for name, usd_path, max_lin_vel, max_ang_vel in moving_assets:
+            if print_report:
+                print(
+                    f"[Scene asset is not stationary]: "
+                    f"name={name}, usd_path={usd_path}, "
+                    f"lin_vel={max_lin_vel:.6f}, "
+                    f"ang_vel={max_ang_vel:.6f}",
+                )
+
+        return not moving_assets
+
+    def _asset_usd_path(self, asset: Any) -> str:
+        cfg = getattr(asset, "cfg", None)
+        spawn = getattr(cfg, "spawn", None)
+        usd_path = getattr(spawn, "usd_path", None)
+        if isinstance(usd_path, str):
+            return usd_path
+        return "<unknown>"
 
     def _settle_scene(self, env: IsaacManagerBasedEnv) -> EnvStepReturn:
-        latest_step_return = env.step()
+        max_settle_steps = max(self.cfg.max_settle_steps, 1)
 
-        if self.cfg.max_settle_steps <= 0:
-            return latest_step_return
-
-        for _ in range(self.cfg.max_settle_steps):
-            if not self._get_non_stationary_entities(env):
-                return latest_step_return
+        for _ in range(max_settle_steps):
             latest_step_return = env.step()
+            if self.scene_is_stationary(env, print_report=False):
+                return latest_step_return
 
-        non_stationary = self._get_non_stationary_entities(env)
-        if non_stationary:
-            warnings.warn(
-                "Starting evaluation before scene fully settles. "
-                "Non-stationary entities: "
-                f"{', '.join(sorted(non_stationary))}.",
-                UserWarning,
-                stacklevel=2,
-            )
+        self.scene_is_stationary(env)
+
         return latest_step_return
+
+    def _start_manual_recording(self, env: IsaacManagerBasedEnv) -> None:
+        if not self.cfg.enable_recording:
+            return
+
+        record_manager = env.record_manager
+        if record_manager is None:
+            return
+
+        record_manager.start_record()
 
     def _build_episode_metadata(
         self,
@@ -543,6 +577,9 @@ class Evaluator:
 
         settle_return = self._settle_scene(env)
         observations = settle_return.observations
+
+        # start record env
+        self._start_manual_recording(env)
 
         if template_seed is None:
             template_seed = seed
