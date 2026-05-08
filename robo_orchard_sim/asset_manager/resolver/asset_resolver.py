@@ -63,6 +63,23 @@ class AssetResolutionError(AssetResolverError):
         super().__init__(f"role '{role}' — {cause}")
 
 
+def _normalize_filter(entry: dict, role: str) -> dict:
+    """Return filter dict; missing key or null -> empty (match-all)."""
+    raw = entry.get("filter")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise AssetResolutionError(
+            role=role,
+            filter_repr=str(raw),
+            cause=TypeError(
+                f"filter must be a dict (or omitted/null for match-all); "
+                f"got {type(raw).__name__}"
+            ),
+        )
+    return dict(raw)
+
+
 # -----------------------------------------------------------------------
 # Split name -> AssetSplits field mapping
 # -----------------------------------------------------------------------
@@ -186,7 +203,11 @@ class AssetResolver:
                 count = len(value.members) if hasattr(value, "members") else 1
             entry = asset_configs[role]
             requested = entry.get("pool_size", count if count > 1 else 1)
-            lines.append(f"  {role}: requested={requested}, resolved={count}")
+            empty_filter = "uuid" not in entry and not entry.get("filter")
+            hint = " [filter=<empty: full registry>]" if empty_filter else ""
+            lines.append(
+                f"  {role}: requested={requested}, resolved={count}{hint}"
+            )
         logger.info("\n".join(lines))
 
     def _resolve_target(
@@ -205,14 +226,7 @@ class AssetResolver:
             meta, spec = self._resolve_target_by_uuid(role, entry)
             return [meta], spec
 
-        try:
-            filter_dict = dict(entry["filter"])
-        except KeyError as exc:
-            raise AssetResolutionError(
-                role=role,
-                filter_repr=str(entry),
-                cause=exc,
-            ) from exc
+        filter_dict = _normalize_filter(entry, role)
 
         only_in = self._resolve_split_only_in(
             role, entry, err_repr=str(filter_dict)
@@ -308,13 +322,14 @@ class AssetResolver:
                 cause=exc,
             ) from exc
 
-        if "filter" in entry:
+        filter_dict = _normalize_filter(entry, role)
+        if filter_dict:
             try:
-                filter_check = AssetFilter(**dict(entry["filter"]))
+                filter_check = AssetFilter(**filter_dict)
             except TypeError as exc:
                 raise AssetResolutionError(
                     role=role,
-                    filter_repr=str(entry["filter"]),
+                    filter_repr=str(filter_dict),
                     cause=exc,
                 ) from exc
             if not filter_check.matches(meta):
@@ -400,8 +415,9 @@ class AssetResolver:
 
         only_in = self._resolve_split_only_in(role, entry, err_repr=str(entry))
 
+        filter_dict = _normalize_filter(entry, role)
         try:
-            absolute_filter = AssetFilter(**dict(entry.get("filter", {})))
+            absolute_filter = AssetFilter(**filter_dict)
         except TypeError as exc:
             raise AssetResolutionError(
                 role=role,

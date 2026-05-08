@@ -343,16 +343,43 @@ class TestConfigShapeValidation:
         assert exc_info.value.role == "distractors"
         assert "mode" in str(exc_info.value.cause)
 
-    def test_resolve_target_missing_filter_wrapped(self, mini_resolver):
+    def test_resolve_target_missing_filter_treated_as_match_all(
+        self, mini_resolver
+    ):
+        """Missing `filter` key == empty == match-all (Option 2 ergonomics)."""
         configs = {
             "pick": {
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].name == "pick_object"
+
+    def test_resolve_target_null_filter_treated_as_match_all(
+        self, mini_resolver
+    ):
+        """`filter: null` (YAML) == empty == match-all."""
+        configs = {
+            "pick": {
+                "filter": None,
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].name == "pick_object"
+
+    def test_resolve_target_non_dict_filter_raises(self, mini_resolver):
+        """Non-dict filter (e.g. string) is still a hard error."""
+        configs = {
+            "pick": {
+                "filter": "graspable",
                 "prim_name": "pick_object",
             },
         }
         with pytest.raises(AssetResolutionError) as exc_info:
             mini_resolver.resolve(configs)
         assert exc_info.value.role == "pick"
-        assert isinstance(exc_info.value.cause, KeyError)
+        assert isinstance(exc_info.value.cause, TypeError)
 
     def test_resolve_target_missing_prim_name_wrapped(self, mini_resolver):
         configs = {
