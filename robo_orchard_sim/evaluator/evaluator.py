@@ -64,12 +64,12 @@ def _create_asset_registry(asset_root: str):
 
 
 def _create_asset_resolver(*, registry_obj: Any, seed: int):
-    """Create the run-scoped resolver used for task assembly.
+    """Create the resolver used to assemble one episode-scoped task.
 
-    The resolver RNG is seeded once per evaluator run. Asset identity
-    selection therefore stays fixed for the run, while per-episode seeds
-    passed to ``env.reset(...)`` only affect runtime reset randomness such as
-    pose variation.
+    The resolver is seeded from the episode seed supplied by the evaluator.
+    That means asset identity selection can vary from episode to episode,
+    while the same seed is also forwarded to ``env.reset(...)`` for
+    reset-time randomness such as pose variation.
     """
     from robo_orchard_sim.asset_manager.resolver import AssetResolver
 
@@ -162,7 +162,6 @@ class Evaluator:
             EvaluationResult: Aggregated episode evaluation statistics.
         """
         policy = self._normalize_policy(policy_or_cfg)
-        env = self._ensure_env()
 
         episode_results = []
         for episode_idx in range(self.cfg.episode_num):
@@ -171,6 +170,10 @@ class Evaluator:
                 env = self._prepare_episode_env(
                     episode_idx=episode_idx,
                     seed=seed,
+                )
+            else:
+                env = self._reload_env(
+                    task=self._build_task_from_cfg(seed=seed),
                 )
             result = self._run_episode(
                 env=env,
@@ -212,15 +215,8 @@ class Evaluator:
             return self._env
         return self._open_env()
 
-    def _build_task_from_cfg(self) -> OrchardEnv:
-        """Build the run-scoped orchard task from evaluator configuration.
-
-        This task is assembled once per evaluator-owned environment. Asset
-        selection happens through the resolver seeded by ``self.cfg.seed``,
-        so asset identity is fixed within one evaluator run. Per-episode
-        seeds only flow into ``env.reset(seed=...)`` and affect reset-time
-        randomness after task assembly.
-        """
+    def _build_task_from_cfg(self, *, seed: int) -> OrchardEnv:
+        """Build one orchard task using the provided episode seed."""
         config_path = self.cfg.task_config_path
         if config_path is not None:
             config_path = os.path.abspath(config_path)
@@ -232,7 +228,7 @@ class Evaluator:
         registry_obj = _create_asset_registry(self.cfg.asset_root)
         resolver = _create_asset_resolver(
             registry_obj=registry_obj,
-            seed=self.cfg.seed,
+            seed=seed,
         )
         task_builder = _get_task_builder()
         task = task_builder(
@@ -245,11 +241,15 @@ class Evaluator:
     def _open_env(
         self,
         task: OrchardEnv | None = None,
+        *,
+        seed: int | None = None,
     ) -> IsaacManagerBasedEnv:
         self._ensure_launcher()
 
         if task is None:
-            task = self._build_task_from_cfg()
+            if seed is None:
+                seed = self.cfg.seed
+            task = self._build_task_from_cfg(seed=seed)
         self._task = task
 
         env_cfg = task.to_isaac_env_cfg()
@@ -276,9 +276,11 @@ class Evaluator:
     def _reload_env(
         self,
         task: OrchardEnv | None = None,
+        *,
+        seed: int | None = None,
     ) -> IsaacManagerBasedEnv:
         self._close_env()
-        return self._open_env(task=task)
+        return self._open_env(task=task, seed=seed)
 
     def _episode_record_dir(self, *, episode_idx: int, seed: int) -> str:
         if self._record_run_dir is None:
@@ -298,7 +300,7 @@ class Evaluator:
             ManualRecordControllerCfg,
         )
 
-        task = self._build_task_from_cfg().configure_recording(
+        task = self._build_task_from_cfg(seed=seed).configure_recording(
             file_path=self._episode_record_dir(
                 episode_idx=episode_idx,
                 seed=seed,

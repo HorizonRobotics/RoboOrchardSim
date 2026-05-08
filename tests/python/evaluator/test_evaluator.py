@@ -15,11 +15,16 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
+import sys
 import types
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+# Prefer the workspace package over the installed site-packages copy.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import pytest
 import torch
@@ -584,14 +589,17 @@ class TestEvaluator:
         max_steps: int,
         seed: int = 0,
     ) -> tuple[Any, _StubStepEnv, _StubTaskRegistry]:
-        env = _StubStepEnv(episodes=episodes)
-        orchard_env = _StubOrchardEnv(
-            env=env,
-            success_steps=success_steps,
-        )
+        envs = [_StubStepEnv(episodes=[episode]) for episode in episodes]
+        orchard_envs = [
+            _StubOrchardEnv(
+                env=env,
+                success_steps=[success_step],
+            )
+            for env, success_step in zip(envs, success_steps, strict=True)
+        ]
         registry = self.patch_runtime(
             monkeypatch,
-            tasks=[orchard_env],
+            tasks=orchard_envs,
         )
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
@@ -600,7 +608,7 @@ class TestEvaluator:
             episode_num=episode_num,
             max_steps=max_steps,
         )()
-        return evaluator, env, registry
+        return evaluator, envs[0], registry
 
     def test_cfg_instantiates_evaluator(self) -> None:
         evaluator = EvaluatorCfg(
@@ -678,6 +686,84 @@ class TestEvaluator:
 
         assert policy_cfg.factory_calls == 1
 
+    def test_evaluate_builds_task_per_episode_with_incrementing_seed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import robo_orchard_sim.evaluator.evaluator as evaluator_module
+
+        class _StubManualRecordControllerCfg:
+            def __init__(self, max_wait_step: int | None = None) -> None:
+                self.max_wait_step = max_wait_step
+
+        build_task_seeds: list[str] = []
+
+        def build_task(
+            task_name: str,
+            *,
+            resolver: object | None = None,
+            config_path: str | None = None,
+        ) -> _StubOrchardEnv:
+            del task_name, config_path
+            build_task_seeds.append(getattr(resolver, "rng", "<missing>"))
+            env = _StubStepEnv(
+                episodes=[
+                    [_StepState()],
+                    [_StepState()],
+                    [_StepState()],
+                ]
+            )
+            return _StubOrchardEnv(env=env, success_steps=[1, 1, 1])
+
+        self.patch_runtime(monkeypatch, tasks=[])
+        monkeypatch.setattr(
+            evaluator_module,
+            "_get_task_builder",
+            lambda: build_task,
+        )
+        record_module = types.ModuleType(
+            "robo_orchard_sim.envs.managers.record"
+        )
+        record_module.__path__ = []
+        record_module.ManualRecordControllerCfg = (
+            _StubManualRecordControllerCfg
+        )
+        envs_module = types.ModuleType("robo_orchard_sim.envs")
+        envs_module.__path__ = []
+        managers_module = types.ModuleType("robo_orchard_sim.envs.managers")
+        managers_module.__path__ = []
+        monkeypatch.setitem(sys.modules, "robo_orchard_sim.envs", envs_module)
+        monkeypatch.setitem(
+            sys.modules,
+            "robo_orchard_sim.envs.managers",
+            managers_module,
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "robo_orchard_sim.envs.managers.record",
+            record_module,
+        )
+
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            seed=7,
+            episode_num=3,
+            max_steps=1,
+            enable_recording=True,
+            record_dir="logs/eval_records",
+        )()
+
+        result = evaluator.evaluate(_StubPolicy())
+
+        assert build_task_seeds == ["rng:7", "rng:8", "rng:9"]
+        assert result.episode_num == 3
+        assert [episode.stop_reason for episode in result.episode_results] == [
+            "success",
+            "success",
+            "success",
+        ]
+
     def test_policy_is_reset_between_episodes(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -698,6 +784,55 @@ class TestEvaluator:
         evaluator.evaluate(policy)
 
         assert policy.reset_calls == 3
+
+    def test_evaluate_without_recording_reloads_env_for_each_episode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        first_env = _StubStepEnv(
+            episodes=[
+                [_StepState()],
+                [_StepState()],
+                [_StepState()],
+            ]
+        )
+        second_env = _StubStepEnv(episodes=[[_StepState()]])
+        third_env = _StubStepEnv(episodes=[[_StepState()]])
+
+        registry = self.patch_runtime(
+            monkeypatch,
+            tasks=[
+                _StubOrchardEnv(env=first_env, success_steps=[1, 1, 1]),
+                _StubOrchardEnv(env=second_env, success_steps=[1]),
+                _StubOrchardEnv(env=third_env, success_steps=[1]),
+            ],
+        )
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            seed=3,
+            episode_num=3,
+            max_steps=1,
+        )()
+
+        evaluator.evaluate(_StubPolicy())
+
+        assert first_env.reset_calls == [{"seed": 3}]
+        assert second_env.reset_calls == [{"seed": 4}]
+        assert third_env.reset_calls == [{"seed": 5}]
+        assert registry.build_calls == [
+            "place_a2b_easy",
+            "place_a2b_easy",
+            "place_a2b_easy",
+        ]
+        assert [
+            build_kwargs["resolver"].rng
+            for build_kwargs in registry.build_kwargs
+        ] == [
+            "rng:3",
+            "rng:4",
+            "rng:5",
+        ]
 
     def test_episode_stops_on_success_before_env_done(
         self,
@@ -754,16 +889,21 @@ class TestEvaluator:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        evaluator, env, registry = self.build_evaluator(
+        first_env = _StubStepEnv(episodes=[[_StepState()]])
+        second_env = _StubStepEnv(episodes=[[_StepState()]])
+        registry = self.patch_runtime(
             monkeypatch,
-            episodes=[
-                [_StepState()],
-                [_StepState()],
+            tasks=[
+                _StubOrchardEnv(env=first_env, success_steps=[1]),
+                _StubOrchardEnv(env=second_env, success_steps=[1]),
             ],
-            success_steps=[1, 1],
+        )
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
-        )
+        )()
         policy_a = _StubPolicy()
         policy_b = _StubPolicy()
 
@@ -774,8 +914,14 @@ class TestEvaluator:
         assert second.episode_num == 1
         assert policy_a.reset_calls == 1
         assert policy_b.reset_calls == 1
-        assert len(env.reset_calls) == 2
-        assert registry.build_calls == ["place_a2b_easy"]
+        assert first_env.reset_calls == [{"seed": 0}]
+        assert second_env.reset_calls == [{"seed": 0}]
+        assert registry.build_calls == [
+            "place_a2b_easy",
+            "place_a2b_easy",
+        ]
+
+        evaluator.close()
 
     def test_evaluate_uses_evaluator_cfg_to_build_task_behavior(
         self,
@@ -855,7 +1001,7 @@ class TestEvaluator:
             seed: int,
         ) -> _StubStepEnv:
             if self._task is None:
-                self._task = self._build_task_from_cfg()
+                self._task = self._build_task_from_cfg(seed=seed)
             self._task.configure_recording(
                 file_path=self._episode_record_dir(
                     episode_idx=episode_idx,
@@ -915,7 +1061,7 @@ class TestEvaluator:
             seed: int,
         ) -> _StubStepEnv:
             if self._task is None:
-                self._task = self._build_task_from_cfg()
+                self._task = self._build_task_from_cfg(seed=seed)
             self._task.configure_recording(
                 file_path=self._episode_record_dir(
                     episode_idx=episode_idx,

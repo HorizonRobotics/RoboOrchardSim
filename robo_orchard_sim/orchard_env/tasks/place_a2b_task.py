@@ -204,17 +204,20 @@ class PlaceA2BTask(TaskBase):
         Returns:
             Validator: Task-specific success/progress validator.
         """
-        pick_name = self.pick_object.scene_name
-        place_name = self.place_object.scene_name
+        actors_by_name = {actor.name: actor for actor in actors}
+        pick_actor = actors_by_name[self.pick_object.scene_name]
+        place_actor = actors_by_name[self.place_object.scene_name]
         return Validator(
             actors=actors,
             criteria=[
-                reach(pick_name, 0.2),
-                (lift(pick_name, 0.03), [0]),
-                (is_within_xy(pick_name, place_name), [1]),
+                reach(pick_actor.name, 0.2),
+                (lift(pick_actor, 0.03), [0]),
+                (is_within_xy(pick_actor.name, place_actor.name), [1]),
                 (
                     is_within_xy(
-                        pick_name, place_name, open_gripper_threshold=0.04
+                        pick_actor.name,
+                        place_actor.name,
+                        open_gripper_threshold=0.04,
                     ),
                     [2],
                 ),

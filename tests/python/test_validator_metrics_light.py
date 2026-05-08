@@ -3,6 +3,8 @@
 import importlib
 import inspect
 
+import numpy as np
+import pytest
 import torch
 
 from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
@@ -138,6 +140,13 @@ def test_lift_checker_reads_requested_env_index():
     checkers = importlib.import_module(
         "robo_orchard_sim.tasks.validators.checkers"
     )
+    actor = ValidatorActor(name="objects/cube")
+    actor.init_state = np.array(
+        [
+            [0.0, 0.0, 0.50, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.50, 1.0, 0.0, 0.0, 0.0],
+        ]
+    )
     env = _DummyEnv(
         scene={
             "objects/cube": _DummyObject(
@@ -147,29 +156,56 @@ def test_lift_checker_reads_requested_env_index():
         }
     )
 
-    checker = checkers.lift("objects/cube", threshold=0.05)
+    checker = checkers.lift(actor, threshold=0.05)
 
     assert not checker(env, env_idx=0)
     assert checker(env, env_idx=1)
 
 
-def test_lift_checker_uses_per_env_default_height():
+def test_lift_checker_uses_per_env_init_height():
     checkers = importlib.import_module(
         "robo_orchard_sim.tasks.validators.checkers"
+    )
+    actor = ValidatorActor(name="objects/cube")
+    actor.init_state = np.array(
+        [
+            [0.0, 0.0, 0.50, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.60, 1.0, 0.0, 0.0, 0.0],
+        ]
     )
     env = _DummyEnv(
         scene={
             "objects/cube": _DummyObject(
                 positions=[(0.0, 0.0, 0.56), (0.0, 0.0, 0.65)],
-                default_heights=[0.50, 0.60],
+                default_heights=[0.10, 0.10],
             )
         }
     )
 
-    checker = checkers.lift("objects/cube", threshold=0.05)
+    checker = checkers.lift(actor, threshold=0.05)
 
     assert checker(env, env_idx=0) is True
     assert checker(env, env_idx=1) is False
+
+
+def test_lift_checker_missing_init_state_raises_value_error():
+    checkers = importlib.import_module(
+        "robo_orchard_sim.tasks.validators.checkers"
+    )
+    actor = ValidatorActor(name="objects/cube")
+    env = _DummyEnv(
+        scene={
+            "objects/cube": _DummyObject(
+                positions=[(0.0, 0.0, 0.56)],
+                default_heights=[0.50],
+            )
+        }
+    )
+
+    checker = checkers.lift(actor, threshold=0.05)
+
+    with pytest.raises(ValueError, match="init_state is not set"):
+        checker(env, env_idx=0)
 
 
 def test_reach_checker_reads_requested_env_index():
@@ -392,13 +428,15 @@ def test_validator_actor_from_rigid_object_captures_cfg_and_pose():
     assert actor.final_state is not None
 
 
-def test_lift_checker_accepts_plain_identifier():
+def test_lift_checker_binds_validator_actor():
     checkers = importlib.import_module(
         "robo_orchard_sim.tasks.validators.checkers"
     )
-    checker = checkers.lift("cube", threshold=0.05)
+    actor = ValidatorActor(name="cube")
+    checker = checkers.lift(actor, threshold=0.05)
 
     assert checker.actor_name == "cube"
+    assert checker.actor is actor
 
 
 def test_gripper_checker_accepts_plain_robot_identifier():

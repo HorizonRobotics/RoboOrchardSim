@@ -137,12 +137,13 @@ class PickTask(TaskBase):
 
     def build_validator(self, actors: list[ValidatorActor]) -> Validator:
         """Build the task validator for pick evaluation."""
-        pick_name = self.pick_object.scene_name
+        actors_by_name = {actor.name: actor for actor in actors}
+        pick_actor = actors_by_name[self.pick_object.scene_name]
         return Validator(
             actors=actors,
             criteria=[
-                reach(pick_name, 0.2),
-                (lift(pick_name, 0.03), [0]),
+                reach(pick_actor.name, 0.2),
+                (lift(pick_actor, 0.03), [0]),
             ],
             criteria_name=[
                 "reach_pick",

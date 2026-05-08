@@ -20,6 +20,8 @@ from typing import Literal, Sequence
 import numpy as np
 import torch
 
+from robo_orchard_sim.tasks.validators.base import ValidatorActor
+
 
 class CheckerBase:
     """Base checker with a unified boolean check interface."""
@@ -31,6 +33,28 @@ class CheckerBase:
     def __call__(self, env, env_idx: int = 0) -> bool:
         """Allow checker instances to be called like functions."""
         return self.check(env, env_idx=env_idx)
+
+
+class ActorBoundChecker(CheckerBase):
+    """Base checker for logic that depends on a validator actor."""
+
+    def __init__(self, actor: ValidatorActor):
+        self.actor = actor
+        self.actor_name = actor.name
+
+    def _get_init_state(self) -> np.ndarray:
+        if self.actor.init_state is None:
+            raise ValueError(
+                f"ValidatorActor '{self.actor_name}' init_state is not set."
+            )
+        return self.actor.init_state
+
+    def _get_final_state(self) -> np.ndarray:
+        if self.actor.final_state is None:
+            raise ValueError(
+                f"ValidatorActor '{self.actor_name}' final_state is not set."
+            )
+        return self.actor.final_state
 
 
 def _resolve_env_prim_path(scene_asset, env_idx: int) -> str:
@@ -81,27 +105,23 @@ class ReachChecker(CheckerBase):
         return False
 
 
-class LiftChecker(CheckerBase):
-    """Check whether the target object is lifted above default height."""
+class LiftChecker(ActorBoundChecker):
+    """Check whether the target object is lifted above initial height."""
 
     def __init__(
         self,
-        actor_name: str,
+        actor: ValidatorActor,
         threshold: float = 0.05,
-        default_height: float | None = None,
     ):
-        self.actor_name = actor_name
+        super().__init__(actor=actor)
         self.threshold = threshold
-        self.default_height = default_height
 
     def check(self, env, env_idx: int = 0) -> bool:
         """Return True if height gain exceeds the configured threshold."""
         actor_data = env.scene[self.actor_name].data
         actor_pos = actor_data.root_pos_w[env_idx]
-        default_height = self.default_height
-        if default_height is None:
-            default_height = actor_data.default_root_state[env_idx, 2]
-        return (actor_pos[2] - default_height).item() > self.threshold
+        init_height = self._get_init_state()[env_idx, 2]
+        return (actor_pos[2] - init_height).item() > self.threshold
 
 
 class WithinXYChecker(CheckerBase):
@@ -353,12 +373,14 @@ def reach(
     )
 
 
-def lift(actor_name, threshold=0.05, default_height=None):
-    """Create a lift checker for one object identifier."""
+def lift(
+    actor: ValidatorActor,
+    threshold: float = 0.05,
+):
+    """Create a lift checker bound to one validator actor."""
     return LiftChecker(
-        actor_name=actor_name,
+        actor=actor,
         threshold=threshold,
-        default_height=default_height,
     )
 
 
