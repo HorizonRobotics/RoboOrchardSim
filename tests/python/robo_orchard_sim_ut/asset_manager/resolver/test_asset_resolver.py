@@ -23,11 +23,14 @@ The resolver is task-agnostic: it transforms ``dict[role, config]`` into
 """
 
 from __future__ import annotations
+from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
     AssetResolutionError,
+    AssetResolver,
 )
 
 
@@ -379,6 +382,99 @@ class TestConfigShapeValidation:
             mini_resolver.resolve(configs)
         assert exc_info.value.role == "distractors"
         assert isinstance(exc_info.value.cause, KeyError)
+
+
+class TestPoolSize:
+    """pool_size branching in target and distractor resolution."""
+
+    def test_resolve_target_pool_returns_pool_spec(self, mini_resolver):
+        """Target entry with pool_size>1 returns PoolSpec wrapping members."""
+        from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
+
+        out = mini_resolver.resolve(
+            {
+                "pick": {
+                    "filter": {"super_category": "fruits"},
+                    "prim_name": "pick_object",
+                    "pool_size": 3,
+                },
+            }
+        )
+        assert isinstance(out["pick"], PoolSpec)
+        assert out["pick"].role_id == "pick_object"
+        assert {m.name for m in out["pick"].members} == {
+            f"pick_object_pool_{i}" for i in range(3)
+        }
+
+    def test_resolve_distractor_pool_returns_pool_spec(self, mini_resolver):
+        """Distractor entry with pool_size returns PoolSpec."""
+        from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
+
+        out = mini_resolver.resolve(
+            {
+                "pick": {
+                    "filter": {
+                        "super_category": "fruits",
+                        "category": "apple",
+                    },
+                    "prim_name": "pick_object",
+                },
+                "distractors": {
+                    "anchor": "pick",
+                    "match": ["super_category"],
+                    "min_count": 1,
+                    "max_count": 1,
+                    "pool_size": 2,
+                    "prim_name_prefix": "distractor",
+                },
+            }
+        )
+        pool = out["distractors"]
+        assert isinstance(pool, PoolSpec)
+        assert pool.role_id == "distractor"
+        assert pool.active_count == 1
+        assert {m.name for m in pool.members} == {
+            "distractor_pool_0",
+            "distractor_pool_1",
+        }
+
+    def test_resolve_pools_are_uuid_disjoint(self, mini_registry):
+        """Cross-pool UUID disjointness holds across multiple seeds."""
+        cfg = {
+            "pick": {
+                "filter": {"super_category": "fruits"},
+                "prim_name": "pick_object",
+                "pool_size": 2,
+            },
+            "distractors": {
+                "anchor": "pick",
+                "match": ["super_category"],
+                "min_count": 1,
+                "max_count": 1,
+                "pool_size": 1,
+                "prim_name_prefix": "distractor",
+            },
+        }
+
+        class FakeSpec:
+            def __init__(self, *, name, usd_path="", **_):
+                self.name = name
+                self.usd_path = usd_path
+
+        def _fake_build_spec(meta, *, name=None, **_):
+            return FakeSpec(name=name or meta.asset_id, usd_path=meta.usd_path)
+
+        for seed in range(20):
+            with patch.object(
+                mini_registry, "build_spec", side_effect=_fake_build_spec
+            ):
+                out = AssetResolver(
+                    registry=mini_registry,
+                    rng=np.random.default_rng(seed),
+                ).resolve(cfg)
+                pick_uuids = {m.usd_path for m in out["pick"].members}
+                dist_uuids = {s.usd_path for s in out["distractors"]}
+                assert pick_uuids.isdisjoint(dist_uuids), f"seed {seed}"
 
 
 class TestResolveByUuid:

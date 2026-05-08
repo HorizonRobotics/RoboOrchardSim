@@ -17,7 +17,7 @@
 
 import os
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from isaaclab.assets import (
     Articulation,
@@ -34,6 +34,9 @@ from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.models.assets.xform_asset import XFormPrimAsset
 from robo_orchard_sim.models.prim import PrimClassCfg, PrimType
 
+if TYPE_CHECKING:
+    from robo_orchard_sim.models.scenes.pool_alias_state import PoolAliasState
+
 __all__ = [
     "InteractiveScene",
     "InteractiveSceneCfg",
@@ -49,6 +52,20 @@ class InteractiveScene(InteractiveSceneBase):
     the asset name in the scene will be 'group1/asset1'.
 
     """
+
+    def __init__(
+        self,
+        cfg,
+        *,
+        pool_alias_state: "PoolAliasState | None" = None,
+    ) -> None:
+        super().__init__(cfg)
+        self._pool_alias_state = pool_alias_state
+
+    def __getitem__(self, key: str):
+        if self._pool_alias_state is not None:
+            key = self._pool_alias_state.resolve(key)
+        return super().__getitem__(key)
 
     @staticmethod
     def _is_group_asset_mapping(asset_cfg: Any) -> bool:

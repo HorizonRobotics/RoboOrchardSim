@@ -34,6 +34,7 @@ from robo_orchard_sim.cfg_wrappers.envs.env_cfg import (
 )
 from robo_orchard_sim.cfg_wrappers.scenes_cfg import InteractiveSceneCfg
 from robo_orchard_sim.models.scenes.interactive_scene import InteractiveScene
+from robo_orchard_sim.models.scenes.pool_alias_state import PoolAliasState
 from robo_orchard_sim.sim_ctx import (
     SimulationContext,
     SimulationContextManager,
@@ -56,6 +57,33 @@ InteractiveSceneCfgType_co = TypeVar(
     bound=InteractiveSceneCfg,
     covariant=True,
 )
+
+
+def _has_pool_roles(cfg) -> bool:
+    """True iff cfg.scene.assets contains any pool-suffixed entry."""
+    scene_assets = getattr(getattr(cfg, "scene", None), "assets", None)
+    if not scene_assets:
+        return False
+    for group in scene_assets.values():
+        for name in group:
+            if "_pool_" in name:
+                return True
+    return False
+
+
+def _enumerate_pool_role_ids(cfg) -> set[str]:
+    """Return role_ids derived from pool-suffixed scene asset names."""
+    scene_assets = getattr(getattr(cfg, "scene", None), "assets", None)
+    if not scene_assets:
+        return set()
+    roles: set[str] = set()
+    for group in scene_assets.values():
+        for name in group:
+            if "_pool_" in name:
+                base = name.rsplit("_pool_", 1)[0]
+                # Drop any namespace prefix like "objects/pick_object".
+                roles.add(base.split("/", 1)[-1])
+    return roles
 
 
 class IsaacEnv(
@@ -129,9 +157,26 @@ class IsaacEnv(
         self._sim_step_counter = 0
 
         # generate scene
-        # We use our modified version of the InteractiveScene class
+        # We use our modified version of the InteractiveScene class.
+        # If any role in the scene cfg is pool-suffixed, attach a
+        # PoolAliasState so the scene's __getitem__ resolves role aliases.
+        if _has_pool_roles(self.cfg):
+            num_envs = getattr(self.cfg.scene, "num_envs", 1)
+            if num_envs > 1:
+                raise NotImplementedError(
+                    f"pool reset requires num_envs=1 (got {num_envs}); "
+                    "multi-env pool support is future work — see spec."
+                )
+            self.pool_alias_state = PoolAliasState()
+            for role_id in _enumerate_pool_role_ids(self.cfg):
+                self.pool_alias_state.register_pool(role_id)
+        else:
+            self.pool_alias_state = None
         with Timer("[INFO]: Time taken for scene creation", "scene_creation"):
-            self.scene = InteractiveScene(self.cfg.scene)
+            self.scene = InteractiveScene(
+                self.cfg.scene,
+                pool_alias_state=self.pool_alias_state,
+            )
         print("[INFO]: Scene manager: ", self.scene)
         print("[INFO]: Scene assets: ")
         for asset in self.scene.keys():

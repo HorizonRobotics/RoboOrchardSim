@@ -74,7 +74,9 @@ class InsufficientPoolError(AssetRegistryError):
         self.requested = requested
         super().__init__(
             f"only {available} asset(s) match (requested {requested}, "
-            f"mode={mode})"
+            f"mode={mode}). Options: (1) reduce pool_size / count to "
+            f"<= {available}, (2) widen the asset filter, "
+            f"(3) extend the asset library."
         )
 
 

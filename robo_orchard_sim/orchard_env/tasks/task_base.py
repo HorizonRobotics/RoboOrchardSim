@@ -33,7 +33,11 @@ from robo_orchard_core.utils.config import Config
 
 from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
-from robo_orchard_sim.orchard_env.assets import AssetSpec, ObjectSpec
+from robo_orchard_sim.orchard_env.assets import (
+    AssetSpec,
+    ObjectSpec,
+    PoolSpec,
+)
 
 if TYPE_CHECKING:
     from robo_orchard_sim.envs.manager_based_env import IsaacManagerBasedEnv
@@ -65,7 +69,7 @@ class TaskAssetsBase(Config):
 
     required_object_fields: ClassVar[tuple[str, ...]] = ()
 
-    distractors: ObjectSpec | Sequence[ObjectSpec] | None = None
+    distractors: Any = None
 
     @model_validator(mode="before")
     @classmethod
@@ -78,24 +82,23 @@ class TaskAssetsBase(Config):
             field_name
             for field_name in cls.required_object_fields
             if field_name in value
-            and not isinstance(value[field_name], ObjectSpec)
+            and not isinstance(value[field_name], (ObjectSpec, PoolSpec))
         ]
         if invalid_fields:
             field_list = ", ".join(invalid_fields)
             raise TypeError(
-                f"{cls.__name__} {field_list} must be ObjectSpec instances."
+                f"{cls.__name__} {field_list} must be ObjectSpec or PoolSpec "
+                "instances."
             )
         return value
 
-    @field_validator("distractors")
+    @field_validator("distractors", mode="plain")
     @classmethod
-    def validate_distractors(
-        cls, value: ObjectSpec | Sequence[ObjectSpec] | None
-    ) -> ObjectSpec | Sequence[ObjectSpec] | None:
-        """Accept zero, one, or many distractor objects."""
+    def validate_distractors(cls, value: Any) -> Any:
+        """Accept zero, one, or many distractor objects, or a PoolSpec."""
         if value is None:
             return value
-        if isinstance(value, ObjectSpec):
+        if isinstance(value, (ObjectSpec, PoolSpec)):
             return value
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
             for spec in value:
@@ -106,15 +109,18 @@ class TaskAssetsBase(Config):
                     )
             return value
         raise TypeError(
-            f"{cls.__name__} distractors must be an ObjectSpec, a sequence "
-            "of ObjectSpec instances, or None."
+            f"{cls.__name__} distractors must be an ObjectSpec, PoolSpec, "
+            "a sequence of ObjectSpec instances, or None."
         )
 
-    def flatten_distractors(self) -> dict[str, ObjectSpec]:
+    def flatten_distractors(self) -> "dict[str, ObjectSpec | PoolSpec]":
         """Return distractors in the flattened shape expected by TaskBase."""
-        flattened: dict[str, ObjectSpec] = {}
+        flattened: dict = {}
         distractors = self.distractors
         if distractors is None:
+            return flattened
+        if isinstance(distractors, PoolSpec):
+            flattened["distractors_pool"] = distractors
             return flattened
         if isinstance(distractors, ObjectSpec):
             flattened["distractor_0"] = distractors
@@ -136,13 +142,22 @@ class TaskBase(ABC):
 
     def __init__(
         self,
-        assets: Mapping[str, AssetSpec],
+        assets: Mapping[str, "AssetSpec | PoolSpec"],
         instruction: "InstructionWrapper | None" = None,
-    ):
-        self._assets = {
-            role: spec.with_default_namespace("objects")
-            for role, spec in assets.items()
-        }
+    ) -> None:
+        self._assets: dict[str, AssetSpec | PoolSpec] = {}
+        for role, spec in assets.items():
+            if isinstance(spec, PoolSpec):
+                self._assets[role] = PoolSpec(
+                    role_id=spec.role_id,
+                    members=[
+                        m.with_default_namespace("objects")
+                        for m in spec.members
+                    ],
+                    active_count=spec.active_count,
+                )
+            else:
+                self._assets[role] = spec.with_default_namespace("objects")
         self.instruction = instruction
 
     # ---------------------------------------------------------
@@ -152,13 +167,23 @@ class TaskBase(ABC):
         """Return task-owned assets grouped by namespace."""
         grouped: dict[str, dict[str, object]] = {}
         for spec in self._assets.values():
-            grouped.setdefault(spec.namespace, {})
-            if spec.name in grouped[spec.namespace]:
-                raise ValueError(
-                    "Duplicate task asset "
-                    f"'{spec.scene_name}' in PlaceA2BTask."
+            specs_to_emit = (
+                spec.members if isinstance(spec, PoolSpec) else [spec]
+            )
+            for s in specs_to_emit:
+                ns = s.namespace
+                assert ns is not None, (
+                    "namespace must be set after __init__'s "
+                    "with_default_namespace; got None for "
+                    f"{type(s).__name__}({s.name!r})"
                 )
-            grouped[spec.namespace][spec.name] = spec.to_isaac_cfg()
+                grouped.setdefault(ns, {})
+                if s.name in grouped[ns]:
+                    raise ValueError(
+                        f"Duplicate task asset '{s.scene_name}' in "
+                        f"{type(self).__name__}."
+                    )
+                grouped[ns][s.name] = s.to_isaac_cfg()
         return {
             namespace: GroupAssetCfg(**group_assets)
             for namespace, group_assets in grouped.items()

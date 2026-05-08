@@ -26,6 +26,10 @@ from typing_extensions import Literal
 from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
+from robo_orchard_sim.envs.managers.events.pool_reset import (
+    PoolResetTermCfg,
+    PoolSlot,
+)
 from robo_orchard_sim.envs.managers.events.pose_reset import (
     PoseResetTermCfg,
 )
@@ -33,7 +37,7 @@ from robo_orchard_sim.envs.managers.record import (
     RecordTermBaseCfg,
 )
 from robo_orchard_sim.envs.managers.record.mcap import McapDictTermCfg
-from robo_orchard_sim.orchard_env.assets import ObjectSpec
+from robo_orchard_sim.orchard_env.assets import ObjectSpec, PoolSpec
 from robo_orchard_sim.orchard_env.tasks.task_base import (
     TaskAssetsBase,
     TaskBase,
@@ -70,12 +74,12 @@ class PlaceA2BTaskAssets(TaskAssetsBase):
 
     required_object_fields = ("pick", "place")
 
-    pick: ObjectSpec
-    place: ObjectSpec
+    pick: ObjectSpec | PoolSpec
+    place: ObjectSpec | PoolSpec
 
-    def flatten(self) -> dict[str, ObjectSpec]:
+    def flatten(self) -> dict[str, ObjectSpec | PoolSpec]:
         """Return task assets in the flattened shape expected by TaskBase."""
-        flattened: dict[str, ObjectSpec] = {
+        flattened: dict[str, ObjectSpec | PoolSpec] = {
             "pick": self.pick,
             "place": self.place,
         }
@@ -99,36 +103,82 @@ class PlaceA2BTask(TaskBase):
 
         self.pick_object = self._assets["pick"]
         self.place_object = self._assets["place"]
-        self.distractors = [
-            self._assets[role]
-            for role in flattened_assets
-            if role.startswith("distractor_")
-        ]
+
+        # Separate classic per-spec distractors from pool-wrapped distractors.
+        self.distractors: list[ObjectSpec] = []
+        self.distractors_pool: PoolSpec | None = None
+        for role, spec in self._assets.items():
+            if role == "distractors_pool":
+                assert isinstance(spec, PoolSpec)
+                self.distractors_pool = spec
+            elif role.startswith("distractor_"):
+                self.distractors.append(spec)
 
     def get_event_cfg(self) -> EventManagerCfg:
-        """Return a shared pose-reset event for task objects."""
-        asset_cfgs = [
-            SceneEntityCfg(name=self.place_object.scene_name),
-            SceneEntityCfg(name=self.pick_object.scene_name),
-        ]
-        asset_cfgs.extend(
-            SceneEntityCfg(name=spec.scene_name) for spec in self.distractors
-        )
-        return EventManagerCfg(
-            terms={
-                "random_pose_event": PoseResetTermCfg(
-                    asset_cfgs=asset_cfgs,
-                    trigger_topic="reset",
-                    mode=self.params.mode,
-                    pose_range=dict(self.params.pose_range),
-                    absolute_sampling=True,
-                    min_separation=self.params.min_separation,
-                    max_retries=256,
-                    group_key="manipulation_objects",
-                    clear_cross_group_cache=True,
-                ),
-            }
-        )
+        """Return reset events for all task objects."""
+        terms: dict = {}
+
+        slots: list[PoolSlot] = []
+        non_pool_actor_names: list[str] = []
+
+        # Order: place first (largest target), then pick, so the smaller
+        # pick has more room when sampling around it. Distractors come last.
+        for role in ("place", "pick"):
+            spec = self._assets[role]
+            if isinstance(spec, PoolSpec):
+                slots.append(
+                    PoolSlot(
+                        role_id=spec.role_id,
+                        members=spec.member_scene_names,
+                    )
+                )
+            else:
+                non_pool_actor_names.append(spec.scene_name)
+
+        # Distractor pool: emit active_count alias slots sharing all members.
+        if self.distractors_pool is not None:
+            n_active = self.distractors_pool.active_count
+            members = self.distractors_pool.member_scene_names
+            for i in range(n_active):
+                slots.append(
+                    PoolSlot(
+                        role_id=f"distractor_{i}",
+                        members=members,
+                    )
+                )
+
+        # Classic distractors (no pool wrapping) use the regular pose reset.
+        for d in self.distractors:
+            non_pool_actor_names.append(d.scene_name)
+
+        if slots:
+            terms["pool_reset_event"] = PoolResetTermCfg(
+                slots=slots,
+                pose_range=dict(self.params.pose_range),
+                min_separation=self.params.min_separation,
+                group_key="manipulation_objects",
+            )
+
+        if non_pool_actor_names:
+            # In mixed pool/classic mode, pool_reset_event runs first and
+            # already clears the shared cache; this term reads + appends.
+            # Fall back to clearing only when pool_reset is absent.
+            clear_cache = "pool_reset_event" not in terms
+            terms["random_pose_event"] = PoseResetTermCfg(
+                asset_cfgs=[
+                    SceneEntityCfg(name=n) for n in non_pool_actor_names
+                ],
+                trigger_topic="reset",
+                mode=self.params.mode,
+                pose_range=dict(self.params.pose_range),
+                absolute_sampling=True,
+                min_separation=self.params.min_separation,
+                max_retries=256,
+                group_key="manipulation_objects",
+                clear_cross_group_cache=clear_cache,
+            )
+
+        return EventManagerCfg(terms=terms)
 
     def get_record_terms(self) -> dict[str, RecordTermBaseCfg]:
         return {

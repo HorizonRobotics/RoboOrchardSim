@@ -69,6 +69,7 @@ def _load_task_base_with_stubbed_dependencies(
     assets_module = types.ModuleType("robo_orchard_sim.orchard_env.assets")
     assets_module.AssetSpec = type("AssetSpec", (), {})
     assets_module.ObjectSpec = type("ObjectSpec", (), {})
+    assets_module.PoolSpec = type("PoolSpec", (), {})
     monkeypatch.setitem(
         sys.modules,
         "robo_orchard_sim.orchard_env.assets",

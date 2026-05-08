@@ -144,10 +144,33 @@ class EnvBuilder:
                             "assets."
                         )
                     merged[namespace][asset_name] = asset_cfg
+        merged = self._maybe_inject_inactive_pool_storage(merged)
         return {
             namespace: GroupAssetCfg(**group_assets)
             for namespace, group_assets in merged.items()
         }
+
+    @staticmethod
+    def _maybe_inject_inactive_pool_storage(
+        merged: dict[str, dict],
+    ) -> dict[str, dict]:
+        """Insert the inactive-pool storage shelf when any role is pooled."""
+        any_pool = any(
+            "_pool_" in name for group in merged.values() for name in group
+        )
+        if not any_pool:
+            return merged
+        from robo_orchard_sim.orchard_env.env_builder.inactive_pool_storage import (  # noqa: E501
+            INACTIVE_POOL_STORAGE_NAME,
+            make_inactive_pool_storage_cfg,
+        )
+
+        merged.setdefault("objects", {})
+        if INACTIVE_POOL_STORAGE_NAME not in merged["objects"]:
+            merged["objects"][INACTIVE_POOL_STORAGE_NAME] = (
+                make_inactive_pool_storage_cfg()
+            )
+        return merged
 
     def _merge_observation_cfg(
         self,

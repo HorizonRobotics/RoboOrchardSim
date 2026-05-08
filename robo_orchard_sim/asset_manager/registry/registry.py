@@ -403,6 +403,30 @@ class AssetSampler:
         idx = int(rng.integers(0, len(pool)))
         return pool[idx]
 
+    def sample_target_pool(
+        self,
+        asset_filter: AssetFilter,
+        k: int,
+        rng: np.random.Generator,
+    ) -> list[AssetMeta]:
+        """Uniform-random draw of k distinct AssetMeta from matching pool.
+
+        Raises:
+            ValueError: k is non-positive.
+            InsufficientPoolError: matching pool has fewer than k assets.
+        """
+        if k <= 0:
+            raise ValueError(f"k must be positive, got {k}")
+        pool = self._reg.query(asset_filter)
+        if len(pool) < k:
+            raise InsufficientPoolError(
+                mode="target_pool",
+                available=len(pool),
+                requested=k,
+            )
+        idxs = rng.choice(len(pool), size=k, replace=False)
+        return [pool[int(i)] for i in idxs]
+
     def sample_distractors(
         self,
         anchor: AssetMeta,
@@ -471,6 +495,65 @@ class AssetSampler:
         if n == 0:
             return []
         idxs = rng.choice(len(pool), size=n, replace=False)
+        return [pool[int(i)] for i in idxs]
+
+    def sample_distractor_pool(
+        self,
+        anchor: AssetMeta,
+        spec: DistractorSpec,
+        pool_size: int,
+        rng: np.random.Generator,
+    ) -> list[AssetMeta]:
+        """Uniform-random draw of pool_size distinct distractors.
+
+        Raises:
+            ValueError: pool_size is non-positive, or match/differ
+                has unknown fields.
+            InsufficientPoolError: matching pool has fewer than
+                pool_size assets.
+        """
+        if pool_size <= 0:
+            raise ValueError(f"pool_size must be positive, got {pool_size}")
+        invalid = [
+            f
+            for f in tuple(spec.match) + tuple(spec.differ)
+            if f not in _MATCH_DIFFER_ALLOWED
+        ]
+        if invalid:
+            raise ValueError(
+                f"Unknown match/differ field(s): {invalid}. "
+                f"Allowed: {sorted(_MATCH_DIFFER_ALLOWED)}"
+            )
+
+        pool: list[AssetMeta] = []
+        for m in self._reg:
+            if m.uuid == anchor.uuid:
+                continue
+            if not all(
+                getattr(m, f) == getattr(anchor, f) for f in spec.match
+            ):
+                continue
+            if not all(
+                getattr(m, f) != getattr(anchor, f) for f in spec.differ
+            ):
+                continue
+            if not spec.absolute_filter.matches(m):
+                continue
+            if spec.exclude and m.uuid in spec.exclude:
+                continue
+            if spec.only_in is not None and m.uuid not in spec.only_in:
+                continue
+            pool.append(m)
+
+        pool.sort(key=lambda m: m.asset_id)
+
+        if len(pool) < pool_size:
+            raise InsufficientPoolError(
+                mode="distractor_pool",
+                available=len(pool),
+                requested=pool_size,
+            )
+        idxs = rng.choice(len(pool), size=pool_size, replace=False)
         return [pool[int(i)] for i in idxs]
 
     def sample_compatible_pair(
