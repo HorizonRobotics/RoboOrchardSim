@@ -19,8 +19,10 @@
 from __future__ import annotations
 import hashlib
 import logging
+import os
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +39,18 @@ from robo_orchard_sim.asset_manager.registry.urdf_parser import (
 
 SCHEMA_VERSION = "4"
 INDEX_FILENAME = "asset_index.parquet"
+
+
+def _auto_default_workers() -> int:
+    """Pick a thread-pool size suited to the current machine."""
+    try:
+        cpu = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cpu = os.cpu_count() or 4
+    return max(4, min(32, cpu * 4))
+
+
+DEFAULT_WORKERS = _auto_default_workers()
 
 DEFAULT_CACHE_ROOT = Path("/tmp/.cache/robo_orchard_sim/asset_index")
 
@@ -104,12 +118,30 @@ class BuildReport:
 
 
 def _find_asset_dirs(root: Path) -> list[Path]:
-    """Every dir containing <dirname>.urdf counts as an asset."""
-    dirs: list[Path] = []
-    for urdf in root.rglob("*.urdf"):
-        if urdf.stem == urdf.parent.name:
-            dirs.append(urdf.parent)
-    return sorted(dirs)
+    super_dirs: list[Path] = []
+    for domain_dir in root.iterdir():
+        if not domain_dir.is_dir():
+            continue
+        for super_dir in domain_dir.iterdir():
+            if super_dir.is_dir():
+                super_dirs.append(super_dir)
+
+    if not super_dirs:
+        return []
+
+    def walk_super(super_dir: Path) -> list[Path]:
+        return [
+            urdf.parent
+            for urdf in super_dir.glob("*/*.urdf")
+            if urdf.stem == urdf.parent.name
+        ]
+
+    n_workers = max(1, min(DEFAULT_WORKERS, len(super_dirs)))
+    asset_dirs: list[Path] = []
+    with ThreadPoolExecutor(max_workers=n_workers) as ex:
+        for batch in ex.map(walk_super, super_dirs):
+            asset_dirs.extend(batch)
+    return sorted(asset_dirs)
 
 
 def _parse_one(
@@ -212,19 +244,29 @@ def build_asset_index(
         raise DuplicateAssetIdError(aid, paths)
 
     rows: list[dict] = []
-    for asset_dir in asset_dirs:
-        asset_id = asset_dir.name
-        rel = str(asset_dir.relative_to(root))
+    if asset_dirs:
+        n_workers = max(1, min(DEFAULT_WORKERS, len(asset_dirs)))
+        with ThreadPoolExecutor(max_workers=n_workers) as ex:
+            parsed_results = list(
+                ex.map(
+                    lambda d: _parse_one(d, strict=strict),
+                    asset_dirs,
+                )
+            )
 
-        parsed, reason = _parse_one(asset_dir, strict=strict)
-        if parsed is None:
-            report.skipped.append(SkippedAsset(rel, reason))
-            logger.warning("skip %s: %s", rel, reason)
-            continue
-        for w in parsed.warnings:
-            report.warnings.append(f"{asset_id}: {w}")
+        for asset_dir, (parsed, reason) in zip(
+            asset_dirs, parsed_results, strict=False
+        ):
+            asset_id = asset_dir.name
+            rel = str(asset_dir.relative_to(root))
+            if parsed is None:
+                report.skipped.append(SkippedAsset(rel, reason))
+                logger.warning("skip %s: %s", rel, reason)
+                continue
+            for w in parsed.warnings:
+                report.warnings.append(f"{asset_id}: {w}")
 
-        rows.append(_row_from_parsed(parsed, asset_dir, rel))
+            rows.append(_row_from_parsed(parsed, asset_dir, rel))
 
     report.total_indexed = len(rows)
 
