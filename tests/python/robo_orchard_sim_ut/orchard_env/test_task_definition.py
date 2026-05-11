@@ -30,6 +30,9 @@ from robo_orchard_sim.orchard_env.embodiments.dualarm_piper import (
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
+from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
+    FrankaPandaEmbodiment,
+)
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
 from robo_orchard_sim.task_suite import base as task_base
 from robo_orchard_sim.task_suite.base import TaskDefinition
@@ -188,6 +191,20 @@ def test_resolve_embodiment_passes_init_joint_pos_from_yaml(
     assert embodiment.init_joint_pos == {"left_joint1": 0.1}
 
 
+def test_resolve_embodiment_franka_panda_type_returns_franka_embodiment(
+    tmp_path: Path,
+) -> None:
+    class YamlEmbodimentTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {"embodiment": {"type": "franka_panda"}},
+        )
+
+    embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
+
+    assert isinstance(embodiment, FrankaPandaEmbodiment)
+
+
 def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -220,25 +237,33 @@ def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
     assert instruction.template_mode == "variants"
 
 
-def test_place_a2b_task_definitions_register_easy_and_hard_namespaces() -> (
-    None
-):
+@pytest.mark.parametrize(
+    ("task_class_name", "expected_namespace", "expected_config_suffix"),
+    [
+        (
+            "PlaceA2BEasyTaskDefinition",
+            "place_a2b_easy",
+            "place_a2b_easy.yaml",
+        ),
+        (
+            "PlaceA2BHardTaskDefinition",
+            "place_a2b_hard",
+            "place_a2b_hard.yaml",
+        ),
+    ],
+)
+def test_place_a2b_task_definition_registers_namespace_and_config(
+    task_class_name: str,
+    expected_namespace: str,
+    expected_config_suffix: str,
+) -> None:
     from robo_orchard_sim.task_suite.manipulation.place_a2b import (
         place_a2b_env,
     )
 
-    assert (
-        place_a2b_env.PlaceA2BEasyTaskDefinition.namespace == "place_a2b_easy"
-    )
-    assert (
-        place_a2b_env.PlaceA2BHardTaskDefinition.namespace == "place_a2b_hard"
-    )
-    assert place_a2b_env.PlaceA2BEasyTaskDefinition.config_path.endswith(
-        "place_a2b_easy.yaml"
-    )
-    assert place_a2b_env.PlaceA2BHardTaskDefinition.config_path.endswith(
-        "place_a2b_hard.yaml"
-    )
+    task_class = getattr(place_a2b_env, task_class_name)
+    assert task_class.namespace == expected_namespace
+    assert task_class.config_path.endswith(expected_config_suffix)
 
 
 def test_resolve_task_params_reads_yaml_task_section(

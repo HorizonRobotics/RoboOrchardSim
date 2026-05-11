@@ -357,6 +357,7 @@ class FixedJointCfg(PoseGeneratorCfg):
 
 
 class MoveByDisplacementCfg(PoseGeneratorCfg):
+    # TODO: define what is gripper frame
     class_type: ClassType_co[MoveByDisplacementPoseGenerator] = (
         MoveByDisplacementPoseGenerator
     )

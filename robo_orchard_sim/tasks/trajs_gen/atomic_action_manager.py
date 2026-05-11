@@ -22,7 +22,7 @@ implemented later behind the same interfaces.
 """
 
 from __future__ import annotations
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +36,7 @@ from typing_extensions import Literal, TypeAlias
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     ResolvedManipulatorProfile,
 )
+from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
 from robo_orchard_sim.tasks.trajs_gen.base_executor import (
     BaseExecutor,
     BaseExecutorCfg,
@@ -52,9 +53,12 @@ AtomicActionLifecycle = Literal[
     "FAILED",
 ]
 
+AtomicActionOutput: TypeAlias = dict[str, UnifiedJointCommand]
+"""Atomic action output keyed by robot name.
 
-AtomicActionOutput: TypeAlias = dict[str, torch.Tensor]
-"""Atomic action output keyed by ``"{robot_name}/{manipulator_name}"``."""
+Each value is a :class:`UnifiedJointCommand` that merges all active
+manipulator actions belonging to the same robot.
+"""
 
 
 @dataclass
@@ -192,6 +196,7 @@ class _ActiveAction:
     registered: _RegisteredAction
     player: _TrajectoryPlayer
     action_key: str
+    resolved: ResolvedManipulatorProfile
 
 
 class AtomicActionManager:
@@ -263,20 +268,23 @@ class AtomicActionManager:
         self,
         env: Any,
     ) -> tuple[AtomicActionOutput, AtomicActionManagerState]:
-        """Advance one manager tick and return env-facing atomic actions.
+        """Advance one manager tick and return per-robot joint commands.
 
         Returns:
             tuple[AtomicActionOutput, AtomicActionManagerState]:
                 - ``AtomicActionOutput``:
-                  action commands keyed by
-                  ``"{robot_name}/{manipulator_name}"``. Each value is a
-                  ``torch.Tensor`` with shape ``[num_envs, action_dim]``.
+                  a ``dict[str, UnifiedJointCommand]`` keyed by robot
+                  name.  All active manipulator actions for the same
+                  robot are merged into one :class:`UnifiedJointCommand`.
+                  The dict is empty when no manipulators are active.
                 - ``AtomicActionManagerState``:
                   runtime state summary for debugging and orchestration.
         """
         num_envs: int = env.num_envs
         device: torch.device = env.device
-        actions: AtomicActionOutput = {}
+        per_robot_actions: dict[str, list[UnifiedJointCommand]] = defaultdict(
+            list
+        )
         running_actions: dict[str, AtomicActionStatus] = {}
         env_busy = torch.zeros(num_envs, dtype=torch.bool, device=device)
 
@@ -288,7 +296,16 @@ class AtomicActionManager:
             action, busy = active.player.next_action()
             env_busy |= busy
             if action is not None:
-                actions[active.action_key] = action
+                resolved = active.resolved
+                joint_names = (
+                    resolved.joint_names + resolved.gripper_joint_names
+                )
+                per_robot_actions[resolved.robot_name].append(
+                    UnifiedJointCommand(
+                        values=action,
+                        joint_names=joint_names,
+                    )
+                )
 
             registered = active.registered
             if active.player.is_complete:
@@ -319,13 +336,18 @@ class AtomicActionManager:
                 manipulator_name=manipulator_name,
             )
 
+        output: AtomicActionOutput = {
+            robot_name: UnifiedJointCommand.merge(*actions)
+            for robot_name, actions in per_robot_actions.items()
+        }
+
         status = AtomicActionManagerState(
             current_priority=tick_priority,
             running_actions=running_actions,
             pending_count=self._pending_count(),
             env_busy=env_busy,
         )
-        return actions, status
+        return output, status
 
     def _start_ready_actions(self, env: Any, priority: int) -> None:
         for registered in self._registered_actions:
@@ -372,6 +394,7 @@ class AtomicActionManager:
                     device=env.device,
                 ),
                 action_key=action_key,
+                resolved=resolved,
             )
 
     def _infer_action_type(self, executor: BaseExecutor) -> str:

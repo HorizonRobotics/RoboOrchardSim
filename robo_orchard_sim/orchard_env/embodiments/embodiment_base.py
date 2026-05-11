@@ -19,6 +19,7 @@
 from __future__ import annotations
 from collections.abc import Mapping
 
+import torch
 from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
@@ -27,11 +28,17 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
+from robo_orchard_sim.envs.managers.actions.articulation.joint_base import (
+    ArticulationJointActionTermCfg,
+)
 from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
 from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     RobotInfoCfg,
+)
+from robo_orchard_sim.orchard_env.joint_command import (
+    UnifiedJointCommand,
 )
 
 
@@ -73,6 +80,46 @@ class EmbodimentBase:
     def get_action_cfg(self) -> ActionManagerCfg:
         """Return embodiment action cfg fragment."""
         return ActionManagerCfg(terms={})
+
+    def translate_joint_command_to_env_action(
+        self,
+        action: UnifiedJointCommand,
+    ) -> dict[str, torch.Tensor]:
+        """Translate canonical joint command into action-manager inputs.
+
+        The default implementation derives term names and joint specs from
+        subclass-provided articulation joint action configs.
+        """
+        return self._translate_joint_command_by_action_cfg(
+            action=action,
+            action_cfg=self.get_action_cfg(),
+        )
+
+    def _translate_joint_command_by_action_cfg(
+        self,
+        action: UnifiedJointCommand,
+        action_cfg: ActionManagerCfg,
+    ) -> dict[str, torch.Tensor]:
+        """Translate a joint command using articulation joint action terms."""
+        translated: dict[str, torch.Tensor] = {}
+        for term_name, term_cfg in action_cfg.terms.items():
+            if not isinstance(term_cfg, ArticulationJointActionTermCfg):
+                continue
+            joint_specs = term_cfg.asset_cfg.joint_names
+            if not joint_specs:
+                continue
+            wildcard_specs = [spec for spec in joint_specs if "*" in spec]
+            if wildcard_specs:
+                raise ValueError(
+                    "Wildcard joint specs are not supported by default "
+                    "joint-command translation. Use explicit joint names or "
+                    f"range specs for action term '{term_name}'. Unsupported "
+                    f"specs: {', '.join(wildcard_specs)}."
+                )
+            term_action = action.select_if_present(*joint_specs)
+            if term_action is not None:
+                translated[term_name] = term_action
+        return translated
 
     def get_event_cfg(self) -> EventManagerCfg:
         """Return embodiment event cfg fragment."""

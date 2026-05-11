@@ -26,12 +26,10 @@ from typing import Any
 import numpy as np
 import torch
 
+from robo_orchard_sim.orchard_env.joint_command import EnvActionState
 from robo_orchard_sim.tasks.validators.base import ValidatorOutput
 
 _ASSET_ROOT_ENV = "ORCHARD_ASSET_LIBRARY"
-_ROBOT_SCENE_NAME = "robots/dualarm_piper"
-_LEFT_ARM_KEY = f"{_ROBOT_SCENE_NAME}/left_arm"
-_RIGHT_ARM_KEY = f"{_ROBOT_SCENE_NAME}/right_arm"
 
 
 @dataclass
@@ -220,9 +218,9 @@ class DataSynthesisRunner:
 
             _ = env.reset(seed=seed)
 
-            # you should set the init action
-            actions = self.translate_actions({}, env)
-            _ = env.step(actions)
+            # Initialize action-manager terms from current joint state.
+            embodiment = orchard_env.embodiment
+            _ = env.step(EnvActionState.build_hold_position(env))
 
             scene_settled = self.settle_until_recording_starts(env)
             self._update_episode_record_data(
@@ -253,6 +251,7 @@ class DataSynthesisRunner:
                     status_logger=status_logger,
                     sim_app=sim_app,
                     validator=validator,
+                    embodiment=embodiment,
                 )
             )
 
@@ -523,50 +522,9 @@ class DataSynthesisRunner:
 
         record_manager.update_episode_user_data({"meta_dict": meta_dict})
 
-    def translate_actions(
-        self, act: Any, env: Any, default_action: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Translate atomic-action output into env action terms."""
-        # TODO: remove hard code of robot seeting in future
-
-        if default_action is not None:
-            action = default_action.copy()
-        else:
-            robot = env.scene[_ROBOT_SCENE_NAME]
-            left_arm_ids, _ = robot.find_joints(["left_joint[1-6]"])
-            left_gripper_ids, _ = robot.find_joints(["left_joint[7-8]"])
-            right_arm_ids, _ = robot.find_joints(["right_joint[1-6]"])
-            right_gripper_ids, _ = robot.find_joints(["right_joint[7-8]"])
-
-            joint_pos = robot.data.joint_pos
-            action = {
-                "left_robot_joint_position": joint_pos[
-                    :, left_arm_ids
-                ].clone(),
-                "left_robot_gripper_control": joint_pos[
-                    :,
-                    left_gripper_ids,
-                ].clone(),
-                "right_robot_joint_position": joint_pos[
-                    :, right_arm_ids
-                ].clone(),
-                "right_robot_gripper_control": joint_pos[
-                    :,
-                    right_gripper_ids,
-                ].clone(),
-            }
-
-        if _LEFT_ARM_KEY in act:
-            action["left_robot_joint_position"] = act[_LEFT_ARM_KEY][:, :-2]
-            action["left_robot_gripper_control"] = act[_LEFT_ARM_KEY][:, -2:]
-        if _RIGHT_ARM_KEY in act:
-            action["right_robot_joint_position"] = act[_RIGHT_ARM_KEY][:, :-2]
-            action["right_robot_gripper_control"] = act[_RIGHT_ARM_KEY][:, -2:]
-        return action
-
-    def robot_is_stationary(self, env: Any) -> bool:
+    def robot_is_stationary(self, env: Any, embodiment: Any) -> bool:
         """Return whether all configured robot bodies have low velocity."""
-        robot = env.scene[_ROBOT_SCENE_NAME]
+        robot = env.scene[embodiment.scene_name]
         body_link_vel_w = robot.data.body_link_vel_w
 
         lin_vel = torch.linalg.vector_norm(body_link_vel_w[..., :3], dim=-1)
@@ -588,6 +546,7 @@ class DataSynthesisRunner:
         status_logger: Any,
         sim_app: Any,
         validator: Any,
+        embodiment: Any,
     ) -> tuple[int, str, ValidatorOutput]:
         stop_reason = STOP_REASON.MAX_STEPS
         steps = 0
@@ -596,23 +555,28 @@ class DataSynthesisRunner:
             progress=0.0,
             metrics={},
         )
-
-        actions = self.translate_actions({}, env)
+        env_action_state = EnvActionState.from_env(env)
 
         while steps < self.cfg.max_steps:
             if not sim_app.is_running():
                 stop_reason = STOP_REASON.SIM_APP_STOPPED
                 break
 
-            manager_actions, state = manager.get_action(env)
+            joint_commands, state = manager.get_action(env)
             for log_line in status_logger.collect(
                 running_actions=state.running_actions,
                 step_idx=steps,
             ):
                 print(log_line)
 
-            actions = self.translate_actions(manager_actions, env, actions)
-            _ = env.step(actions)
+            if joint_commands:
+                for joint_command in joint_commands.values():
+                    env_action_state.update(
+                        embodiment.translate_joint_command_to_env_action(
+                            joint_command
+                        ),
+                    )
+            _ = env.step(env_action_state.action())
             validator_output = validator.evaluate(env, env_idx=0)
             steps += 1
 

@@ -138,6 +138,12 @@ def _bootstrap_embodiment_registry() -> None:
         )
 
         register_embodiment("dualarm_piper", DualArmPiperEmbodiment)
+    if "franka_panda" not in EMBODIMENT_REGISTRY:
+        from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
+            FrankaPandaEmbodiment,
+        )
+
+        register_embodiment("franka_panda", FrankaPandaEmbodiment)
 
 
 def build_scene(cfg: SceneConfig) -> "SceneBase":

@@ -29,6 +29,7 @@ from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
     PredicateManipulatorResolver,
 )
 from robo_orchard_sim.tasks.trajs_gen.pose_generator import (
+    MoveByDisplacementCfg,
     MoveByJointOffsetCfg,
 )
 
@@ -41,6 +42,24 @@ def build_task_atomic_action_plan(
     orchard_env: "OrchardEnv",
 ) -> list[BaseExecutorCfg]:
     """Build the default pick-and-move atomic action plan."""
+    robot_name = cast(Any, orchard_env.embodiment).name
+    if robot_name == "dualarm_piper":
+        return _build_dualarm_piper_action_plan(orchard_env)
+    if robot_name == "franka_panda":
+        return _build_franka_panda_action_plan(orchard_env)
+
+    robot_infos = orchard_env.embodiment.get_robot_info_cfgs()
+    available = ", ".join(sorted(robot_infos))
+    raise ValueError(
+        "No semantic_pick action plan for robot "
+        f"{robot_name!r}. Available manipulators: {available or '<none>'}."
+    )
+
+
+def _build_dualarm_piper_action_plan(
+    orchard_env: "OrchardEnv",
+) -> list[BaseExecutorCfg]:
+    """Build the dual-arm Piper semantic-pick action plan."""
     task = cast(Any, orchard_env.task)
     pick_obj = task.pick_object.scene_name
     left_arm = orchard_env.embodiment.get_robot_info_cfg("left_arm")
@@ -78,6 +97,41 @@ def build_task_atomic_action_plan(
             target=MoveByJointOffsetCfg(
                 joint_id_idxs=[1],
                 joint_offsets=[-0.3],
+            ),
+            gripper_state="CLOSED",
+            priority=0,
+        ),
+    ]
+
+
+def _build_franka_panda_action_plan(
+    orchard_env: "OrchardEnv",
+) -> list[BaseExecutorCfg]:
+    """Build the Franka Panda semantic-pick action plan."""
+    task = cast(Any, orchard_env.task)
+    pick_obj = task.pick_object.scene_name
+    arm = orchard_env.embodiment.get_robot_info_cfg("main_arm")
+
+    return [
+        PickExecutorCfg(
+            robot_info=arm,
+            pick_object_info=ObjectInfo(
+                name=pick_obj, mode="passive", action="pick", part="body"
+            ),
+            pre_grasp=MoveByDisplacementCfg(
+                distance=-0.06,
+                direction="z",
+                frame="gripper",
+            ),
+            grasp_mode="Top-down",
+            priority=0,
+        ),
+        MoveExecutorCfg(
+            robot_info=arm,
+            target=MoveByDisplacementCfg(
+                distance=0.15,
+                direction="z",
+                frame="world",
             ),
             gripper_state="CLOSED",
             priority=0,

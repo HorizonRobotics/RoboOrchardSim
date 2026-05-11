@@ -18,8 +18,16 @@ from robo_orchard_sim.orchard_env.embodiments.franka_panda.cfg import (
     FRANKA_PANDA_CFG,
     FRANKA_PANDA_HIGH_PD_CFG,
 )
+from robo_orchard_sim.orchard_env.embodiments.franka_panda.embodiment import (
+    FrankaPandaEmbodiment,
+)
+from robo_orchard_sim.orchard_env.embodiments.franka_panda.profile import (
+    FRANKA_PANDA_ROBOT_INFO_CFGS,
+)
 
 __all__ = [
     "FRANKA_PANDA_CFG",
     "FRANKA_PANDA_HIGH_PD_CFG",
+    "FRANKA_PANDA_ROBOT_INFO_CFGS",
+    "FrankaPandaEmbodiment",
 ]

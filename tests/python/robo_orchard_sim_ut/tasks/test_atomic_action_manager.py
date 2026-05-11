@@ -25,6 +25,7 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
 )
 from robo_orchard_sim.tasks.trajs_gen.atomic_action_manager import (
     AtomicActionManagerCfg,
+    AtomicActionOutput,
 )
 from robo_orchard_sim.tasks.trajs_gen.base_executor import (
     BaseExecutor,
@@ -76,9 +77,13 @@ class _StaticManipulatorResolver:
         *,
         robot_name: str = "robots/fake",
         manipulator_name: str = "left_arm",
+        joint_names: tuple[str, ...] | None = None,
+        gripper_joint_names: tuple[str, ...] = (),
     ) -> None:
         self.robot_name = robot_name
         self.manipulator_name = manipulator_name
+        self._joint_names = joint_names or (f"{manipulator_name}_j0",)
+        self._gripper_joint_names = gripper_joint_names
 
     def resolve(
         self,
@@ -89,10 +94,15 @@ class _StaticManipulatorResolver:
         return ResolvedManipulatorProfile(
             robot_name=self.robot_name,
             manipulator_name=self.manipulator_name,
-            joint_ids=(0,),
-            joint_names=("joint",),
-            gripper_joint_ids=(),
-            gripper_joint_names=(),
+            joint_ids=tuple(range(len(self._joint_names))),
+            joint_names=self._joint_names,
+            gripper_joint_ids=tuple(
+                range(
+                    len(self._joint_names),
+                    len(self._joint_names) + len(self._gripper_joint_names),
+                )
+            ),
+            gripper_joint_names=self._gripper_joint_names,
             body_ids=(),
             body_names=(),
             ee_body_id=0,
@@ -108,10 +118,12 @@ class _PlannerResolvingManipulatorResolver:
         planner_cfg: _FakePlannerCfg,
         robot_name: str = "robots/fake",
         manipulator_name: str = "left_arm",
+        joint_names: tuple[str, ...] | None = None,
     ) -> None:
         self.planner_cfg = planner_cfg
         self.robot_name = robot_name
         self.manipulator_name = manipulator_name
+        self._joint_names = joint_names or (f"{manipulator_name}_j0",)
 
     def resolve(
         self,
@@ -129,8 +141,8 @@ class _PlannerResolvingManipulatorResolver:
         return ResolvedManipulatorProfile(
             robot_name=self.robot_name,
             manipulator_name=self.manipulator_name,
-            joint_ids=(0,),
-            joint_names=("joint",),
+            joint_ids=tuple(range(len(self._joint_names))),
+            joint_names=self._joint_names,
             gripper_joint_ids=(),
             gripper_joint_names=(),
             body_ids=(),
@@ -215,16 +227,39 @@ def _make_manager(
     return manager
 
 
-def _action_values(actions: dict[str, torch.Tensor]) -> dict[str, Any]:
-    return {key: value.tolist() for key, value in actions.items()}
+def _action_values(actions: AtomicActionOutput) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for robot_name, joint_command in actions.items():
+        for col_idx, joint_name in enumerate(joint_command.joint_names):
+            key = f"{robot_name}/{joint_name}"
+            result[key] = joint_command.values[:, col_idx].tolist()
+    return result
+
+
+def _joint_command_snapshot(
+    actions: AtomicActionOutput,
+) -> dict[str, list[float]]:
+    """Return a per-joint-name dict of per-env scalars for easy assertion.
+
+    Flattens all robot-keyed UnifiedJointCommands into a single dict
+    keyed by joint name.
+    """
+    result: dict[str, list[float]] = {}
+    for _robot_name, joint_command in actions.items():
+        for col_idx, name in enumerate(joint_command.joint_names):
+            result[name] = [
+                joint_command.values[env_idx, col_idx].item()
+                for env_idx in range(joint_command.values.shape[0])
+            ]
+    return result
 
 
 def test_get_action_single_step_trajectory_emits_action_command():
-    manager = _make_manager(_make_cfg(trajectories=[[[1.0, 2.0]]]))
+    manager = _make_manager(_make_cfg(trajectories=[[[1.0]]]))
 
     actions, _ = manager.get_action(_FakeEnv())
 
-    assert _action_values(actions) == {_LEFT_ARM_KEY: [[1.0, 2.0]]}
+    assert _joint_command_snapshot(actions) == {"left_arm_j0": [1.0]}
 
 
 def test_get_action_completed_single_step_reports_completed_state():
@@ -243,11 +278,13 @@ def test_get_action_multi_step_trajectory_emits_stepwise_commands():
     manager = _make_manager(_make_cfg(trajectories=[[[1.0], [2.0]]]))
     env = _FakeEnv()
 
-    outputs = [_action_values(manager.get_action(env)[0]) for _ in range(3)]
+    outputs = [
+        _joint_command_snapshot(manager.get_action(env)[0]) for _ in range(3)
+    ]
 
     assert outputs == [
-        {_LEFT_ARM_KEY: [[1.0]]},
-        {_LEFT_ARM_KEY: [[2.0]]},
+        {"left_arm_j0": [1.0]},
+        {"left_arm_j0": [2.0]},
         {},
     ]
 
@@ -260,14 +297,14 @@ def test_get_action_multi_env_shorter_trajectory_reuses_last_command():
     second_actions, second_state = manager.get_action(env)
 
     assert (
-        _action_values(first_actions),
+        _joint_command_snapshot(first_actions),
         first_state.env_busy.tolist(),
-        _action_values(second_actions),
+        _joint_command_snapshot(second_actions),
         second_state.env_busy.tolist(),
     ) == (
-        {_LEFT_ARM_KEY: [[1.0], [10.0]]},
+        {"left_arm_j0": [1.0, 10.0]},
         [True, True],
-        {_LEFT_ARM_KEY: [[2.0], [10.0]]},
+        {"left_arm_j0": [2.0, 10.0]},
         [True, False],
     )
 
@@ -280,9 +317,9 @@ def test_get_action_parallel_manipulators_emit_actions_same_tick():
 
     actions, _ = manager.get_action(_FakeEnv())
 
-    assert _action_values(actions) == {
-        _LEFT_ARM_KEY: [[1.0]],
-        _RIGHT_ARM_KEY: [[2.0]],
+    assert _joint_command_snapshot(actions) == {
+        "left_arm_j0": [1.0],
+        "right_arm_j0": [2.0],
     }
 
 
@@ -293,12 +330,14 @@ def test_get_action_same_manipulator_sequence_waits_until_idle():
     )
     env = _FakeEnv()
 
-    outputs = [_action_values(manager.get_action(env)[0]) for _ in range(4)]
+    outputs = [
+        _joint_command_snapshot(manager.get_action(env)[0]) for _ in range(4)
+    ]
 
     assert outputs == [
-        {_LEFT_ARM_KEY: [[1.0]]},
-        {_LEFT_ARM_KEY: [[2.0]]},
-        {_LEFT_ARM_KEY: [[3.0]]},
+        {"left_arm_j0": [1.0]},
+        {"left_arm_j0": [2.0]},
+        {"left_arm_j0": [3.0]},
         {},
     ]
 
@@ -321,11 +360,13 @@ def test_get_action_lower_priority_action_waits_until_current_priority_done():
     snapshots = []
     for _ in range(3):
         actions, state = manager.get_action(env)
-        snapshots.append((_action_values(actions), state.current_priority))
+        snapshots.append(
+            (_joint_command_snapshot(actions), state.current_priority)
+        )
 
     assert snapshots == [
-        ({_LEFT_ARM_KEY: [[1.0]]}, 1),
-        ({_RIGHT_ARM_KEY: [[2.0]]}, 2),
+        ({"left_arm_j0": [1.0]}, 1),
+        ({"right_arm_j0": [2.0]}, 2),
         ({}, None),
     ]
 
@@ -361,7 +402,7 @@ def test_get_action_resolved_robot_name_appears_in_action_key():
 
     actions, _ = manager.get_action(_FakeEnv())
 
-    assert _action_values(actions) == {"robots/custom/left_arm": [[1.0]]}
+    assert _action_values(actions) == {"robots/custom/left_arm_j0": [1.0]}
 
 
 def test_get_action_resolved_robot_name_appears_in_state_key():
@@ -420,7 +461,7 @@ def test_get_action_predicate_resolver_false_branch_uses_selected_key():
 
     actions, _ = manager.get_action(_FakeEnv())
 
-    assert _action_values(actions) == {_RIGHT_ARM_KEY: [[1.0]]}
+    assert _joint_command_snapshot(actions) == {"right_arm_j0": [1.0]}
 
 
 def test_get_action_same_manipulator_reuses_planner_instance():
@@ -497,10 +538,14 @@ def test_reset_sequence_bound_resolver_reselects_manipulator():
     third_actions, _ = manager.get_action(env)
 
     assert [
-        set(first_actions),
-        set(second_actions),
-        set(third_actions),
-    ] == [{_LEFT_ARM_KEY}, {_LEFT_ARM_KEY}, {_RIGHT_ARM_KEY}]
+        set(_joint_command_snapshot(first_actions).keys()),
+        set(_joint_command_snapshot(second_actions).keys()),
+        set(_joint_command_snapshot(third_actions).keys()),
+    ] == [
+        {("left_arm_j0")},
+        {("left_arm_j0")},
+        {("right_arm_j0")},
+    ]
 
 
 def test_clear_completed_segment_allows_new_registered_segment():
@@ -515,7 +560,7 @@ def test_clear_completed_segment_allows_new_registered_segment():
     )
     actions, _ = manager.get_action(env)
 
-    assert _action_values(actions) == {_RIGHT_ARM_KEY: [[2.0]]}
+    assert _joint_command_snapshot(actions) == {"right_arm_j0": [2.0]}
 
 
 def test_clear_default_keeps_cached_planner_instance():
