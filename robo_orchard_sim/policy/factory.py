@@ -18,6 +18,7 @@ from typing import Any
 
 from robo_orchard_sim.policy.dummy.policy import DummyPolicyCfg
 from robo_orchard_sim.policy.holobrain.policy import HolobrainPolicyCfg
+from robo_orchard_sim.policy.openpi.policy import OpenPiPolicyCfg
 from robo_orchard_sim.policy.server import ServerPolicyCfg
 
 
@@ -41,6 +42,26 @@ def create_policy_from_model_cfg(model_cfg: Any):
             device=_cfg_get(model_cfg, "device"),
             valid_action_step=_cfg_get(model_cfg, "valid_action_step"),
         )
+    if policy_name == "openpi":
+        openpi_kwargs = dict(
+            model=_cfg_get(model_cfg, "model"),
+            model_dir=_cfg_get(model_cfg, "model_dir"),
+            logging_tag=_cfg_get(model_cfg, "logging_tag"),
+            joint_num=_cfg_get(model_cfg, "joint_num", 7),
+            valid_action_step=_cfg_get(model_cfg, "valid_action_step", 50),
+            enable_intrinsic_remap=_cfg_get(
+                model_cfg,
+                "enable_intrinsic_remap",
+                True,
+            ),
+        )
+        inference = _cfg_get(model_cfg, "inference")
+        if inference is not None:
+            openpi_kwargs["inference"] = inference
+        cameras = _cfg_get(model_cfg, "cameras")
+        if cameras is not None:
+            openpi_kwargs["cameras"] = cameras
+        return OpenPiPolicyCfg(**openpi_kwargs)
     if policy_name == "server":
         return ServerPolicyCfg(
             host=_cfg_get(model_cfg, "host", "127.0.0.1"),

@@ -1,0 +1,42 @@
+# Set model_dir here or export ROBO_ORCHARD_OPENPI_MODEL_DIR.
+model:
+  # pi0 | pi05 | pi0_fast
+  model_type: pi05
+  max_token_len: 128
+  # Required for pi0/pi05. Leave null for pi0_fast.
+  # Use the *_lora variant name for LoRA checkpoints.
+  paligemma_variant: gemma_2b_lora
+  # Required for pi0/pi05. Leave null for pi0_fast.
+  # Use the *_lora variant name for LoRA checkpoints.
+  action_expert_variant: gemma_300m_lora
+inference:
+  use_delta_joint_actions: true
+  norm_stats_name: isaac_pick_place
+  default_prompt: null
+model_dir: null
+joint_num: 7
+valid_action_step: 50
+logging_tag: openpi_example
+enable_intrinsic_remap: true
+cameras:
+  left:
+    target_size: [392, 252]
+    target_intrinsic:
+      - [290.0, 0.0, 196.0, 0.0]
+      - [0.0, 310.0, 126.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+  right:
+    target_size: [392, 252]
+    target_intrinsic:
+      - [290.0, 0.0, 196.0, 0.0]
+      - [0.0, 310.0, 126.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+  middle:
+    target_size: [392, 252]
+    target_intrinsic:
+      - [290.0, 0.0, 196.0, 0.0]
+      - [0.0, 310.0, 126.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
