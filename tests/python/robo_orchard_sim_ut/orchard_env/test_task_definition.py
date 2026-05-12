@@ -27,6 +27,9 @@ from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper import (
     DualArmPiperEmbodiment,
 )
+from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx import (
+    DualArmPiperXEmbodiment,
+)
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
@@ -203,6 +206,20 @@ def test_resolve_embodiment_franka_panda_type_returns_franka_embodiment(
     embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
 
     assert isinstance(embodiment, FrankaPandaEmbodiment)
+
+
+def test_resolve_embodiment_dualarm_piperx_type_returns_piperx_embodiment(
+    tmp_path: Path,
+) -> None:
+    class YamlEmbodimentTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {"embodiment": {"type": "dualarm_piperx"}},
+        )
+
+    embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
+
+    assert isinstance(embodiment, DualArmPiperXEmbodiment)
 
 
 def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(

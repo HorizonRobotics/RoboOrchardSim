@@ -138,6 +138,12 @@ def _bootstrap_embodiment_registry() -> None:
         )
 
         register_embodiment("dualarm_piper", DualArmPiperEmbodiment)
+    if "dualarm_piperx" not in EMBODIMENT_REGISTRY:
+        from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx import (
+            DualArmPiperXEmbodiment,
+        )
+
+        register_embodiment("dualarm_piperx", DualArmPiperXEmbodiment)
     if "franka_panda" not in EMBODIMENT_REGISTRY:
         from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
             FrankaPandaEmbodiment,

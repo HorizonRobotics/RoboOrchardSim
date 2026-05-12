@@ -37,13 +37,15 @@ if TYPE_CHECKING:
     from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
     from robo_orchard_sim.tasks.trajs_gen.base_executor import BaseExecutorCfg
 
+_DUALARM_PIPER_ROBOT_NAMES = {"dualarm_piper", "dualarm_piperx"}
+
 
 def build_task_atomic_action_plan(
     orchard_env: "OrchardEnv",
 ) -> list[BaseExecutorCfg]:
     """Build the default pick-and-move atomic action plan."""
     robot_name = cast(Any, orchard_env.embodiment).name
-    if robot_name == "dualarm_piper":
+    if robot_name in _DUALARM_PIPER_ROBOT_NAMES:
         return _build_dualarm_piper_action_plan(orchard_env)
     if robot_name == "franka_panda":
         return _build_franka_panda_action_plan(orchard_env)
