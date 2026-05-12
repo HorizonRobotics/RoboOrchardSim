@@ -63,9 +63,11 @@ def create_policy_from_model_cfg(model_cfg: Any):
             openpi_kwargs["cameras"] = cameras
         return OpenPiPolicyCfg(**openpi_kwargs)
     if policy_name == "server":
+        remote_policy_type = _cfg_get(model_cfg, "remote_policy_type")
         return ServerPolicyCfg(
             host=_cfg_get(model_cfg, "host", "127.0.0.1"),
             port=_cfg_get(model_cfg, "port", 8765),
             logging_tag=_cfg_get(model_cfg, "logging_tag"),
+            remote_policy_type=remote_policy_type or "full",
         )
     raise ValueError(f"Invalid policy: {policy_name}")

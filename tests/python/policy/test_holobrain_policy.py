@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 # Project RoboOrchard
 #
 # Copyright (c) 2026 Horizon Robotics. All Rights Reserved.
@@ -17,9 +18,14 @@
 from __future__ import annotations
 import sys
 import types
+from pathlib import Path
 
 import pytest
 import torch
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from robo_orchard_sim.policy.holobrain.policy import (
     HolobrainPolicy,
@@ -214,6 +220,21 @@ def test_holobrain_policy_act_valid_step_refreshes_cache_expected_result(
 
     assert first["left_robot_joint_position"][0, 0].item() == 11.0
     assert second["left_robot_joint_position"][0, 0].item() == 21.0
+
+
+def test_holobrain_policy_act_sequence_returns_refreshed_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = _FakePipeline()
+    policy = _build_policy(monkeypatch, pipeline)
+
+    sequence = policy.act_sequence(_build_obs())
+    next_action = policy.act(_build_obs())
+
+    assert len(sequence) == 2
+    assert sequence[0]["left_robot_joint_position"][0, 0].item() == 11.0
+    assert sequence[1]["left_robot_joint_position"][0, 0].item() == 12.0
+    assert next_action["left_robot_joint_position"][0, 0].item() == 21.0
 
 
 def test_holobrain_policy_init_uses_env_model_dir_expected_result(

@@ -14,6 +14,8 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+# INTERNAL
+
 from __future__ import annotations
 from typing import Any
 
@@ -58,6 +60,22 @@ DEFAULT_CAMERAS = {
 
 class OpenPiAdapter:
     """Transforms simulator observations to OpenPI inputs and actions back."""
+
+    @classmethod
+    def required_observation_fields(cls) -> dict[str, Any]:
+        return {
+            "camera_terms": [
+                binding["obs_term"] for binding in CAMERA_BINDINGS.values()
+            ],
+            "include_rgb": True,
+            "include_depth": False,
+            "include_intrinsic": True,
+            "include_pose": False,
+            "robot_keys": [
+                "left_joint_position",
+                "right_joint_position",
+            ],
+        }
 
     def __init__(
         self,

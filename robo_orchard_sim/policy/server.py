@@ -40,6 +40,7 @@ Client usage (in eval yaml)::
 import asyncio
 import json
 import logging
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_MSG = 200 * 1024 * 1024  # 200 MB – large enough for image payloads
 _POLICY_CONFIG_DIR = Path(__file__).resolve().parent / "configs"
+_HEADER_SIZE_BYTES = 8
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,13 @@ class _PoseProxy:
 
 def _rebuild_observations(obs_data: dict) -> dict:
     """Rebuild wire-format observations into policy input structure."""
+    remote_policy_type = obs_data.get("format", "full")
+    if remote_policy_type != "full":
+        return _rebuild_profiled_observations(
+            obs_data,
+            observation_fields=_resolve_observation_fields(remote_policy_type),
+        )
+
     observations: dict[str, Any] = {}
     if "cameras" in obs_data:
         cam_dict: dict[str, Any] = {}
@@ -104,18 +113,155 @@ def _rebuild_observations(obs_data: dict) -> dict:
     return observations
 
 
+def _rebuild_profiled_observations(
+    obs_data: dict,
+    *,
+    observation_fields: dict[str, Any],
+) -> dict:
+    observations: dict[str, Any] = {}
+    if "cameras" in obs_data:
+        cam_dict: dict[str, Any] = {}
+        for term, d in obs_data["cameras"].items():
+            camera_obs: dict[str, Any] = {}
+            pose = None
+            if observation_fields["include_pose"] and "pose" in d:
+                pose = _PoseProxy(
+                    xyz=_decode_tensor_payload(d["pose"]["xyz"]),
+                    quat=_decode_tensor_payload(d["pose"]["quat"]),
+                )
+            if observation_fields["include_rgb"] and "rgb" in d:
+                camera_obs["rgb"] = _SensorProxy(
+                    _decode_tensor_payload(d["rgb"]),
+                    _decode_tensor_payload(d["intrinsic_matrices"])
+                    if observation_fields["include_intrinsic"]
+                    and "intrinsic_matrices" in d
+                    else None,
+                    pose=pose,
+                )
+            if observation_fields["include_depth"] and "depth" in d:
+                camera_obs["depth"] = _SensorProxy(
+                    _decode_tensor_payload(d["depth"])
+                )
+            cam_dict[term] = camera_obs
+        observations["/camera"] = cam_dict
+    if "robot" in obs_data:
+        observations["/robot"] = _decode_value(obs_data["robot"])
+    return observations
+
+
+def _resolve_observation_fields(remote_policy_type: str) -> dict[str, Any]:
+    match remote_policy_type:
+        case "openpi":
+            from robo_orchard_sim.policy.openpi.adapter import OpenPiAdapter
+
+            return OpenPiAdapter.required_observation_fields()
+        case "holobrain":
+            from robo_orchard_sim.policy.holobrain.adapter import (
+                HolobrainAdapter,
+            )
+
+            return HolobrainAdapter.required_observation_fields()
+        case _:
+            raise ValueError(
+                f"Unsupported remote policy type: {remote_policy_type}"
+            )
+
+
 def _encode_tensor_payload(value: torch.Tensor) -> dict[str, Any]:
     cpu_value = value.detach().cpu()
     return {
         "dtype": str(cpu_value.dtype).removeprefix("torch."),
         "shape": list(cpu_value.shape),
-        "data": cpu_value.tolist(),
+        "data": memoryview(cpu_value.contiguous().numpy()).tobytes(),
     }
 
 
 def _decode_tensor_payload(payload: dict[str, Any]) -> torch.Tensor:
     dtype = getattr(torch, payload["dtype"])
+    if isinstance(payload["data"], (bytes, bytearray, memoryview)):
+        return torch.frombuffer(
+            bytearray(payload["data"]),
+            dtype=dtype,
+        ).reshape(payload["shape"])
     return torch.tensor(payload["data"], dtype=dtype).reshape(payload["shape"])
+
+
+def _extract_binary_tensors(value: Any, tensors: list[bytes]) -> Any:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        tensor_idx = len(tensors)
+        tensors.append(bytes(value))
+        return {"__bytes_idx__": tensor_idx}
+    if isinstance(value, dict):
+        if "__tensor__" in value:
+            tensor_payload = dict(value["__tensor__"])
+            tensor_data = tensor_payload.pop("data")
+            if isinstance(tensor_data, (bytes, bytearray, memoryview)):
+                tensor_bytes = bytes(tensor_data)
+            else:
+                dtype = getattr(torch, tensor_payload["dtype"])
+                tensor_bytes = (
+                    torch.tensor(tensor_data, dtype=dtype)
+                    .contiguous()
+                    .numpy()
+                    .tobytes()
+                )
+            tensor_idx = len(tensors)
+            tensors.append(tensor_bytes)
+            return {"__tensor__": tensor_payload, "__tensor_idx__": tensor_idx}
+        return {
+            key: _extract_binary_tensors(item, tensors)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_extract_binary_tensors(item, tensors) for item in value]
+    return value
+
+
+def _inject_binary_tensors(value: Any, tensors: list[bytes]) -> Any:
+    if isinstance(value, dict):
+        if "__bytes_idx__" in value:
+            return tensors[value["__bytes_idx__"]]
+        if "__tensor__" in value:
+            tensor_payload = dict(value["__tensor__"])
+            tensor_payload["data"] = tensors[value["__tensor_idx__"]]
+            return {"__tensor__": tensor_payload}
+        return {
+            key: _inject_binary_tensors(item, tensors)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_inject_binary_tensors(item, tensors) for item in value]
+    return value
+
+
+def _encode_binary_message(payload: dict[str, Any]) -> bytes:
+    tensors: list[bytes] = []
+    header_payload = _extract_binary_tensors(payload, tensors)
+    header_json = json.dumps(header_payload, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    tensor_blob = b"".join(
+        struct.pack("!Q", len(tensor_bytes)) + tensor_bytes
+        for tensor_bytes in tensors
+    )
+    return struct.pack("!Q", len(header_json)) + header_json + tensor_blob
+
+
+def _decode_binary_message(message: bytes) -> dict[str, Any]:
+    header_len = struct.unpack("!Q", message[:_HEADER_SIZE_BYTES])[0]
+    header_start = _HEADER_SIZE_BYTES
+    header_end = header_start + header_len
+    header_payload = json.loads(
+        message[header_start:header_end].decode("utf-8")
+    )
+    tensors: list[bytes] = []
+    cursor = header_end
+    while cursor < len(message):
+        tensor_len = struct.unpack("!Q", message[cursor : cursor + 8])[0]
+        cursor += 8
+        tensors.append(message[cursor : cursor + tensor_len])
+        cursor += tensor_len
+    return _inject_binary_tensors(header_payload, tensors)
 
 
 def _encode_value(value: Any) -> Any:
@@ -152,8 +298,19 @@ def _move_to_device(value: Any, device: str) -> Any:
     return value
 
 
-def _extract_obs_data(observations: dict) -> dict:
+def _extract_obs_data(
+    observations: dict,
+    *,
+    remote_policy_type: str = "full",
+) -> dict:
     """Convert live observations into a pickle-safe dict of CPU tensors."""
+    if remote_policy_type != "full":
+        return _extract_profiled_obs_data(
+            observations,
+            remote_policy_type=remote_policy_type,
+            observation_fields=_resolve_observation_fields(remote_policy_type),
+        )
+
     obs: dict[str, Any] = {}
     if "/camera" in observations:
         cameras: dict[str, dict] = {}
@@ -177,6 +334,45 @@ def _extract_obs_data(observations: dict) -> dict:
     if "/robot" in observations:
         robot: dict[str, Any] = {}
         for k, v in observations["/robot"].items():
+            robot[k] = _encode_value(v)
+        obs["robot"] = robot
+    return obs
+
+
+def _extract_profiled_obs_data(
+    observations: dict,
+    *,
+    remote_policy_type: str,
+    observation_fields: dict[str, Any],
+) -> dict:
+    obs: dict[str, Any] = {"format": remote_policy_type}
+    if "/camera" in observations:
+        cameras: dict[str, dict] = {}
+        for term in observation_fields["camera_terms"]:
+            td = observations["/camera"][term]
+            out = td.get("output", td)
+            cam: dict[str, Any] = {}
+            if observation_fields["include_rgb"]:
+                cam["rgb"] = _encode_tensor_payload(out["rgb"].sensor_data)
+            if observation_fields["include_depth"]:
+                cam["depth"] = _encode_tensor_payload(out["depth"].sensor_data)
+            if observation_fields["include_intrinsic"]:
+                m = getattr(out["rgb"], "intrinsic_matrices", None)
+                if m is not None:
+                    cam["intrinsic_matrices"] = _encode_tensor_payload(m)
+            if observation_fields["include_pose"]:
+                pose = getattr(out["rgb"], "pose", None)
+                if pose is not None:
+                    cam["pose"] = {
+                        "xyz": _encode_tensor_payload(pose.xyz),
+                        "quat": _encode_tensor_payload(pose.quat),
+                    }
+            cameras[term] = cam
+        obs["cameras"] = cameras
+    if "/robot" in observations:
+        robot: dict[str, Any] = {}
+        for k in observation_fields["robot_keys"]:
+            v = observations["/robot"][k]
             robot[k] = _encode_value(v)
         obs["robot"] = robot
     return obs
@@ -207,12 +403,12 @@ class PolicyWebsocketServer:
         try:
             async for message in websocket:
                 try:
-                    req = json.loads(message)
+                    req = _decode_binary_message(message)
                     req_type = req.get("type", "act")
                     if req_type == "reset":
                         self.policy.reset()
                         await websocket.send(
-                            json.dumps(
+                            _encode_binary_message(
                                 {
                                     "ok": True,
                                     "logging_tag": self.logging_tag,
@@ -221,7 +417,7 @@ class PolicyWebsocketServer:
                         )
                         continue
 
-                    if req_type != "act":
+                    if req_type not in {"act", "act_sequence"}:
                         raise ValueError(
                             f"Unsupported request type: {req_type}"
                         )
@@ -230,22 +426,24 @@ class PolicyWebsocketServer:
                     instruction = req.get("instruction")
                     if instruction is not None:
                         obs["instruction"] = instruction
-                    actions = self.policy.act(obs)
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "actions": _encode_value(actions),
-                                "logging_tag": self.logging_tag,
-                            }
-                        )
+                    if req_type == "act_sequence":
+                        actions = self._act_sequence(obs)
+                    else:
+                        actions = self.policy.act(obs)
+                    response = _encode_binary_message(
+                        {
+                            "actions": _encode_value(actions),
+                            "logging_tag": self.logging_tag,
+                        }
                     )
+                    await websocket.send(response)
                 except Exception:
                     logger.exception(
                         "[%s] Inference error",
                         self.logging_tag,
                     )
                     await websocket.send(
-                        json.dumps(
+                        _encode_binary_message(
                             {
                                 "error": "inference failed",
                                 "logging_tag": self.logging_tag,
@@ -282,6 +480,18 @@ class PolicyWebsocketServer:
         """Blocking entry-point."""
         asyncio.run(self.serve_async())
 
+    def _act_sequence(
+        self,
+        obs: dict[str, Any],
+    ) -> list["RemoteAction"]:
+        act_sequence = getattr(self.policy, "act_sequence", None)
+        if callable(act_sequence):
+            actions = act_sequence(obs)
+            if not isinstance(actions, list):
+                raise TypeError("Policy act_sequence must return a list")
+            return actions
+        return [self.policy.act(obs)]
+
 
 class PolicyClient:
     """WebSocket client for remote policy inference via server."""
@@ -291,10 +501,12 @@ class PolicyClient:
         host: str = "localhost",
         port: int = 8765,
         logging_tag: str | None = None,
+        remote_policy_type: str = "full",
     ):
         self._url = f"ws://{host}:{port}"
         self._ws = None
         self.logging_tag = logging_tag or f"client->{host}:{port}"
+        self._remote_policy_type = remote_policy_type
 
     def _ensure_connected(self):
         if self._ws is None:
@@ -314,8 +526,8 @@ class PolicyClient:
 
     def _send_request(self, request: dict[str, Any]) -> dict[str, Any]:
         self._ensure_connected()
-        self._ws.send(json.dumps(request))
-        response = json.loads(self._ws.recv())
+        self._ws.send(_encode_binary_message(request))
+        response = _decode_binary_message(self._ws.recv())
         if "logging_tag" in response:
             self.logging_tag = response["logging_tag"]
         if "error" in response:
@@ -327,19 +539,48 @@ class PolicyClient:
         observations: dict[str, Any],
         *,
         instruction: str | None = None,
-    ):
+    ) -> "RemoteAction":
         """Send observations to server and return predicted actions."""
         if instruction is None:
             instruction = observations.get("instruction")
         req = {
             "type": "act",
-            "obs_data": _extract_obs_data(observations),
+            "obs_data": _extract_obs_data(
+                observations,
+                remote_policy_type=self._remote_policy_type,
+            ),
             "instruction": instruction,
         }
         resp = self._send_request(req)
         actions = _decode_value(resp["actions"])
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        return _move_to_device(actions, device)
+        actions = _move_to_device(actions, device)
+        return actions
+
+    def request_action_sequence(
+        self,
+        observations: dict[str, Any],
+        *,
+        instruction: str | None = None,
+    ) -> list["RemoteAction"]:
+        """Send observations to server and return predicted actions."""
+        if instruction is None:
+            instruction = observations.get("instruction")
+        req = {
+            "type": "act_sequence",
+            "obs_data": _extract_obs_data(
+                observations,
+                remote_policy_type=self._remote_policy_type,
+            ),
+            "instruction": instruction,
+        }
+        resp = self._send_request(req)
+        actions = _decode_value(resp["actions"])
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        actions = _move_to_device(actions, device)
+        if isinstance(actions, list):
+            return actions
+        return [actions]
 
     def reset_remote_policy(self) -> None:
         """Reset remote policy state such as cached action horizons."""
@@ -380,13 +621,22 @@ class ServerPolicy(PolicyMixin[dict[str, Any], RemoteAction]):
             action_space=action_space,
         )
         self._client = self._build_client(cfg)
+        self._cached_actions: list[RemoteAction] = []
+        self._cached_index = 0
 
     def reset(self, *args: Any, **kwargs: Any) -> None:
         del args, kwargs
+        self._cached_actions = []
+        self._cached_index = 0
         self._client.reset_remote_policy()
 
     def act(self, obs: dict[str, Any]) -> RemoteAction:
-        return self._client.request_action(obs)
+        if self._cached_index >= len(self._cached_actions):
+            self._cached_actions = self._client.request_action_sequence(obs)
+            self._cached_index = 0
+        action = self._cached_actions[self._cached_index]
+        self._cached_index += 1
+        return action
 
     @property
     def logging_tag(self) -> str:
@@ -399,6 +649,7 @@ class ServerPolicy(PolicyMixin[dict[str, Any], RemoteAction]):
             host=cfg.host,
             port=cfg.port,
             logging_tag=cfg.logging_tag,
+            remote_policy_type=cfg.remote_policy_type,
         )
 
     def close(self) -> None:
@@ -416,6 +667,7 @@ class ServerPolicyCfg(PolicyConfig[ServerPolicy]):
     host: str = "localhost"
     port: int = 8765
     logging_tag: str | None = None
+    remote_policy_type: str = "full"
 
 
 def _build_server_parser():

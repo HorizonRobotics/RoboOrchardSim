@@ -35,6 +35,25 @@ class HolobrainAdapter:
         [[1, 0, 0, 0.3], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
         dtype=np.float64,
     )
+    _CAMERA_TERMS = (
+        "left_hand_camera_term",
+        "static_camera_term",
+        "right_hand_camera_term",
+    )
+
+    @classmethod
+    def required_observation_fields(cls) -> dict[str, Any]:
+        return {
+            "camera_terms": list(cls._CAMERA_TERMS),
+            "include_rgb": True,
+            "include_depth": True,
+            "include_intrinsic": True,
+            "include_pose": True,
+            "robot_keys": [
+                "left_joint_position",
+                "right_joint_position",
+            ],
+        }
 
     def __init__(self, joint_num: int) -> None:
         self._camera_terms = {

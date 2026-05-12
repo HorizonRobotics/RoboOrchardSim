@@ -14,6 +14,8 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+# INTERNAL
+
 from __future__ import annotations
 import logging
 import os
@@ -142,12 +144,28 @@ class OpenPiPolicy(PolicyMixin[dict[str, Any], OpenPiAction]):
         self._cached_index = 0
 
     def act(self, obs: dict[str, Any]) -> OpenPiAction:
+        """Return one action, reusing the local cached horizon if possible."""
         self._validate_observation_batch(obs)
         if self._cached_index >= len(self._cached_actions):
-            self._refresh_action_cache(obs)
+            self._cached_actions = self._get_fresh_action_sequence(obs)
+            self._cached_index = 0
         action = self._cached_actions[self._cached_index]
         self._cached_index += 1
         return action
+
+    def act_sequence(self, obs: dict[str, Any]) -> list[OpenPiAction]:
+        """Return a freshly inferred action horizon for remote batch use."""
+        sequence = self._get_fresh_action_sequence(obs)
+        self._cached_actions = []
+        self._cached_index = 0
+        return sequence
+
+    def _get_fresh_action_sequence(
+        self, obs: dict[str, Any]
+    ) -> list[OpenPiAction]:
+        self._validate_observation_batch(obs)
+        self._refresh_action_cache(obs)
+        return list(self._cached_actions)
 
     def _refresh_action_cache(self, obs: dict[str, Any]) -> None:
         self._cached_actions = self._run_inference(obs)

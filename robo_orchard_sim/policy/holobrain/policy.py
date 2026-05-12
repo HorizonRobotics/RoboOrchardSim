@@ -58,12 +58,28 @@ class HolobrainPolicy(PolicyMixin[dict[str, Any], HolobrainAction]):
         self._cached_index = 0
 
     def act(self, obs: dict[str, Any]) -> HolobrainAction:
+        """Return one action, reusing the local cached horizon if possible."""
         self._validate_observation_batch(obs)
         if self._cached_index >= len(self._cached_actions):
-            self._refresh_action_cache(obs)
+            self._cached_actions = self._get_fresh_action_sequence(obs)
+            self._cached_index = 0
         action = self._cached_actions[self._cached_index]
         self._cached_index += 1
         return action
+
+    def act_sequence(self, obs: dict[str, Any]) -> list[HolobrainAction]:
+        """Return a freshly inferred action horizon for remote batch use."""
+        sequence = self._get_fresh_action_sequence(obs)
+        self._cached_actions = []
+        self._cached_index = 0
+        return sequence
+
+    def _get_fresh_action_sequence(
+        self, obs: dict[str, Any]
+    ) -> list[HolobrainAction]:
+        self._validate_observation_batch(obs)
+        self._refresh_action_cache(obs)
+        return list(self._cached_actions)
 
     def _refresh_action_cache(self, obs: dict[str, Any]) -> None:
         self._cached_actions = self._run_inference(obs)

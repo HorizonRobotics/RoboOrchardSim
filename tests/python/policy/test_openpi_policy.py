@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 # Project RoboOrchard
 #
 # Copyright (c) 2026 Horizon Robotics. All Rights Reserved.
@@ -14,14 +15,21 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+# INTERNAL
+
 from __future__ import annotations
 import sys
 import types
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 import torch
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from robo_orchard_sim.policy.factory import create_policy_from_model_cfg
 from robo_orchard_sim.policy.openpi import policy as openpi_policy_module
@@ -499,6 +507,20 @@ def test_openpi_policy_act_given_cached_actions_reuses_inference(
     assert first["left_robot_joint_position"][0, 0].item() == 11.0
     assert second["left_robot_joint_position"][0, 0].item() == 12.0
     assert third["left_robot_joint_position"][0, 0].item() == 21.0
+
+
+def test_openpi_policy_act_sequence_returns_refreshed_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _build_openpi_policy(monkeypatch)
+
+    sequence = policy.act_sequence(_build_obs())
+    next_action = policy.act(_build_obs())
+
+    assert len(sequence) == 2
+    assert sequence[0]["left_robot_joint_position"][0, 0].item() == 11.0
+    assert sequence[1]["left_robot_joint_position"][0, 0].item() == 12.0
+    assert next_action["left_robot_joint_position"][0, 0].item() == 21.0
 
 
 def test_openpi_policy_act_given_multi_env_obs_raises_value_error(

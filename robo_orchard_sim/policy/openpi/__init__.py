@@ -14,6 +14,8 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+# INTERNAL
+
 from robo_orchard_sim.policy.openpi.adapter import OpenPiAdapter
 from robo_orchard_sim.policy.openpi.policy import (
     OpenPiPolicy,
