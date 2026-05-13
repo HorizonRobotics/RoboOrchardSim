@@ -39,9 +39,10 @@ def _bootstrap_task_definitions() -> None:
     from robo_orchard_sim.task_suite.manipulation import (
         place_a2b as _place_a2b,
         semantic_pick as _pick,
+        spatial_pick as _spatial_pick,
     )
 
-    del _pick, _place_a2b
+    del _pick, _place_a2b, _spatial_pick
 
 
 def build_task(

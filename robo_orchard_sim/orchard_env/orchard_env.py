@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
         EmbodimentBase,
     )
+    from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
     from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
     from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
 
@@ -41,6 +42,7 @@ class OrchardEnv:
         embodiment: EmbodimentBase,
         task: TaskBase,
         scene: SceneBase | None = None,
+        layout_builder: LayoutBuilder | None = None,
     ):
         if scene is None:
             from robo_orchard_sim.orchard_env.scene.plane_table_scene import (  # noqa: E501
@@ -51,6 +53,7 @@ class OrchardEnv:
         self.scene = scene
         self.embodiment = embodiment
         self.task = task
+        self.layout_builder = layout_builder
         from robo_orchard_sim.envs.managers.record import (
             NoOpRecordControllerCfg,
         )
@@ -58,6 +61,15 @@ class OrchardEnv:
         self._record_file_path = self.DEFAULT_RECORD_FILE_PATH
         self._record_controller: RecordControllerCfg = (
             NoOpRecordControllerCfg()
+        )
+
+    @property
+    def num_episodes(self) -> int | None:
+        """Episode count when driven by a layout builder; otherwise None."""
+        return (
+            self.layout_builder.num_episodes
+            if self.layout_builder is not None
+            else None
         )
 
     def configure_recording(
@@ -94,6 +106,7 @@ class OrchardEnv:
             scene=self.scene,
             embodiment=self.embodiment,
             task=self.task,
+            layout_builder=self.layout_builder,
             record_file_path=self._record_file_path,
             record_controller=self._record_controller,
         ).build()

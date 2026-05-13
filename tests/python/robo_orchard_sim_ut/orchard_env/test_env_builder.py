@@ -988,3 +988,102 @@ def test_dualarm_piper_image_record_terms_cover_rgb_depth_calibration():
         assert term_cfg.topic == expected_topic
         assert term_cfg.frame_id == expected_frame_id
         assert term_cfg.mode == expected_mode
+
+
+# ----- layout_builder integration -----------------------------------------
+
+
+def _layout_builder_with_one_role(role: str = "pick"):
+    """Build a LayoutBuilder containing one episode for ``role``."""
+    from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
+    from robo_orchard_sim.orchard_env.layout.loader import (
+        Layout,
+        LayoutObject,
+        LayoutSequence,
+    )
+
+    layout = Layout(
+        objects={
+            role: LayoutObject(
+                category="apple",
+                position=(0.0, 0.0, 0.0),
+                rotation=(1.0, 0.0, 0.0, 0.0),
+            )
+        },
+        raw={},
+    )
+    return LayoutBuilder(
+        layouts=LayoutSequence(entries=[layout], raw=[]),
+        role_member_by_category={role: {"apple": "objects/pick"}},
+    )
+
+
+def test_env_builder_with_layout_builder_injects_layout_reset():
+    """Layout-mode env_cfg.events contains the layout_reset term."""
+    builder = _layout_builder_with_one_role()
+    env_cfg = EnvBuilder(
+        scene=DummyScene(),
+        embodiment=DummyEmbodiment(),
+        task=DummyTask(),
+        layout_builder=builder,
+    ).build()
+
+    assert "layout_reset" in env_cfg.events.terms
+
+
+def test_env_builder_without_layout_builder_uses_task_event_cfg():
+    """Sampler-mode env_cfg.events comes from the task (no layout_reset)."""
+    env_cfg = EnvBuilder(
+        scene=DummyScene(),
+        embodiment=DummyEmbodiment(),
+        task=DummyTask(),
+    ).build()
+
+    assert "layout_reset" not in env_cfg.events.terms
+
+
+def test_layout_builder_apply_to_drops_pose_reset_keeps_others():
+    """Pose/pool-reset terms are shadowed by layout; other terms survive."""
+    from unittest.mock import MagicMock
+
+    from robo_orchard_sim.envs.managers.events.pose_reset import (
+        PoseResetTermCfg,
+    )
+
+    builder = _layout_builder_with_one_role()
+    pose_term = MagicMock(spec=PoseResetTermCfg)
+    light_term = MagicMock()
+    task_event_cfg = EventManagerCfg(
+        terms={
+            "random_pose_event": pose_term,
+            "light_randomization": light_term,
+        }
+    )
+
+    merged = builder.apply_to(task_event_cfg)
+
+    assert set(merged.terms) == {"light_randomization", "layout_reset"}
+
+
+def test_orchard_env_num_episodes_with_layout_builder():
+    """OrchardEnv.num_episodes reads layout_builder.num_episodes."""
+    from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+
+    env = OrchardEnv(
+        scene=DummyScene(),
+        embodiment=DummyEmbodiment(),
+        task=DummyTask(),
+        layout_builder=_layout_builder_with_one_role(),
+    )
+    assert env.num_episodes == 1
+
+
+def test_orchard_env_num_episodes_without_layout_builder_is_none():
+    from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+
+    env = OrchardEnv(
+        scene=DummyScene(),
+        embodiment=DummyEmbodiment(),
+        task=DummyTask(),
+    )
+    assert env.num_episodes is None

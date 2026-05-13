@@ -42,6 +42,7 @@ from robo_orchard_sim.models.scenes.asset_scene import AssetSceneCfg
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
+from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
 from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
 
@@ -54,12 +55,14 @@ class EnvBuilder:
         scene: SceneBase,
         embodiment: EmbodimentBase,
         task: TaskBase,
+        layout_builder: LayoutBuilder | None = None,
         record_file_path: str = "logs/records",
         record_controller: RecordControllerCfg | None = None,
     ):
         self.scene = scene
         self.embodiment = embodiment
         self.task = task
+        self.layout_builder = layout_builder
         self.record_file_path = record_file_path
         self.record_controller = record_controller or NoOpRecordControllerCfg()
 
@@ -92,10 +95,13 @@ class EnvBuilder:
             self.embodiment.get_action_cfg(),
             self.task.get_action_cfg(),
         )
+        task_event_cfg = self.task.get_event_cfg()
+        if self.layout_builder is not None:
+            task_event_cfg = self.layout_builder.apply_to(task_event_cfg)
         env_cfg.events = self._merge_event_cfg(
             self.scene.get_event_cfg(),
             self.embodiment.get_event_cfg(),
-            self.task.get_event_cfg(),
+            task_event_cfg,
         )
         env_cfg.records = self._build_record_cfg(
             self.scene.get_record_terms(),

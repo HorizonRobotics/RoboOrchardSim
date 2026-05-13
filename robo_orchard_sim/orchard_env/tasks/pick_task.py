@@ -34,6 +34,7 @@ from robo_orchard_sim.envs.managers.record import (
 )
 from robo_orchard_sim.envs.managers.record.mcap import McapDictTermCfg
 from robo_orchard_sim.orchard_env.assets import ObjectSpec
+from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
 from robo_orchard_sim.orchard_env.tasks.task_base import (
     TaskAssetsBase,
     TaskBase,
@@ -66,11 +67,11 @@ class PickAssets(TaskAssetsBase):
 
     required_object_fields = ("pick",)
 
-    pick: ObjectSpec
+    pick: ObjectSpec | PoolSpec
 
-    def flatten(self) -> dict[str, ObjectSpec]:
+    def flatten(self) -> dict[str, ObjectSpec | PoolSpec]:
         """Return task assets in the flattened shape expected by TaskBase."""
-        flattened: dict[str, ObjectSpec] = {
+        flattened: dict[str, ObjectSpec | PoolSpec] = {
             "pick": self.pick,
         }
         flattened.update(self.flatten_distractors())

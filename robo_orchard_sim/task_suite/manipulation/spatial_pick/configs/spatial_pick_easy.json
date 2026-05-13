@@ -1,0 +1,41 @@
+[
+  {
+    "natural_language": "Pick up the garlic to the right of the thermos.",
+    "formal_logic": "Pick(garlic WHERE RightOf(garlic, thermos, table_frame))",
+    "operator": "SEQ",
+    "actions": ["Pick"],
+    "spatial_relation": "right",
+    "src_objects": ["garlic"],
+    "dest_object": null,
+    "asset_bindings": {
+      "pick": {"category": "garlic",  "position": [0.40, -0.15, 0.05], "rotation": [1.0, 0.0, 0.0, 0.0]},
+      "ref":  {"category": "thermos", "position": [0.30,  0.10, 0.05], "rotation": [1.0, 0.0, 0.0, 0.0]}
+    }
+  },
+  {
+    "natural_language": "Pick up the potato in front of the thermos.",
+    "formal_logic": "Pick(potato WHERE InFrontOf(potato, thermos, table_frame))",
+    "operator": "SEQ",
+    "actions": ["Pick"],
+    "spatial_relation": "front",
+    "src_objects": ["potato"],
+    "dest_object": null,
+    "asset_bindings": {
+      "pick": {"category": "potato",  "position": [0.30,  0.00, 0.05], "rotation": [0.707, 0.0, 0.0, 0.707]},
+      "ref":  {"category": "thermos", "position": [0.45,  0.00, 0.05], "rotation": [1.0,   0.0, 0.0, 0.0]}
+    }
+  },
+  {
+    "natural_language": "Pick up the egg behind the thermos.",
+    "formal_logic": "Pick(egg WHERE Behind(egg, thermos, table_frame))",
+    "operator": "SEQ",
+    "actions": ["Pick"],
+    "spatial_relation": "behind",
+    "src_objects": ["egg"],
+    "dest_object": null,
+    "asset_bindings": {
+      "pick": {"category": "egg",     "position": [0.50, -0.10, 0.05], "rotation": [0.0, 1.0, 0.0, 0.0]},
+      "ref":  {"category": "thermos", "position": [0.30, -0.05, 0.05], "rotation": [1.0, 0.0, 0.0, 0.0]}
+    }
+  }
+]

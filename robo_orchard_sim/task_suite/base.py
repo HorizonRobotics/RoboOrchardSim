@@ -91,6 +91,7 @@ class TaskDefinitionConfig(Config):
     embodiment: EmbodimentConfig | None = None
     instruction: InstructionConfig | None = None
     asset_configs: dict[str, dict[str, Any]] | None = None
+    layout: str | None = None
     task: TaskConfig | None = None
 
 

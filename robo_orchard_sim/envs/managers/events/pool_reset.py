@@ -208,12 +208,15 @@ def _teleport_member(
     env_id: int,
     zero_velocity: bool = True,
     add_env_origin: bool = True,
+    quat_wxyz: torch.Tensor | None = None,
 ) -> None:
-    """Teleport ``name`` in ``env_id`` to ``pose_xyz``.
+    """Teleport ``name`` in ``env_id`` to ``pose_xyz`` with optional rotation.
 
     When ``add_env_origin`` is True (default; active members), the pose is
     treated as env-local and offset by ``env.scene.env_origins[env_id]``.
     When False (members on the inactive-pool storage), absolute world coords.
+    ``quat_wxyz`` defaults to identity ``(1, 0, 0, 0)`` to preserve the
+    behavior of every existing caller.
     """
     entity = env.scene[name]
     device = getattr(env, "device", "cpu")
@@ -221,7 +224,10 @@ def _teleport_member(
     if add_env_origin:
         env_origins = env.scene.env_origins
         pose_xyz = pose_xyz + env_origins[env_id]
-    quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device)
+    if quat_wxyz is None:
+        quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device)
+    else:
+        quat = quat_wxyz.to(device)
     full_pose = torch.cat([pose_xyz, quat]).unsqueeze(0)
     env_ids_t = torch.tensor([env_id], device=device)
     entity.write_root_pose_to_sim(full_pose, env_ids=env_ids_t)
