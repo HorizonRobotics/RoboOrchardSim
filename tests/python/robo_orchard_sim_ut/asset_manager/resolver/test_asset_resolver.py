@@ -465,6 +465,28 @@ class TestPoolSize:
             "distractor_pool_1",
         }
 
+    def test_distractor_pool_size_with_zero_max_count_raises(
+        self, mini_resolver
+    ):
+        """pool_size>0 + max_count=0 must reject — would leave stray actors."""
+        with pytest.raises(AssetResolutionError, match="pool_size"):
+            mini_resolver.resolve(
+                {
+                    "pick": {
+                        "filter": {"category": "apple"},
+                        "prim_name": "pick_object",
+                    },
+                    "distractors": {
+                        "anchor": "pick",
+                        "match": ["super_category"],
+                        "min_count": 0,
+                        "max_count": 0,
+                        "pool_size": 2,
+                        "prim_name_prefix": "d",
+                    },
+                }
+            )
+
     def test_resolve_pools_are_uuid_disjoint(self, mini_registry):
         """Cross-pool UUID disjointness holds across multiple seeds."""
         cfg = {

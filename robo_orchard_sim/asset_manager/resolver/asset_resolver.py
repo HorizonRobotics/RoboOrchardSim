@@ -437,6 +437,16 @@ class AssetResolver:
                         f"({max_count}) for distractor pool"
                     ),
                 )
+            if pool_size > 0 and max_count == 0:
+                raise AssetResolutionError(
+                    role=role,
+                    filter_repr=str(entry),
+                    cause=ValueError(
+                        f"pool_size={pool_size} with max_count=0 would "
+                        f"pre-spawn unused candidates; set max_count>=1 "
+                        f"or omit pool_size"
+                    ),
+                )
 
         try:
             spec = DistractorSpec(
