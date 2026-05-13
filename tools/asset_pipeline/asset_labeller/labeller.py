@@ -27,11 +27,16 @@ import shutil
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from difflib import get_close_matches
+from pathlib import Path
 from xml.dom.minidom import parseString
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from asset_labeller.compute_aabb import (
+    compute_aabb_from_usd,
+    write_aabb_to_urdf,
+)
 from asset_labeller.convex_decomposer import decompose_convex_mesh
 from asset_labeller.gpt_client import GPTClient
 from asset_labeller.mesh_utils import (
@@ -1026,6 +1031,25 @@ class AssetLabeller:
         self.estimated_attrs = self.get_estimated_attributes(asset_attrs)
 
         urdf_path = self.generate_urdf(mesh_path, output_root, asset_attrs)
+
+        target_usd = str(Path(urdf_path).with_suffix(".usd"))
+        usd_suffixes = {".usd", ".usda", ".usdc", ".usdz"}
+        if (
+            not Path(target_usd).is_file()
+            and Path(mesh_path).suffix.lower() in usd_suffixes
+        ):
+            target_usd = mesh_path
+        aabb = compute_aabb_from_usd(target_usd)
+        if aabb is None:
+            logger.warning(
+                "Could not compute AABB for %s; URDF will lack <aabb> "
+                "element. build_asset_index will reject this asset in "
+                "strict mode until fixed.",
+                target_usd,
+            )
+        else:
+            write_aabb_to_urdf(urdf_path, aabb[0], aabb[1])
+            logger.info("Wrote AABB %s into %s", aabb, urdf_path)
 
         logger.info(f"response: {response}")
 

@@ -7,7 +7,7 @@ description: Use when processing a batch of raw USD assets that need to be organ
 
 ## Overview
 
-Five-stage pipeline for raw USD assets: **organize → label → annotate → tag → caption**.
+Five-stage pipeline for raw USD assets: **organize → label (with AABB) → annotate → tag → caption**.
 Produces a labelled directory per asset:
 ```
 <domain>/<super_category>/<asset_name>/
@@ -22,6 +22,7 @@ Produces a labelled directory per asset:
 
 The URDF's `<extra_info>` block accumulates fields across stages:
 - Step 2 writes the core fields (`category`, `description`, `shape`, `material`, dimensions, ...)
+- Step 2 also writes `<aabb>` (local-frame axis-aligned bounding box, computed from the USD via pxr)
 - Step 4 adds `<tags>` (e.g. `is_container,is_graspable`)
 - Step 5 adds a `<caption_candidates>` link to the JSON file
 
@@ -125,6 +126,14 @@ nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader,n
 
 **Bottleneck:** GPT Vision API latency (~2 min/asset), not GPU. Expect ~2 min × N assets.
 
+**AABB side-effect:** for each processed asset the labeller writes a structured
+`<aabb><min>x y z</min><max>x y z</max></aabb>` block into the URDF's
+`<extra_info>`, computed from the just-written USD via
+`pxr.UsdGeom.BBoxCache.ComputeUntransformedBound`. Values are in the asset's
+local frame, meters, 6 decimal places. Consumed downstream by
+`build_asset_index` (parquet columns `aabb_{x,y,z}_{min,max}`) and by
+`PoseResetTerm.auto_z_clearance` to prevent spawn penetration.
+
 ## Step 3 — Annotate Interactions
 
 ```bash
@@ -211,9 +220,10 @@ echo "interactions: $(find <dst_root> -maxdepth 5 -name "interaction.json" | wc 
 echo "renders:      $(find <dst_root> -maxdepth 5 -type d -name "renders" | wc -l)  (expect $N)"
 echo "tags:         $(grep -rl '<tags>' <dst_root> --include='*.urdf' | wc -l)  (expect $N)"
 echo "captions:     $(find <dst_root> -maxdepth 5 -name caption_candidates.json | wc -l)  (expect $N)"
+echo "aabbs:        $(grep -rl '<aabb>' <dst_root> --include='*.urdf' | wc -l)  (expect $N)"
 ```
 
-All six counts should equal N. A mismatch pinpoints which stage failed.
+All seven counts should equal N. A mismatch pinpoints which stage failed.
 
 For assets with `passive_pick_body=0`, check `outputs/labeller_runs/label_summary.json` (relative to CWD) for the full per-asset status log.
 
