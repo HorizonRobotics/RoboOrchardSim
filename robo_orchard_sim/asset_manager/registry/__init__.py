@@ -32,6 +32,7 @@ from robo_orchard_sim.asset_manager.registry.errors import (  # noqa: F401
     DuplicateAssetIdError,
     EmptyPoolError,
     InsufficientPoolError,
+    MissingAabbError,
     UnknownAssetError,
 )
 from robo_orchard_sim.asset_manager.registry.registry import (  # noqa: F401

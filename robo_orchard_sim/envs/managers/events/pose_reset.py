@@ -14,6 +14,7 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+import logging
 import random
 from collections.abc import Sequence
 
@@ -39,6 +40,10 @@ from robo_orchard_sim.utils.env_utils import sample_poses
 from robo_orchard_sim.utils.usd import get_prim_aabb
 
 __all__ = ["PoseResetTerm", "PoseResetTermCfg"]
+
+logger = logging.getLogger(__name__)
+
+_Z_CLEARANCE = 0.005
 
 _CacheEntry = tuple[
     str,
@@ -112,10 +117,13 @@ class PoseResetTerm(
             self._group_key = None
             self._clear_cross_group_cache = False
 
-        if self._mode in {"random_non_overlap", "drop"}:
-            # Pre-compute asset AABBs and store XY and Z half extents.
+        if self._mode in {"random", "random_non_overlap", "drop"}:
+            # XY / Z half-extents come from the live USD AABB (frame-agnostic
+            # sizes). Spawn-clearance z_min comes from the registry's
+            # asset-local AABB carried on the asset cfg.
             self._asset_xy_extents: dict[str, tuple[float, float]] = {}
             self._asset_z_half_extents: dict[str, float] = {}
+            self._asset_z_min: dict[str, float | None] = {}
             stage = getattr(self._env.scene, "stage", None)
             if stage is None and Usd is not None:
                 stage = Usd.Stage.Open(self._env.scene._usd_path)
@@ -128,12 +136,20 @@ class PoseResetTerm(
                 if stage is not None and prim_path is not None:
                     aabb = get_prim_aabb(stage, prim_path)
                     if aabb is not None:
-                        (x_max, x_min), (y_max, y_min), (z_max, z_min) = aabb
+                        (x_max, x_min), (y_max, y_min), (z_max, z_bot) = aabb
                         hx = abs(x_max - x_min) * 0.5
                         hy = abs(y_max - y_min) * 0.5
-                        hz = abs(z_max - z_min) * 0.5
+                        hz = abs(z_max - z_bot) * 0.5
                 self._asset_xy_extents[tag] = (hx, hy)
                 self._asset_z_half_extents[tag] = hz
+                z_min = getattr(asset.cfg, "aabb_z_min", None)
+                if z_min is None:
+                    logger.warning(
+                        "PoseResetTerm: no registry aabb_z_min for '%s'; "
+                        "spawn-clearance clamp skipped for it.",
+                        tag,
+                    )
+                self._asset_z_min[tag] = z_min
 
     def __call__(self, event_msg: ResetEvent):
         """Do the event term operation."""
@@ -152,8 +168,17 @@ class PoseResetTerm(
         elif self._mode == "drop":
             self._apply_drop_reset(env_ids)
         else:
-            for asset in self._assets:
+            for asset_idx, asset in enumerate(self._assets):
                 rand_samples = self._sample_pose(env_ids)
+                if self._mode == "random":
+                    tag = self._get_asset_tag(asset, asset_idx)
+                    z_min = self._asset_z_min.get(tag)
+                    if z_min is not None:
+                        default_z = asset.data.default_root_state[env_ids, 2]
+                        floor_offset = _Z_CLEARANCE - z_min - default_z
+                        rand_samples[:, 2] = torch.maximum(
+                            rand_samples[:, 2], floor_offset
+                        )
                 root_states = asset.data.default_root_state[env_ids].clone()
 
                 positions = (
@@ -255,10 +280,19 @@ class PoseResetTerm(
                             self._cfg.pose_range
                             and "z" in self._cfg.pose_range
                         ):
-                            z_min, z_max = self._cfg.pose_range["z"]
-                            cand[2] = (z_min + z_max) * 0.5
+                            z_min_cfg, z_max_cfg = self._cfg.pose_range["z"]
+                            cand[2] = (z_min_cfg + z_max_cfg) * 0.5
                         else:
                             cand[2] = 0.0
+                        z_min = self._asset_z_min.get(tag)
+                        if z_min is not None:
+                            floor_offset = _Z_CLEARANCE - z_min
+                            if not absolute_resample:
+                                floor_offset -= float(
+                                    default_root_states[i_env, 2]
+                                )
+                            if cand[2] < floor_offset:
+                                cand[2] = floor_offset
                         if absolute_resample:
                             base_x = env_origins[i_env, 0]
                             base_y = env_origins[i_env, 1]

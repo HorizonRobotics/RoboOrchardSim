@@ -109,6 +109,7 @@ def _make_logic_term(
     term._prefer_stack = prefer_stack
     term._asset_xy_extents = {}
     term._asset_z_half_extents = {}
+    term._asset_z_min = {}
     term._assets = []
     return term
 

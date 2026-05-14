@@ -31,13 +31,14 @@ import pyarrow.parquet as pq
 
 from robo_orchard_sim.asset_manager.registry.errors import (
     DuplicateAssetIdError,
+    MissingAabbError,
 )
 from robo_orchard_sim.asset_manager.registry.urdf_parser import (
     ParsedUrdf,
     parse_urdf_extra_info,
 )
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 INDEX_FILENAME = "asset_index.parquet"
 
 
@@ -94,6 +95,12 @@ _EMPTY_SCHEMA = pa.schema(
         ("urdf_path", pa.string()),
         ("interaction_path", pa.string()),
         ("caption_path", pa.string()),
+        ("aabb_x_min", pa.float64()),
+        ("aabb_x_max", pa.float64()),
+        ("aabb_y_min", pa.float64()),
+        ("aabb_y_max", pa.float64()),
+        ("aabb_z_min", pa.float64()),
+        ("aabb_z_max", pa.float64()),
         ("tags", pa.list_(pa.string())),
         ("version", pa.string()),
         ("generate_time", pa.string()),
@@ -175,8 +182,23 @@ def _row_from_parsed(
     parsed: ParsedUrdf,
     asset_dir: Path,
     rel: str,
+    *,
+    strict: bool = False,
 ) -> dict:
     asset_id = asset_dir.name
+    if parsed.aabb_min is None or parsed.aabb_max is None:
+        if strict:
+            raise MissingAabbError(
+                f"URDF for {asset_id} lacks <aabb>. "
+                f"Re-run the labeller (Step 2 of usd-asset-batch-labelling "
+                f"skill) to populate the field from the asset's USD."
+            )
+        aabb_x_min = aabb_x_max = None
+        aabb_y_min = aabb_y_max = None
+        aabb_z_min = aabb_z_max = None
+    else:
+        aabb_x_min, aabb_y_min, aabb_z_min = parsed.aabb_min
+        aabb_x_max, aabb_y_max, aabb_z_max = parsed.aabb_max
     return {
         "uuid": parsed.uuid,
         "asset_id": asset_id,
@@ -199,6 +221,12 @@ def _row_from_parsed(
         "urdf_path": str(asset_dir / f"{asset_id}.urdf"),
         "interaction_path": str(asset_dir / "interaction.json"),
         "caption_path": str(asset_dir / "caption_candidates.json"),
+        "aabb_x_min": aabb_x_min,
+        "aabb_x_max": aabb_x_max,
+        "aabb_y_min": aabb_y_min,
+        "aabb_y_max": aabb_y_max,
+        "aabb_z_min": aabb_z_min,
+        "aabb_z_max": aabb_z_max,
         "tags": sorted(parsed.tags),
         "version": parsed.version,
         "generate_time": parsed.generate_time,
@@ -266,7 +294,16 @@ def build_asset_index(
             for w in parsed.warnings:
                 report.warnings.append(f"{asset_id}: {w}")
 
-            rows.append(_row_from_parsed(parsed, asset_dir, rel))
+            if (
+                parsed.aabb_min is None or parsed.aabb_max is None
+            ) and not strict:
+                report.warnings.append(
+                    f"{asset_id}: missing <aabb> in URDF; recorded as None"
+                )
+
+            rows.append(
+                _row_from_parsed(parsed, asset_dir, rel, strict=strict)
+            )
 
     report.total_indexed = len(rows)
 

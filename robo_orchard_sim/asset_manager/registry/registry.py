@@ -100,6 +100,12 @@ def _row_to_meta(row: dict[str, Any]) -> AssetMeta:
         tags=tags,
         version=row.get("version") or "",
         generate_time=row.get("generate_time") or "",
+        aabb_x_min=row.get("aabb_x_min"),
+        aabb_x_max=row.get("aabb_x_max"),
+        aabb_y_min=row.get("aabb_y_min"),
+        aabb_y_max=row.get("aabb_y_max"),
+        aabb_z_min=row.get("aabb_z_min"),
+        aabb_z_max=row.get("aabb_z_max"),
     )
 
 
@@ -326,6 +332,7 @@ class AssetRegistry:
             uuid=meta.uuid,
             category=meta.category,
             actor_type=role,
+            aabb_z_min=meta.aabb_z_min,
         )
 
 

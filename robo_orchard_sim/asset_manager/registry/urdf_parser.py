@@ -54,6 +54,8 @@ class ParsedUrdf:
     version: str = ""
     generate_time: str = ""
     tags: frozenset[str] = field(default_factory=frozenset)
+    aabb_min: tuple[float, float, float] | None = None
+    aabb_max: tuple[float, float, float] | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -79,6 +81,31 @@ def _parse_set_attr(text: str | None) -> frozenset[str] | None:
         return None
     tokens = frozenset(t.strip().lower() for t in text.split(",") if t.strip())
     return tokens or None
+
+
+def _xyz(elem: ET.Element | None) -> tuple[float, float, float] | None:
+    """Parse '<x> <y> <z>' text into a 3-tuple; None on failure.
+
+    Args:
+        elem (ET.Element | None): The XML element whose text holds the
+            three space-separated floats. May be None.
+
+    Returns:
+        tuple[float, float, float] | None: The parsed (x, y, z) tuple,
+        or None if ``elem`` is None, the text is missing or whitespace,
+        does not contain exactly three whitespace-separated parts, or
+        any part fails to parse as float.
+    """
+    txt = _text(elem)
+    if txt is None or not txt.strip():
+        return None
+    parts = txt.split()
+    if len(parts) != 3:
+        return None
+    try:
+        return (float(parts[0]), float(parts[1]), float(parts[2]))
+    except ValueError:
+        return None
 
 
 def parse_urdf_extra_info(
@@ -137,6 +164,19 @@ def parse_urdf_extra_info(
         )
     elif tags_elem is None:
         out.warnings.append("missing <tags> element")
+
+    aabb_elem = extra.find("aabb")
+    if aabb_elem is not None:
+        amin = _xyz(aabb_elem.find("min"))
+        amax = _xyz(aabb_elem.find("max"))
+        if amin is None or amax is None:
+            out.warnings.append(
+                "malformed <aabb> block "
+                "(need <min>x y z</min><max>x y z</max>)"
+            )
+        else:
+            out.aabb_min = amin
+            out.aabb_max = amax
 
     mass_elem = root.find(".//inertial/mass")
     if mass_elem is not None and "value" in mass_elem.attrib:

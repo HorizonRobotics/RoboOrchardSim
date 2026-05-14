@@ -10,14 +10,17 @@
 """PoolResetTermCfg behavioural tests (mocked scene + alias state)."""
 
 from __future__ import annotations
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 
 from robo_orchard_sim.envs.managers.events.pool_reset import (
     PoolResetTermCfg,
     PoolSlot,
     pool_reset,
+    sample_pose_with_aabb_separation,
 )
 from robo_orchard_sim.envs.managers.events.pose_reset import (
     _CROSS_GROUP_CACHE,
@@ -32,18 +35,19 @@ def _make_env(slot_role_ids, teleport_recorder=None):
     env.device = "cpu"
     env.scene = MagicMock()
     env.scene.env_origins = torch.zeros((1, 3))
-    if teleport_recorder is not None:
 
-        def make_entity(name):
-            ent = MagicMock()
+    def make_entity(name):
+        ent = MagicMock()
+        ent.cfg = SimpleNamespace(aabb_z_min=None, prim_path=None)
+        if teleport_recorder is not None:
             ent.write_root_pose_to_sim.side_effect = (
                 lambda pose, env_ids: teleport_recorder.append(
                     (name, pose[0, :3].clone())
                 )
             )
-            return ent
+        return ent
 
-        env.scene.__getitem__.side_effect = make_entity
+    env.scene.__getitem__.side_effect = make_entity
 
     state = PoolAliasState()
     for rid in slot_role_ids:
@@ -159,3 +163,49 @@ def test_pool_reset_stows_non_actives_and_preserves_slot_order():
     pick_active = env.pool_alias_state.resolve("pick_object")
     # Active teleports happen in slot declaration order: place before pick.
     assert actives.index(place_active) < actives.index(pick_active)
+
+
+def test_sample_pose_clamps_z_up_for_deep_asset():
+    """Sampled z lifts so a deep asset's AABB bottom clears the plane."""
+    rng = torch.Generator().manual_seed(0)
+    pose_range = {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.02, 0.02)}
+    pose = sample_pose_with_aabb_separation(
+        pose_range=pose_range,
+        min_separation=-1.0,
+        candidate_extents=(0.05, 0.05, -0.10),
+        already_placed=[],
+        max_retries=1,
+        rng=rng,
+    )
+    # sampled z=0.02; floor = 0.005 - (-0.10) = 0.105; clamp raises to 0.105
+    assert pose[2].item() == pytest.approx(0.105, abs=1e-6)
+
+
+def test_sample_pose_z_already_above_floor_keeps_sampled_z():
+    """Small flat asset with z_min near 0 should keep its sampled z."""
+    rng = torch.Generator().manual_seed(0)
+    pose_range = {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.02, 0.02)}
+    pose = sample_pose_with_aabb_separation(
+        pose_range=pose_range,
+        min_separation=-1.0,
+        candidate_extents=(0.05, 0.05, -0.01),
+        already_placed=[],
+        max_retries=1,
+        rng=rng,
+    )
+    assert pose[2].item() == pytest.approx(0.02, abs=1e-6)
+
+
+def test_sample_pose_skips_clamp_when_z_min_unknown():
+    """z_min None (no registry AABB) leaves the sampled z untouched."""
+    rng = torch.Generator().manual_seed(0)
+    pose_range = {"x": (0.0, 0.0), "y": (0.0, 0.0), "z": (0.02, 0.02)}
+    pose = sample_pose_with_aabb_separation(
+        pose_range=pose_range,
+        min_separation=-1.0,
+        candidate_extents=(0.05, 0.05, None),
+        already_placed=[],
+        max_retries=1,
+        rng=rng,
+    )
+    assert pose[2].item() == pytest.approx(0.02, abs=1e-6)

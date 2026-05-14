@@ -342,3 +342,4 @@ class RigidObjectCfg(_RigidObjectCfg[SpawnerCfgType_co, RigidObject]):
     category: str | None = None
     actor_type: str = "object"
     attributes: tuple[str, ...] = ()
+    aabb_z_min: float | None = None

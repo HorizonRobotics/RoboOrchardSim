@@ -27,7 +27,10 @@ from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg as LabSceneEntityCfg,
 )
 from robo_orchard_sim.envs.env_base import IsaacEnvType_co
-from robo_orchard_sim.envs.managers.events.pose_reset import _CROSS_GROUP_CACHE
+from robo_orchard_sim.envs.managers.events.pose_reset import (
+    _CROSS_GROUP_CACHE,
+    _Z_CLEARANCE,
+)
 from robo_orchard_sim.utils.config import ClassType_co
 from robo_orchard_sim.utils.usd import get_prim_aabb
 
@@ -46,6 +49,9 @@ logger = logging.getLogger(__name__)
 _POOL_FALLBACK_EXTENT = (0.01, 0.01)
 """Used when a member's USD AABB cannot be resolved (mocked test envs)."""
 
+_WARNED_NO_AABB: set[str] = set()
+"""Members already warned about missing registry aabb_z_min (dedup)."""
+
 _PlacementEntry = tuple[tuple[float, float, float], tuple[float, float]]
 """(center_xyz, half_extent_xy) describing one placed AABB."""
 
@@ -58,10 +64,10 @@ class PoolSlot:
     members: list[str]
 
 
-def _sample_pose_with_aabb_separation(
+def sample_pose_with_aabb_separation(
     pose_range: dict[str, tuple[float, float]],
     min_separation: float,
-    candidate_extents: tuple[float, float],
+    candidate_extents: tuple[float, float, float | None],
     already_placed: list[_PlacementEntry],
     max_retries: int,
     rng: torch.Generator,
@@ -76,17 +82,40 @@ def _sample_pose_with_aabb_separation(
 
     On retry exhaustion logs WARNING and returns the last attempt without
     separation guarantee.
+
+    Args:
+        pose_range (dict[str, tuple[float, float]]): Per-axis sampling
+            ranges keyed by axis name (``x``, ``y``, ``z``).
+        min_separation (float): Minimum XY separation gap. If negative,
+            separation checks are skipped.
+        candidate_extents (tuple[float, float, float | None]): The
+            candidate asset's ``(hx, hy, z_min)``: XY half-extents and
+            asset-local AABB z_min. ``z_min`` is None when the asset has
+            no registry AABB, in which case spawn-clearance is skipped.
+        already_placed (list[_PlacementEntry]): Previously placed entries
+            to avoid XY overlap with.
+        max_retries (int): Maximum rejection-sampling attempts.
+        rng (torch.Generator): Random number generator for reproducibility.
+
+    Returns:
+        torch.Tensor: A length-3 tensor ``[x, y, z]`` for the sampled
+        pose. On retry exhaustion this is the last attempted candidate
+        without separation guarantee (a WARNING is also logged).
     """
     x_lo, x_hi = pose_range.get("x", (0.0, 0.0))
     y_lo, y_hi = pose_range.get("y", (0.0, 0.0))
     z_lo, z_hi = pose_range.get("z", (0.0, 0.0))
 
-    hx, hy = candidate_extents
+    hx, hy, z_min_local = candidate_extents
     last: torch.Tensor | None = None
     for _ in range(max_retries):
         x = torch.empty(1).uniform_(x_lo, x_hi, generator=rng).item()
         y = torch.empty(1).uniform_(y_lo, y_hi, generator=rng).item()
         z = torch.empty(1).uniform_(z_lo, z_hi, generator=rng).item()
+        if z_min_local is not None:
+            min_z = _Z_CLEARANCE - z_min_local
+            if z < min_z:
+                z = min_z
         candidate = torch.tensor([x, y, z])
         last = candidate
         if min_separation < 0.0 or not already_placed:
@@ -114,29 +143,41 @@ def _sample_pose_with_aabb_separation(
 
 def _compute_member_extents(
     env, members: Sequence[str]
-) -> dict[str, tuple[float, float]]:
-    """Per-member XY half-extents from USD AABB; fallback if unavailable."""
-    extents: dict[str, tuple[float, float]] = {}
+) -> dict[str, tuple[float, float, float | None]]:
+    """Per-member (XY half-extents, z_min).
+
+    XY half-extents come from the live USD AABB (falls back to
+    ``_POOL_FALLBACK_EXTENT`` when unresolved, e.g. mocked test envs).
+    ``z_min`` is the asset-local AABB bottom carried on the asset cfg;
+    None when the asset has no registry AABB.
+    """
+    extents: dict[str, tuple[float, float, float | None]] = {}
     stage = getattr(env.scene, "stage", None)
     for m in members:
-        hx_hy = _POOL_FALLBACK_EXTENT
-        if stage is not None:
-            try:
-                asset = env.scene[m]
-                cfg = getattr(asset, "cfg", None)
-                prim_path = getattr(cfg, "prim_path", None)
-                if isinstance(prim_path, str):
-                    prim_path = prim_path.replace("env_.*", "env_0")
-                    aabb = get_prim_aabb(stage, prim_path)
-                    if aabb is not None:
-                        (x_max, x_min), (y_max, y_min), _z = aabb
-                        hx_hy = (
-                            abs(x_max - x_min) * 0.5,
-                            abs(y_max - y_min) * 0.5,
-                        )
-            except Exception:
-                pass
-        extents[m] = hx_hy
+        hx, hy = _POOL_FALLBACK_EXTENT
+        z_min: float | None = None
+        try:
+            asset = env.scene[m]
+            cfg = getattr(asset, "cfg", None)
+            z_min = getattr(cfg, "aabb_z_min", None)
+            prim_path = getattr(cfg, "prim_path", None)
+            if stage is not None and isinstance(prim_path, str):
+                prim_path = prim_path.replace("env_.*", "env_0")
+                aabb = get_prim_aabb(stage, prim_path)
+                if aabb is not None:
+                    (x_max, x_min), (y_max, y_min), _ = aabb
+                    hx = abs(x_max - x_min) * 0.5
+                    hy = abs(y_max - y_min) * 0.5
+        except Exception:
+            pass
+        if z_min is None and m not in _WARNED_NO_AABB:
+            logger.warning(
+                "pool_reset: no registry aabb_z_min for '%s'; "
+                "spawn-clearance clamp skipped for it.",
+                m,
+            )
+            _WARNED_NO_AABB.add(m)
+        extents[m] = (hx, hy, z_min)
     return extents
 
 
@@ -298,11 +339,11 @@ def _run_pool_reset_for_env_ids(env, env_ids, cfg: "PoolResetTermCfg") -> None:
             # Sample valid poses for the new active set.
             poses = []
             for name in active_names:
-                hx_hy = extents[name]
-                pose = _sample_pose_with_aabb_separation(
+                hx_hy_zmin = extents[name]
+                pose = sample_pose_with_aabb_separation(
                     pose_range=cfg.pose_range,
                     min_separation=cfg.min_separation,
-                    candidate_extents=hx_hy,
+                    candidate_extents=hx_hy_zmin,
                     already_placed=already_placed,
                     max_retries=cfg.max_retries,
                     rng=torch_rng,
@@ -311,7 +352,7 @@ def _run_pool_reset_for_env_ids(env, env_ids, cfg: "PoolResetTermCfg") -> None:
                 already_placed.append(
                     (
                         (float(pose[0]), float(pose[1]), float(pose[2])),
-                        hx_hy,
+                        (hx_hy_zmin[0], hx_hy_zmin[1]),
                     )
                 )
 
@@ -323,7 +364,7 @@ def _run_pool_reset_for_env_ids(env, env_ids, cfg: "PoolResetTermCfg") -> None:
                     int(env_id),
                     name,
                     pose,
-                    extents[name],
+                    (extents[name][0], extents[name][1]),
                 )
 
             # Bind each slot's alias to its active.

@@ -209,3 +209,43 @@ def test_parse_shape_and_material_also_multi_value():
     p = parse_urdf_extra_info(urdf)
     assert p.shape == frozenset({"ellipsoid", "tapered"})
     assert p.material == frozenset({"plastic", "metal"})
+
+
+# ---------------------------------------------------------------------------
+# <aabb> extra_info parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_aabb_present_returns_min_max_tuples(make_urdf):
+    """URDF with <aabb> -> ParsedUrdf.aabb_min/max are 3-tuples."""
+    text = make_urdf(
+        aabb_min=(-0.05, -0.10, -0.01),
+        aabb_max=(0.05, 0.10, 0.02),
+    )
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.aabb_min == pytest.approx((-0.05, -0.10, -0.01), abs=1e-6)
+    assert parsed.aabb_max == pytest.approx((0.05, 0.10, 0.02), abs=1e-6)
+
+
+def test_parse_aabb_absent_returns_none(make_urdf):
+    """URDF without <aabb> -> aabb_min/max are None, no warning."""
+    text = make_urdf()  # no aabb_min/aabb_max -> no <aabb> block
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.aabb_min is None
+    assert parsed.aabb_max is None
+    assert not any("aabb" in w.lower() for w in parsed.warnings)
+
+
+def test_parse_aabb_malformed_logs_warning(make_urdf):
+    """A <min> with only 2 coords -> aabb_min/max stay None + warning."""
+    text = make_urdf().replace(
+        "</extra_info>",
+        "<aabb><min>0 0</min><max>1 1 1</max></aabb></extra_info>",
+    )
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.aabb_min is None
+    assert parsed.aabb_max is None
+    assert any("aabb" in w.lower() for w in parsed.warnings)

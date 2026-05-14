@@ -41,6 +41,10 @@ class DuplicateAssetIdError(AssetRegistryError):
         super().__init__(f"Duplicate asset_id '{asset_id}' found at: {joined}")
 
 
+class MissingAabbError(AssetRegistryError, ValueError):
+    """Raised by build_asset_index(strict=True) when a URDF lacks <aabb>."""
+
+
 class UnknownAssetError(AssetRegistryError):
     """Raised when a uuid or asset_id is not in the registry."""
 

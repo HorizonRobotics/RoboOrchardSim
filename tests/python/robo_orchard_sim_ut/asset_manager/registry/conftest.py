@@ -37,8 +37,21 @@ def _urdf(
     real_height: float = 0.08,
     mass: float = 0.15,
     tags: tuple[str, ...] = (),
+    aabb_min: tuple[float, float, float] | None = None,
+    aabb_max: tuple[float, float, float] | None = None,
 ) -> str:
     tags_csv = ", ".join(tags)
+    if aabb_min is not None and aabb_max is not None:
+        ax_min, ay_min, az_min = aabb_min
+        ax_max, ay_max, az_max = aabb_max
+        aabb_block = (
+            f"      <aabb>\n"
+            f"        <min>{ax_min:.6f} {ay_min:.6f} {az_min:.6f}</min>\n"
+            f"        <max>{ax_max:.6f} {ay_max:.6f} {az_max:.6f}</max>\n"
+            f"      </aabb>\n    "
+        )
+    else:
+        aabb_block = ""
     return dedent(
         f"""<?xml version='1.0' encoding='utf-8'?>
         <robot name="{name}">
@@ -67,11 +80,28 @@ def _urdf(
               <version>v0.1.0</version>
               <generate_time>20260414000000</generate_time>
               <tags>{tags_csv}</tags>
-            </extra_info>
+        {aabb_block}</extra_info>
           </link>
         </robot>
         """
     ).strip()
+
+
+@pytest.fixture
+def make_urdf():
+    """Build a URDF string with sensible defaults; override via kwargs."""
+
+    def _make(**kw):
+        defaults = dict(
+            uuid="00000000000000000000000000000000",
+            domain="kitchen_supplies",
+            super_category="tableware",
+            category="fork",
+        )
+        defaults.update(kw)
+        return _urdf("fork_001", **defaults)
+
+    return _make
 
 
 def _interaction() -> dict:

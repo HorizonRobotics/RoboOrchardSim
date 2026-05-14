@@ -48,6 +48,7 @@ class RigidObjectSpec(ObjectSpec):
     category: str | None = None
     actor_type: str = "object"
     attributes: tuple[str, ...] = ()
+    aabb_z_min: float | None = None
 
     def to_isaac_cfg(self) -> RigidObjectCfg:
         """Convert this spec into a rigid object cfg."""
@@ -83,6 +84,7 @@ class RigidObjectSpec(ObjectSpec):
             category=self.category,
             actor_type=self.actor_type,
             attributes=self.attributes,
+            aabb_z_min=self.aabb_z_min,
         )
         return cfg
 

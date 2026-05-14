@@ -67,6 +67,15 @@ class AssetMeta:
     version: str = ""
     generate_time: str = ""
 
+    # AABB in asset local frame (meters). None for assets that pre-date
+    # registry-tracked AABB; downstream consumers must handle None.
+    aabb_x_min: float | None = None
+    aabb_x_max: float | None = None
+    aabb_y_min: float | None = None
+    aabb_y_max: float | None = None
+    aabb_z_min: float | None = None
+    aabb_z_max: float | None = None
+
     @property
     def size_bucket(self) -> str:
         """Bucket height into small/medium/large (thresholds hardcoded)."""
