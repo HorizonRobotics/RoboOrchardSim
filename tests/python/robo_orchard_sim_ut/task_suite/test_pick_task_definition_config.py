@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from robo_orchard_sim.orchard_env.tasks.task_params import TaskLightResetConfig
 from robo_orchard_sim.task_suite.manipulation.semantic_pick import pick_env
 
 
@@ -146,3 +147,25 @@ def test_pick_task_definition_build_assigns_instruction_to_task(
     assert orchard_env.task.instruction is not None
     assert orchard_env.task.instruction.template == "pick_default"
     assert orchard_env.task.instruction.actor_description_mode == "seen"
+
+
+def test_pick_task_definition_yaml_configures_distant_light() -> None:
+    yaml_path = (
+        Path(__file__).resolve().parents[4]
+        / "robo_orchard_sim"
+        / "task_suite"
+        / "manipulation"
+        / "semantic_pick"
+        / "configs"
+        / "pick_category.yaml"
+    )
+    raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+
+    light_reset = raw["task"]["params"]["light_reset"]
+
+    cfg = TaskLightResetConfig(**light_reset)
+
+    assert light_reset["preset"] == "default_distant_light"
+    assert cfg.asset_names == ["background/dis_light"]
+    assert cfg.distant_light is not None
+    assert cfg.distant_light.asset_name == "dis_light"

@@ -58,6 +58,10 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
         from robo_orchard_sim.orchard_env.tasks.pick_task import (
             PickAssets,
             PickTask,
+            PickTaskParams,
+        )
+        from robo_orchard_sim.task_suite.manipulation.semantic_pick.pick_env import (  # noqa: E501
+            PickTaskDefinitionBase,
         )
 
         if resolver is None:
@@ -88,12 +92,15 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
                 f"{cls.__name__} requires num_envs == 1; got "
                 f"{cfg.scene.num_envs}"
             )
-        if cfg.task is not None and "pose_range" in cfg.task.params:
+        if cfg.task is not None and "pose_reset" in cfg.task.params:
             logger.warning(
-                "%s: pose_range in YAML is ignored under layout mode "
+                "%s: pose_reset in YAML is ignored under layout mode "
                 "(pose comes from the layout JSON).",
                 cls.__name__,
             )
+        task_params = PickTaskParams(
+            **cls.resolve_task_params(config_path=path)
+        )
 
         yaml_path = cls._resolve_config_path(path)
         seq = parse_layout((yaml_path.parent / cfg.layout).resolve())
@@ -108,13 +115,17 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
                 or None
             ),
         )
+        scene = cls.resolve_scene(config_path=path)
+        PickTaskDefinitionBase._apply_light_reset_scene_overrides(
+            scene, task_params
+        )
 
         return OrchardEnv(
-            scene=cls.resolve_scene(config_path=path),
+            scene=scene,
             embodiment=cls.resolve_embodiment(config_path=path),
             task=PickTask(
                 assets=pick_assets,
-                params=None,
+                params=task_params,
                 instruction=cls.resolve_instruction(config_path=path),
             ),
             layout_builder=layout_builder,

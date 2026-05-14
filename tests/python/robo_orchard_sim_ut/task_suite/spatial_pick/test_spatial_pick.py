@@ -150,6 +150,44 @@ def test_build_single_category_pick_yields_object_spec(tmp_path):
     assert isinstance(pick_assets.pick, RigidObjectSpec)
 
 
+def test_build_layout_mode_preserves_light_and_texture_task_params(tmp_path):
+    _write_json(tmp_path, [_entry("garlic", "thermos")])
+    yaml = _write_yaml(
+        tmp_path,
+        extra=(
+            "task:\n"
+            "  params:\n"
+            "    light_reset:\n"
+            "      enabled: true\n"
+            "      asset_names: [background/dis_light]\n"
+            "      distant_light:\n"
+            "        asset_name: dis_light\n"
+            "      randomize_intensity: true\n"
+            "      intensity_range:\n"
+            "        range: [1000.0, 5000.0]\n"
+            "    texture_reset:\n"
+            "      enabled: true\n"
+            "      asset_names: [background/table]\n"
+        ),
+    )
+    resolver = _make_resolver(
+        {
+            "pick": {"garlic": _DUMMY("g")},
+            "distractor_0": {"thermos": _DUMMY("t")},
+        }
+    )
+    with _patched_build() as orch:
+        SpatialPickTaskDefinitionBase.build(
+            resolver=resolver, config_path=str(yaml)
+        )
+
+    params = orch.call_args.kwargs["task"].params
+    assert params.light_reset is not None
+    assert params.light_reset.asset_names == ["background/dis_light"]
+    assert params.texture_reset is not None
+    assert params.texture_reset.asset_names == ["background/table"]
+
+
 @pytest.mark.parametrize(
     "extra,num_envs,match",
     [

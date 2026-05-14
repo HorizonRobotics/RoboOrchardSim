@@ -35,15 +35,22 @@ instruction:
 
 task:
   params:
-    mode: random_non_overlap
-    min_separation: 0.03
-    pose_range:
-      x: [0.25, 0.55]
-      y: [-0.35, 0.35]
-      z: [0.0, 0.0]
-      roll: [0.0, 0.0]
-      pitch: [0.0, 0.0]
-      yaw: [-3.141592653589793, 3.141592653589793]
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.25, 0.55]
+        y: [-0.35, 0.35]
+        z: [0.0, 0.0]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [-3.141592653589793, 3.141592653589793]
+    light_reset:
+      enabled: true
+      preset: default_distant_light
+    texture_reset:
+      enabled: true
+      preset: default_table_texture
 
 # Template consumed by AssetResolver. Top-level keys = role names
 # (must match PlaceA2BTaskAssets fields). Entries with an `anchor`

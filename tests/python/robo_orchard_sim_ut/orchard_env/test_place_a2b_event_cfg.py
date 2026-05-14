@@ -11,11 +11,20 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from robo_orchard_sim.orchard_env.assets.object_spec import RigidObjectSpec
 from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
 from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
     PlaceA2BTask,
     PlaceA2BTaskAssets,
+    PlaceA2BTaskParams,
+)
+from robo_orchard_sim.orchard_env.tasks.task_params import (
+    PoseRangeConfig,
+    TaskLightResetConfig,
+    TaskTextureResetConfig,
 )
 
 
@@ -66,3 +75,42 @@ def test_get_event_cfg_distractor_pool_emits_active_count_slots():
     }
     assert "objects/place_object" in pose_actor_names
     assert "pick_object" not in pose_actor_names
+
+
+def test_get_event_cfg_enabled_light_and_texture_adds_terms():
+    cfg = PlaceA2BTask(
+        assets=PlaceA2BTaskAssets(
+            pick=_obj("pick_object"),
+            place=_obj("place_object"),
+        ),
+        params=PlaceA2BTaskParams(
+            light_reset=TaskLightResetConfig(
+                enabled=True,
+                asset_names=["background/dis_light"],
+                distant_light={"asset_name": "dis_light"},
+                randomize_intensity=True,
+                intensity_range={"range": (1000.0, 5000.0)},
+            ),
+            texture_reset=TaskTextureResetConfig(
+                enabled=True,
+                asset_names=["background/table"],
+            ),
+        ),
+    ).get_event_cfg()
+
+    assert "light_reset_event" in cfg.terms
+    assert "texture_reset_event" in cfg.terms
+
+
+def test_place_a2b_task_params_legacy_pose_fields_raise_validation_error():
+    with pytest.raises(
+        ValidationError, match="Extra inputs are not permitted"
+    ):
+        PlaceA2BTaskParams(
+            mode="drop",
+            min_separation=0.07,
+            pose_range=PoseRangeConfig(
+                x=(0.1, 0.2),
+                y=(-0.2, 0.4),
+            ),
+        )

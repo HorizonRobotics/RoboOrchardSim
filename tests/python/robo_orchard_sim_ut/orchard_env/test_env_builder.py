@@ -73,7 +73,10 @@ from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
     PlaceA2BTaskParams,
 )
 from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
-from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
+from robo_orchard_sim.orchard_env.tasks.task_params import (
+    PoseRangeConfig,
+    TaskPoseResetConfig,
+)
 from robo_orchard_sim.task_suite.manipulation.place_a2b import (
     PlaceA2BEasyTaskDefinition,
 )
@@ -588,16 +591,18 @@ def test_place_a2b_task_uses_injected_pose_range_for_pose_reset():
             ),
         ),
         params=PlaceA2BTaskParams(
-            mode="drop",
-            pose_range=PoseRangeConfig(
-                x=(0.1, 0.2),
-                y=(-0.2, 0.4),
-                z=(0.01, 0.02),
-                roll=(0.0, 0.1),
-                pitch=(-0.1, 0.1),
-                yaw=(-1.0, 1.5),
+            pose_reset=TaskPoseResetConfig(
+                mode="drop",
+                pose_range=PoseRangeConfig(
+                    x=(0.1, 0.2),
+                    y=(-0.2, 0.4),
+                    z=(0.01, 0.02),
+                    roll=(0.0, 0.1),
+                    pitch=(-0.1, 0.1),
+                    yaw=(-1.0, 1.5),
+                ),
+                min_separation=0.07,
             ),
-            min_separation=0.07,
         ),
     )
 

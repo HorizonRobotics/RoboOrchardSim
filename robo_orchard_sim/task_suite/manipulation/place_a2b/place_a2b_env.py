@@ -40,6 +40,61 @@ _CONFIG_DIR = _DIR / "configs"
 class PlaceA2BTaskDefinitionBase(TaskDefinition):
     """Shared definition logic for resolver-backed place-a2b tasks."""
 
+    @staticmethod
+    def _apply_light_reset_scene_overrides(scene, task_params) -> None:
+        """Inject scene light overrides required by light randomization."""
+        light_reset = getattr(task_params, "light_reset", None)
+        if light_reset is None or not light_reset.enabled:
+            return
+        if not hasattr(scene, "assets"):
+            return
+
+        distant_light = light_reset.distant_light
+        if distant_light is None:
+            return
+
+        from robo_orchard_sim.cfg_wrappers.assets_cfg import AssetBaseCfg
+        from robo_orchard_sim.cfg_wrappers.sim.spawners.lights_cfg import (
+            DistantLightCfg,
+            DomeLightCfg,
+        )
+        from robo_orchard_sim.models.assets.xform_asset import XFormPrimAsset
+        from robo_orchard_sim.orchard_env.assets import CustomAssetSpec
+
+        scene.assets.append(
+            CustomAssetSpec(
+                name="light",
+                namespace="background",
+                cfg=AssetBaseCfg(
+                    class_type=XFormPrimAsset,
+                    prim_path="/World/light",
+                    spawn=DomeLightCfg(
+                        color=(0.75, 0.75, 0.75),
+                        intensity=3000.0,
+                        visible=False,
+                    ),
+                ),
+            )
+        )
+        scene.assets.append(
+            CustomAssetSpec(
+                name=distant_light.asset_name,
+                namespace="background",
+                cfg=AssetBaseCfg(
+                    class_type=XFormPrimAsset,
+                    prim_path=distant_light.prim_path,
+                    init_state=AssetBaseCfg.InitialStateCfg(
+                        pos=distant_light.init_pos,
+                        rot=distant_light.init_rot,
+                    ),
+                    spawn=DistantLightCfg(
+                        color=distant_light.color,
+                        intensity=distant_light.intensity,
+                    ),
+                ),
+            )
+        )
+
     @classmethod
     def build(
         cls,
@@ -71,9 +126,11 @@ class PlaceA2BTaskDefinitionBase(TaskDefinition):
         task_params = PlaceA2BTaskParams(
             **cls.resolve_task_params(config_path=config_path)
         )
+        scene = cls.resolve_scene(config_path=config_path)
+        cls._apply_light_reset_scene_overrides(scene, task_params)
 
         return OrchardEnv(
-            scene=cls.resolve_scene(config_path=config_path),
+            scene=scene,
             embodiment=cls.resolve_embodiment(config_path=config_path),
             task=PlaceA2BTask(
                 assets=task_assets,

@@ -21,10 +21,12 @@ from typing import Any
 
 from robo_orchard_core.envs.managers.events import EventManagerCfg
 from robo_orchard_core.utils.config import Config
-from typing_extensions import Literal
 
 from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
+)
+from robo_orchard_sim.envs.managers.events.light_reset import (
+    LightResetTermCfg,
 )
 from robo_orchard_sim.envs.managers.events.pool_reset import (
     PoolResetTermCfg,
@@ -32,6 +34,9 @@ from robo_orchard_sim.envs.managers.events.pool_reset import (
 )
 from robo_orchard_sim.envs.managers.events.pose_reset import (
     PoseResetTermCfg,
+)
+from robo_orchard_sim.envs.managers.events.texture_reset import (
+    TextureResetTermCfg,
 )
 from robo_orchard_sim.envs.managers.record import (
     RecordTermBaseCfg,
@@ -42,7 +47,11 @@ from robo_orchard_sim.orchard_env.tasks.task_base import (
     TaskAssetsBase,
     TaskBase,
 )
-from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
+from robo_orchard_sim.orchard_env.tasks.task_params import (
+    TaskLightResetConfig,
+    TaskPoseResetConfig,
+    TaskTextureResetConfig,
+)
 from robo_orchard_sim.tasks.instructions.base import (
     InstructionActor,
     InstructionWrapper,
@@ -58,15 +67,9 @@ from robo_orchard_sim.tasks.validators.checkers import (
 class PlaceA2BTaskParams(Config):
     """Task-level parameters for place-a2b."""
 
-    mode: Literal[
-        "random",
-        "random_non_overlap",
-        "orderly",
-        "default",
-        "drop",
-    ] = "random_non_overlap"
-    pose_range: PoseRangeConfig = PoseRangeConfig()
-    min_separation: float = 0.03
+    pose_reset: TaskPoseResetConfig = TaskPoseResetConfig()
+    light_reset: TaskLightResetConfig | None = None
+    texture_reset: TaskTextureResetConfig | None = None
 
 
 class PlaceA2BTaskAssets(TaskAssetsBase):
@@ -154,8 +157,8 @@ class PlaceA2BTask(TaskBase):
         if slots:
             terms["pool_reset_event"] = PoolResetTermCfg(
                 slots=slots,
-                pose_range=dict(self.params.pose_range),
-                min_separation=self.params.min_separation,
+                pose_range=dict(self.params.pose_reset.pose_range),
+                min_separation=self.params.pose_reset.min_separation,
                 group_key="manipulation_objects",
             )
 
@@ -169,13 +172,48 @@ class PlaceA2BTask(TaskBase):
                     SceneEntityCfg(name=n) for n in non_pool_actor_names
                 ],
                 trigger_topic="reset",
-                mode=self.params.mode,
-                pose_range=dict(self.params.pose_range),
+                mode=self.params.pose_reset.mode,
+                pose_range=dict(self.params.pose_reset.pose_range),
                 absolute_sampling=True,
-                min_separation=self.params.min_separation,
+                min_separation=self.params.pose_reset.min_separation,
                 max_retries=256,
                 group_key="manipulation_objects",
                 clear_cross_group_cache=clear_cache,
+            )
+
+        light_reset_cfg = self.params.light_reset
+        if light_reset_cfg is not None and light_reset_cfg.enabled:
+            terms["light_reset_event"] = LightResetTermCfg(
+                asset_cfgs=[
+                    SceneEntityCfg(name=name)
+                    for name in light_reset_cfg.asset_names
+                ],
+                trigger_topic="reset",
+                randomize_color=light_reset_cfg.randomize_color,
+                color_temperature_range=(
+                    light_reset_cfg.color_temperature_range
+                ),
+                rgb_noise=light_reset_cfg.rgb_noise,
+                randomize_intensity=light_reset_cfg.randomize_intensity,
+                intensity_range=light_reset_cfg.intensity_range,
+                randomize_position=light_reset_cfg.randomize_position,
+                position_cfg=light_reset_cfg.position_cfg,
+                crazy_randomization_rate=(
+                    light_reset_cfg.crazy_randomization_rate
+                ),
+            )
+
+        texture_reset_cfg = self.params.texture_reset
+        if texture_reset_cfg is not None and texture_reset_cfg.enabled:
+            terms["texture_reset_event"] = TextureResetTermCfg(
+                asset_cfgs=[
+                    SceneEntityCfg(name=name)
+                    for name in texture_reset_cfg.asset_names
+                ],
+                trigger_topic="reset",
+                variant_set_name=texture_reset_cfg.variant_set_name,
+                variant_sort=texture_reset_cfg.variant_sort,
+                variant_index_range=texture_reset_cfg.variant_index_range,
             )
 
         return EventManagerCfg(terms=terms)
