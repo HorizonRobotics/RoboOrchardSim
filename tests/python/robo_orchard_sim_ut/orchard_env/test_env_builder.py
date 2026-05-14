@@ -80,7 +80,14 @@ from robo_orchard_sim.orchard_env.tasks.task_params import (
 from robo_orchard_sim.task_suite.manipulation.place_a2b import (
     PlaceA2BEasyTaskDefinition,
 )
-from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
+from robo_orchard_sim.tasks.validators.base import (
+    Validator,
+    ValidatorActor,
+)
+from robo_orchard_sim.tasks.validators.context import (
+    ValidatorContext,
+    ValidatorRobotContext,
+)
 
 
 def _make_asset_cfg(name: str) -> AssetBaseCfg:
@@ -174,7 +181,12 @@ class DummyTask(TaskBase):
             "objects/place_object",
         ]
 
-    def build_validator(self, actors: list[ValidatorActor]) -> Validator:
+    def build_validator(
+        self,
+        actors: list[ValidatorActor],
+        context=None,
+    ) -> Validator:
+        del context
         return Validator(
             actors=actors,
             criteria=[],
@@ -253,7 +265,7 @@ class _DummyRobotData:
         self.body_com_pos_w = torch.tensor(
             [[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]], dtype=torch.float32
         )
-        self.joint_pos = torch.zeros((1, 2), dtype=torch.float32)
+        self.joint_pos = torch.zeros((1, 4), dtype=torch.float32)
 
 
 class _DummyRobot:
@@ -265,12 +277,30 @@ class _DummyRobot:
         return [body_names.index(name)], [name]
 
     def find_joints(self, name: str):
-        joint_names = ["left_joint7", "right_joint7"]
+        joint_names = [
+            "left_joint7",
+            "left_joint8",
+            "right_joint7",
+            "right_joint8",
+        ]
         return [joint_names.index(name)], [name]
 
-    def set_gripper_positions(self, left: float, right: float) -> None:
+    def set_gripper_positions(
+        self,
+        left: float,
+        right: float,
+        *,
+        left_mirror: float | None = None,
+        right_mirror: float | None = None,
+    ) -> None:
         self.data.joint_pos[0] = torch.tensor(
-            [left, right], dtype=torch.float32
+            [
+                left,
+                left_mirror if left_mirror is not None else -left,
+                right,
+                right_mirror if right_mirror is not None else -right,
+            ],
+            dtype=torch.float32,
         )
 
 
@@ -406,7 +436,14 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
                 category="place",
                 actor_type="place",
             ),
-        ]
+        ],
+        context=ValidatorContext(
+            robot=ValidatorRobotContext(
+                robot_name="robots/dualarm_piper",
+                ee_links=("left_link6", "right_link6"),
+                gripper_links=("left_joint7", "right_joint7"),
+            )
+        ),
     )
     env = _make_validator_env()
     pick_object = env.scene["objects/pick_object"]

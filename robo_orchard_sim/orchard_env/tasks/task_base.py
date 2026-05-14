@@ -49,6 +49,7 @@ if TYPE_CHECKING:
         Validator,
         ValidatorActor,
     )
+    from robo_orchard_sim.tasks.validators.context import ValidatorContext
 
 
 class TaskAssetsBase(Config):
@@ -227,6 +228,7 @@ class TaskBase(ABC):
     def build_validator(
         self,
         actors: list["ValidatorActor"],
+        context: "ValidatorContext | None" = None,
     ) -> "Validator":
         """Build the task validator used for evaluation.
 

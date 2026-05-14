@@ -37,6 +37,9 @@ from robo_orchard_sim.tasks.validators.base import (
     ValidatorActor,
     ValidatorOutput,
 )
+from robo_orchard_sim.tasks.validators.context import (
+    build_validator_context,
+)
 
 if TYPE_CHECKING:
     from robo_orchard_sim.envs.env_base import IsaacEnvContextManager
@@ -349,7 +352,13 @@ class Evaluator:
         self,
         actors: list[ValidatorActor],
     ) -> Validator:
-        return self._get_runtime_task().build_validator(actors=actors)
+        if self._task is None:
+            self._ensure_env()
+        assert self._task is not None
+        return self._get_runtime_task().build_validator(
+            actors=actors,
+            context=build_validator_context(self._task.embodiment),
+        )
 
     def _normalize_policy(
         self,

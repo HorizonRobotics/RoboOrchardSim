@@ -53,8 +53,12 @@ from robo_orchard_sim.tasks.instructions.base import (
     InstructionActor,
     InstructionWrapper,
 )
-from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
+from robo_orchard_sim.tasks.validators.base import (
+    Validator,
+    ValidatorActor,
+)
 from robo_orchard_sim.tasks.validators.checkers import lift, reach
+from robo_orchard_sim.tasks.validators.context import ValidatorContext
 
 
 class PickTaskParams(Config):
@@ -169,14 +173,28 @@ class PickTask(TaskBase):
         """Return scene actors used by the pick validator."""
         return [self.pick_object.scene_name]
 
-    def build_validator(self, actors: list[ValidatorActor]) -> Validator:
+    def build_validator(
+        self,
+        actors: list[ValidatorActor],
+        context: ValidatorContext | None = None,
+    ) -> Validator:
         """Build the task validator for pick evaluation."""
+        if context is None or context.robot is None:
+            raise ValueError(
+                "PickTask.build_validator() requires ValidatorContext "
+                "with robot data."
+            )
         actors_by_name = {actor.name: actor for actor in actors}
         pick_actor = actors_by_name[self.pick_object.scene_name]
         return Validator(
             actors=actors,
             criteria=[
-                reach(pick_actor.name, 0.2),
+                reach(
+                    pick_actor.name,
+                    0.2,
+                    robot_name=context.robot.robot_name,
+                    ee_links=context.robot.ee_links,
+                ),
                 (lift(pick_actor, 0.03), [0]),
             ],
             criteria_name=[

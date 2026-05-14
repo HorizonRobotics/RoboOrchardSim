@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 import torch
 
-from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
+from robo_orchard_sim.tasks.validators.base import (
+    Validator,
+    ValidatorActor,
+)
+from robo_orchard_sim.tasks.validators.context import build_validator_context
 
 
 class _DummyObjectData:
@@ -73,11 +77,57 @@ class _DummyScene(dict):
         self.stage = stage
 
 
+class _DummyManipulatorProfile:
+    def __init__(self, ee_body_name, gripper_joint_names=()):
+        self.ee_body_name = ee_body_name
+        self.gripper_joint_names = tuple(gripper_joint_names)
+
+
+class _DummyRobotInfo:
+    def __init__(self, manipulator_profile, gripper_open_val):
+        self.manipulator_profile = manipulator_profile
+        self.gripper_open_val = list(gripper_open_val)
+
+
+class _DummyEmbodiment:
+    scene_name = "robots/dualarm_piperx"
+
+    def get_robot_info_cfgs(self):
+        return {
+            "left_arm": _DummyRobotInfo(
+                _DummyManipulatorProfile(
+                    ee_body_name="left_link6",
+                    gripper_joint_names=("left_joint7", "left_joint8"),
+                ),
+                gripper_open_val=[0.05, -0.05],
+            ),
+            "right_arm": _DummyRobotInfo(
+                _DummyManipulatorProfile(
+                    ee_body_name="right_link6",
+                    gripper_joint_names=("right_joint7", "right_joint8"),
+                ),
+                gripper_open_val=[0.05, -0.05],
+            ),
+        }
+
+
 def test_checkers_can_be_imported_without_pxr():
     module = importlib.import_module(
         "robo_orchard_sim.tasks.validators.checkers"
     )
     assert hasattr(module, "lift")
+
+
+def test_build_validator_context_uses_runtime_embodiment_robot_metadata():
+    context = build_validator_context(_DummyEmbodiment())
+
+    assert context.robot is not None
+    assert context.robot.robot_name == "robots/dualarm_piperx"
+    assert context.robot.ee_links == ("left_link6", "right_link6")
+    assert context.robot.gripper_links == (
+        "left_joint7",
+        "right_joint7",
+    )
 
 
 def test_validator_forwards_env_idx_to_criteria():
@@ -322,6 +372,7 @@ def test_gripper_checkers_read_requested_env_index():
     both_checker = checkers.is_both_gripper_open(
         open_gripper_threshold=0.04,
         robot_name="robots/robot",
+        gripper_links=("left_joint7", "right_joint7"),
     )
 
     assert left_checker(env, env_idx=0) is False

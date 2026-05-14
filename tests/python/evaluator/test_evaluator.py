@@ -430,6 +430,7 @@ class _StubTask:
     success_steps: list[int]
     instruction: Any = None
     _validator_index: int = 0
+    validator_contexts: list[Any] = field(default_factory=list)
     pick_object: Any = field(
         default_factory=lambda: SimpleNamespace(scene_name="actor_a")
     )
@@ -440,9 +441,14 @@ class _StubTask:
     def get_validator_actor_names(self) -> list[str]:
         return ["actor_a", "actor_b"]
 
-    def build_validator(self, actors: list[ValidatorActor]) -> _StubValidator:
+    def build_validator(
+        self,
+        actors: list[ValidatorActor],
+        context: Any = None,
+    ) -> _StubValidator:
         success_step = self.success_steps[self._validator_index]
         self._validator_index += 1
+        self.validator_contexts.append(context)
         return _StubValidator(success_step=success_step, actors=actors)
 
     def build_instruction_context(
@@ -466,9 +472,44 @@ class _StubTask:
 
 
 @dataclass
+class _StubManipulatorProfile:
+    ee_body_name: str
+    gripper_joint_names: tuple[str, ...] = ()
+
+
+@dataclass
+class _StubRobotInfo:
+    manipulator_profile: _StubManipulatorProfile
+    gripper_open_val: list[float]
+
+
+class _StubEmbodiment:
+    scene_name = "robots/dualarm_piperx"
+
+    def get_robot_info_cfgs(self) -> dict[str, _StubRobotInfo]:
+        return {
+            "left_arm": _StubRobotInfo(
+                manipulator_profile=_StubManipulatorProfile(
+                    ee_body_name="left_link6",
+                    gripper_joint_names=("left_joint7", "left_joint8"),
+                ),
+                gripper_open_val=[0.05, -0.05],
+            ),
+            "right_arm": _StubRobotInfo(
+                manipulator_profile=_StubManipulatorProfile(
+                    ee_body_name="right_link6",
+                    gripper_joint_names=("right_joint7", "right_joint8"),
+                ),
+                gripper_open_val=[0.05, -0.05],
+            ),
+        }
+
+
+@dataclass
 class _StubOrchardEnv(OrchardEnv):
     env: _StubStepEnv
     success_steps: list[int]
+    embodiment: Any = field(default_factory=_StubEmbodiment)
     task: _StubTask = field(init=False)
     record_dir: str | None = None
 
@@ -763,6 +804,34 @@ class TestEvaluator:
             "success",
             "success",
         ]
+
+    def test_evaluate_single_episode_passes_runtime_robot_context_to_task(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        orchard_env = _StubOrchardEnv(
+            env=_StubStepEnv(episodes=[[_StepState()]]),
+            success_steps=[1],
+        )
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+        )()
+
+        evaluator.evaluate(_StubPolicy())
+
+        context = orchard_env.task.validator_contexts[0]
+        assert context is not None
+        assert context.robot is not None
+        assert context.robot.robot_name == "robots/dualarm_piperx"
+        assert context.robot.ee_links == ("left_link6", "right_link6")
+        assert context.robot.gripper_links == (
+            "left_joint7",
+            "right_joint7",
+        )
 
     def test_policy_is_reset_between_episodes(
         self,
@@ -1440,7 +1509,9 @@ class TestEvaluator:
             def build_validator(
                 self,
                 actors: list[ValidatorActor],
+                context: Any = None,
             ) -> _StubValidator:
+                del context
                 return _StubValidator(success_step=1, actors=actors)
 
             def build_instruction_context(

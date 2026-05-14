@@ -361,8 +361,8 @@ class BothGripperOpenChecker(CheckerBase):
 def reach(
     actor_name,
     threshold=0.05,
-    robot_name: str = "robots/dualarm_piper",
-    ee_links: Sequence[str] = ("left_link6", "right_link6"),
+    robot_name: str = "",
+    ee_links: Sequence[str] = (),
 ):
     """Create a reach checker for object and robot identifiers."""
     return ReachChecker(
@@ -388,8 +388,8 @@ def is_within_xy(
     actor1,
     actor2,
     open_gripper_threshold=None,
-    robot_name: str = "robots/dualarm_piper",
-    gripper_links: Sequence[str] = ("left_joint7", "right_joint7"),
+    robot_name: str = "",
+    gripper_links: Sequence[str] = (),
 ):
     """Create an XY containment checker for object identifiers."""
     return WithinXYChecker(
@@ -406,8 +406,8 @@ def is_alignment_xy(
     actor2,
     eps=(0.02, 0.02),
     open_gripper_threshold=None,
-    robot_name: str = "robots/dualarm_piper",
-    gripper_links: Sequence[str] = ("left_joint7", "right_joint7"),
+    robot_name: str = "",
+    gripper_links: Sequence[str] = (),
 ):
     """Create an XY alignment checker for object identifiers."""
     return AlignmentXYChecker(
@@ -426,8 +426,8 @@ def is_alignment_xyz(
     eps=(0.025, 0.025, 0.0120),
     target_height_offset: float = 0.04,
     open_gripper_threshold=None,
-    robot_name: str = "robots/dualarm_piper",
-    gripper_links: Sequence[str] = ("left_joint7", "right_joint7"),
+    robot_name: str = "",
+    gripper_links: Sequence[str] = (),
 ):
     """Create an XYZ alignment checker with actor identifiers.
 
@@ -448,7 +448,7 @@ def is_alignment_xyz(
 def is_gripper_open(
     arm: Literal["left", "right"],
     open_gripper_threshold: float,
-    robot_name: str = "robots/dualarm_piper",
+    robot_name: str = "",
     gripper_link: str | None = None,
 ):
     """Create a single-arm gripper-open checker.
@@ -467,8 +467,8 @@ def is_gripper_open(
 
 def is_both_gripper_open(
     open_gripper_threshold: float,
-    robot_name: str = "robots/dualarm_piper",
-    gripper_links: Sequence[str] = ("left_joint7", "right_joint7"),
+    robot_name: str = "",
+    gripper_links: Sequence[str] = (),
 ):
     """Create a checker for opening both grippers on one robot identifier."""
     return BothGripperOpenChecker(

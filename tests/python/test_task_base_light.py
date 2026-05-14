@@ -109,8 +109,12 @@ def test_task_base_subclass_without_instruction_can_be_instantiated(
         def get_validator_actor_names(self) -> list[str]:
             return []
 
-        def build_validator(self, actors: list[object]) -> Validator:
-            del actors
+        def build_validator(
+            self,
+            actors: list[object],
+            context=None,
+        ) -> Validator:
+            del actors, context
             return Validator(
                 actors=[],
                 criteria=[],

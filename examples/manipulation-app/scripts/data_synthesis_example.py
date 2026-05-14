@@ -239,6 +239,7 @@ class DataSynthesisRunner:
             validator = self.build_validator(
                 runtime_task=orchard_env.task,
                 actors=actors,
+                embodiment=orchard_env.embodiment,
             )
             validator.reset()
             self.capture_init_states(scene=env.scene, actors=actors)
@@ -438,9 +439,22 @@ class DataSynthesisRunner:
             for name in actor_names
         ]
 
-    def build_validator(self, *, runtime_task: Any, actors: list[Any]) -> Any:
+    def build_validator(
+        self,
+        *,
+        runtime_task: Any,
+        actors: list[Any],
+        embodiment: Any,
+    ) -> Any:
         """Build the task validator bound to the current actor snapshots."""
-        return runtime_task.build_validator(actors=actors)
+        from robo_orchard_sim.tasks.validators.context import (
+            build_validator_context,
+        )
+
+        return runtime_task.build_validator(
+            actors=actors,
+            context=build_validator_context(embodiment),
+        )
 
     def capture_init_states(self, *, scene: Any, actors: list[Any]) -> None:
         """Capture initial validator actor states from the runtime scene."""
