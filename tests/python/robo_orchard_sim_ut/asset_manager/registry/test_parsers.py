@@ -249,3 +249,19 @@ def test_parse_aabb_malformed_logs_warning(make_urdf):
     assert parsed.aabb_min is None
     assert parsed.aabb_max is None
     assert any("aabb" in w.lower() for w in parsed.warnings)
+
+
+def test_parse_caption_link_present(make_urdf):
+    """URDF with <caption_candidates> -> caption_link holds the text."""
+    text = make_urdf(caption_link="./caption_candidates_updated.json")
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.caption_link == "./caption_candidates_updated.json"
+
+
+def test_parse_caption_link_absent(make_urdf):
+    """URDF without <caption_candidates> -> caption_link is None."""
+    text = make_urdf()
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.caption_link is None

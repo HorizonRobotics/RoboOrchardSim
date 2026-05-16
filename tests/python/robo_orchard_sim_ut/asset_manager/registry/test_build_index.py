@@ -111,6 +111,35 @@ def test_parquet_caption_path_defaults_to_asset_local_json(
     assert row.caption_path == str(expected)
 
 
+def test_parquet_caption_path_follows_urdf_link(tmp_path: Path, make_urdf):
+    """URDF <caption_candidates>./X.json</> -> caption_path under asset_dir."""
+    import json
+
+    asset_dir = tmp_path / "food" / "fruits" / "apple_001"
+    asset_dir.mkdir(parents=True)
+    urdf_text = make_urdf(
+        uuid="u-apple-link-001",
+        domain="food",
+        super_category="fruits",
+        category="apple",
+        caption_link="./caption_candidates_updated.json",
+    )
+    # make_urdf hardcodes the asset name "fork_001"; rewrite to apple_001
+    urdf_text = urdf_text.replace("fork_001", "apple_001")
+    (asset_dir / "apple_001.urdf").write_text(urdf_text)
+    (asset_dir / "apple_001.usd").write_text("fake-usd")
+    (asset_dir / "interaction.json").write_text(
+        json.dumps({"interaction": {}})
+    )
+
+    build_asset_index(str(tmp_path))
+    table = pq.read_table(tmp_path / "asset_index.parquet")
+    df = table.to_pandas()
+    row = df[df.asset_id == "apple_001"].iloc[0]
+    expected = asset_dir / "caption_candidates_updated.json"
+    assert row.caption_path == str(expected)
+
+
 def test_box_001_has_both_tags(mini_asset_root: Path):
     build_asset_index(str(mini_asset_root))
     table = pq.read_table(mini_asset_root / "asset_index.parquet")
@@ -171,8 +200,8 @@ def test_default_cache_index_path_resolves_relative(
 
 
 def test_duplicate_asset_id_raises(tmp_path: Path, mini_asset_root: Path):
-    # Create a second apple_001 in a different subpath
-    dup_dir = mini_asset_root / "duplicates/apple_001"
+    # Create a second apple_001 in a different super_category subpath
+    dup_dir = mini_asset_root / "food/duplicates/apple_001"
     dup_dir.mkdir(parents=True)
     src = mini_asset_root / "food/fruits/apple_001"
     for f in src.iterdir():
@@ -214,7 +243,7 @@ def test_cli_runs_on_mini_asset_root(mini_asset_root: Path):
 
 
 def test_cli_nonzero_on_duplicate(mini_asset_root: Path):
-    dup = mini_asset_root / "dups/apple_001"
+    dup = mini_asset_root / "food/dups/apple_001"
     dup.mkdir(parents=True)
     src = mini_asset_root / "food/fruits/apple_001"
     for f in src.iterdir():

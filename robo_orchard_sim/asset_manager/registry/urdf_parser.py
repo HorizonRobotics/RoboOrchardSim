@@ -56,6 +56,7 @@ class ParsedUrdf:
     tags: frozenset[str] = field(default_factory=frozenset)
     aabb_min: tuple[float, float, float] | None = None
     aabb_max: tuple[float, float, float] | None = None
+    caption_link: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -177,6 +178,10 @@ def parse_urdf_extra_info(
         else:
             out.aabb_min = amin
             out.aabb_max = amax
+
+    caption_link_text = _text(extra.find("caption_candidates"))
+    if caption_link_text:
+        out.caption_link = caption_link_text
 
     mass_elem = root.find(".//inertial/mass")
     if mass_elem is not None and "value" in mass_elem.attrib:

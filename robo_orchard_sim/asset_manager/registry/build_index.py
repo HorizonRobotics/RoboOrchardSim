@@ -220,7 +220,11 @@ def _row_from_parsed(
         "usd_path": str(asset_dir / f"{asset_id}.usd"),
         "urdf_path": str(asset_dir / f"{asset_id}.urdf"),
         "interaction_path": str(asset_dir / "interaction.json"),
-        "caption_path": str(asset_dir / "caption_candidates.json"),
+        "caption_path": str(
+            asset_dir / parsed.caption_link
+            if parsed.caption_link
+            else asset_dir / "caption_candidates.json"
+        ),
         "aabb_x_min": aabb_x_min,
         "aabb_x_max": aabb_x_max,
         "aabb_y_min": aabb_y_min,

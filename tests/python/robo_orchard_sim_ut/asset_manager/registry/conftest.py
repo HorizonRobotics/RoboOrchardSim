@@ -39,6 +39,7 @@ def _urdf(
     tags: tuple[str, ...] = (),
     aabb_min: tuple[float, float, float] | None = None,
     aabb_max: tuple[float, float, float] | None = None,
+    caption_link: str | None = None,
 ) -> str:
     tags_csv = ", ".join(tags)
     if aabb_min is not None and aabb_max is not None:
@@ -52,6 +53,11 @@ def _urdf(
         )
     else:
         aabb_block = ""
+    caption_block = (
+        f"      <caption_candidates>{caption_link}</caption_candidates>\n    "
+        if caption_link is not None
+        else ""
+    )
     return dedent(
         f"""<?xml version='1.0' encoding='utf-8'?>
         <robot name="{name}">
@@ -80,7 +86,7 @@ def _urdf(
               <version>v0.1.0</version>
               <generate_time>20260414000000</generate_time>
               <tags>{tags_csv}</tags>
-        {aabb_block}</extra_info>
+        {aabb_block}{caption_block}</extra_info>
           </link>
         </robot>
         """
@@ -189,7 +195,7 @@ def mini_asset_root(tmp_path: Path) -> Path:
     )
     _write_asset(
         root,
-        "containers/plate_001",
+        "containers/dishware/plate_001",
         _urdf(
             "plate_001",
             uuid="u-plate-001",
@@ -205,7 +211,7 @@ def mini_asset_root(tmp_path: Path) -> Path:
     )
     _write_asset(
         root,
-        "misc/box_001",
+        "misc/boxes/box_001",
         _urdf(
             "box_001",
             uuid="u-box-001",
@@ -220,7 +226,7 @@ def mini_asset_root(tmp_path: Path) -> Path:
     )
     _write_asset(
         root,
-        "misc/broken_001",
+        "misc/boxes/broken_001",
         _urdf(
             "broken_001",
             uuid="u-broken-001",
