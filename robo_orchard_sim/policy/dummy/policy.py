@@ -24,12 +24,16 @@ import torch
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
+from robo_orchard_sim.policy.schema import CanonicalPolicyInput
+
 __all__ = ["DummyPolicy", "DummyPolicyCfg"]
 
 DummyAction = dict[str, torch.Tensor] | torch.Tensor
 
 
-class DummyPolicy(PolicyMixin[dict[str, Any], DummyAction]):
+class DummyPolicy(
+    PolicyMixin[dict[str, Any] | CanonicalPolicyInput, DummyAction]
+):
     """Policy that emits fixed actions for end-to-end flow tests."""
 
     cfg: "DummyPolicyCfg"
@@ -54,7 +58,7 @@ class DummyPolicy(PolicyMixin[dict[str, Any], DummyAction]):
         self._cached_action = None
         self._remaining_inference_steps = 0
 
-    def act(self, obs: dict[str, Any]) -> DummyAction:
+    def act(self, obs: dict[str, Any] | CanonicalPolicyInput) -> DummyAction:
         """Return a fixed action payload.
 
         Args:
@@ -64,8 +68,16 @@ class DummyPolicy(PolicyMixin[dict[str, Any], DummyAction]):
         Returns:
             DummyAction: A fixed action tensor or action dict.
         """
-        left_joint_position = obs["/robot"]["left_joint_position"]
-        device = left_joint_position.device
+        if isinstance(obs, CanonicalPolicyInput):
+            try:
+                manipulator = next(iter(obs.manipulators.values()))
+            except StopIteration:
+                device = torch.device("cpu")
+            else:
+                device = manipulator["joint_position"].device
+        else:
+            left_joint_position = obs["/robot"]["left_joint_position"]
+            device = left_joint_position.device
 
         actions = {
             "left_robot_joint_position": torch.tensor(

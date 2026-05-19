@@ -31,6 +31,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from robo_orchard_sim.policy.action_layout import compile_action_layout
 from robo_orchard_sim.policy.factory import create_policy_from_model_cfg
 from robo_orchard_sim.policy.openpi import policy as openpi_policy_module
 from robo_orchard_sim.policy.openpi.adapter import OpenPiAdapter
@@ -44,6 +45,64 @@ from robo_orchard_sim.policy.openpi.policy import (
     OpenPiPolicy,
     OpenPiPolicyCfg,
 )
+from robo_orchard_sim.policy.schema import (
+    CameraBinding,
+    CanonicalPolicyInput,
+    ManipulatorBinding,
+    PolicyBindingSchema,
+)
+
+
+def _build_dualarm_schema() -> PolicyBindingSchema:
+    return PolicyBindingSchema(
+        schema_version="1",
+        embodiment_type="dualarm_piper",
+        camera_slots={
+            "left_wrist": CameraBinding(obs_term="left_hand_camera_term"),
+            "right_wrist": CameraBinding(obs_term="right_hand_camera_term"),
+            "base": CameraBinding(obs_term="static_camera_term"),
+        },
+        manipulator_slots={
+            "left_arm": ManipulatorBinding(
+                joint_position_obs_key="left_joint_position",
+                arm_joint_name_specs=("left_joint[1-6]",),
+                gripper_joint_name_specs=("left_joint[7-8]",),
+                gripper_decode_coupling="mirrored",
+                gripper_policy_scale=2.0,
+            ),
+            "right_arm": ManipulatorBinding(
+                joint_position_obs_key="right_joint_position",
+                arm_joint_name_specs=("right_joint[1-6]",),
+                gripper_joint_name_specs=("right_joint[7-8]",),
+                gripper_decode_coupling="mirrored",
+                gripper_policy_scale=2.0,
+            ),
+        },
+    )
+
+
+def _build_franka_schema() -> PolicyBindingSchema:
+    return PolicyBindingSchema(
+        schema_version="1",
+        embodiment_type="franka_panda",
+        camera_slots={
+            "wrist": CameraBinding(obs_term="hand_camera_term"),
+            "base": CameraBinding(obs_term="static_camera_term"),
+        },
+        manipulator_slots={
+            "single_arm": ManipulatorBinding(
+                joint_position_obs_key="joint_position",
+                arm_joint_name_specs=("panda_joint[1-7]",),
+                gripper_joint_name_specs=(
+                    "panda_finger_joint1",
+                    "panda_finger_joint2",
+                ),
+                gripper_policy_representation="first_joint",
+                gripper_decode_coupling="symmetric",
+                gripper_policy_scale=2.0,
+            )
+        },
+    )
 
 
 def _camera_cfg(size: tuple[int, int]) -> dict[str, Any]:
@@ -60,6 +119,15 @@ def _camera_cfg(size: tuple[int, int]) -> dict[str, Any]:
     }
 
 
+def test_openpi_policy_requirement_declares_broad_contract() -> None:
+    requirement = OpenPiPolicy.policy_requirement()
+
+    assert requirement.required_camera_modalities == ("rgb", "intrinsic")
+    assert requirement.min_camera_count == 1
+    assert requirement.min_manipulator_count == 1
+    assert requirement.require_instruction is True
+
+
 class _Sensor:
     def __init__(
         self,
@@ -70,7 +138,7 @@ class _Sensor:
         self.intrinsic_matrices = intrinsic_matrices
 
 
-def _build_obs(batch_size: int = 1) -> dict[str, Any]:
+def _build_obs(batch_size: int = 1) -> CanonicalPolicyInput:
     rgb = torch.tensor(
         [[[[10, 20, 30], [40, 50, 60]]]],
         dtype=torch.uint8,
@@ -79,24 +147,56 @@ def _build_obs(batch_size: int = 1) -> dict[str, Any]:
         torch.eye(3, dtype=torch.float32).unsqueeze(0).repeat(batch_size, 1, 1)
     )
     camera_obs = {"rgb": _Sensor(rgb, intrinsic)}
-    return {
-        "/camera": {
-            "left_hand_camera_term": camera_obs,
-            "right_hand_camera_term": camera_obs,
-            "static_camera_term": camera_obs,
+    return CanonicalPolicyInput(
+        cameras={
+            "left_wrist": camera_obs,
+            "right_wrist": camera_obs,
+            "base": camera_obs,
         },
-        "/robot": {
-            "left_joint_position": torch.tensor(
-                [[1, 2, 3, 4, 5, 6, 0.2]],
-                dtype=torch.float32,
-            ).repeat(batch_size, 1),
-            "right_joint_position": torch.tensor(
-                [[7, 8, 9, 10, 11, 12, -0.4]],
-                dtype=torch.float32,
-            ).repeat(batch_size, 1),
+        manipulators={
+            "left_arm": {
+                "joint_position": torch.tensor(
+                    [[1, 2, 3, 4, 5, 6, 0.2]],
+                    dtype=torch.float32,
+                ).repeat(batch_size, 1),
+            },
+            "right_arm": {
+                "joint_position": torch.tensor(
+                    [[7, 8, 9, 10, 11, 12, -0.4]],
+                    dtype=torch.float32,
+                ).repeat(batch_size, 1),
+            },
         },
-        "instruction": "pick apple",
-    }
+        instruction="pick apple",
+        action_layout=compile_action_layout(_build_dualarm_schema()),
+    )
+
+
+def _build_single_arm_obs(batch_size: int = 1) -> CanonicalPolicyInput:
+    rgb = torch.tensor(
+        [[[[10, 20, 30], [40, 50, 60]]]],
+        dtype=torch.uint8,
+    ).repeat(batch_size, 1, 1, 1)
+    intrinsic = (
+        torch.eye(3, dtype=torch.float32).unsqueeze(0).repeat(batch_size, 1, 1)
+    )
+    camera_obs = {"rgb": _Sensor(rgb, intrinsic)}
+    return CanonicalPolicyInput(
+        cameras={
+            "wrist": camera_obs,
+            "base": camera_obs,
+        },
+        manipulators={
+            "single_arm": {
+                "joint_position": torch.tensor(
+                    [[1, 2, 3, 4, 5, 6, 7, 0.1]],
+                    dtype=torch.float32,
+                ).repeat(batch_size, 1),
+            },
+        },
+        instruction="pick apple",
+        action_layout=compile_action_layout(_build_franka_schema()),
+    )
 
 
 class _FakeOpenPiPolicy:
@@ -424,25 +524,26 @@ def test_openpi_adapter_build_action_sequence_given_valid_actions_splits() -> (
 
     sequence = adapter.build_action_sequence(
         actions,
+        _build_obs(),
         device="cpu",
         valid_action_step=None,
     )
 
     assert len(sequence) == 2
     torch.testing.assert_close(
-        sequence[0]["left_robot_joint_position"],
+        sequence[0].select("left_joint[1-6]"),
         torch.tensor([[1, 2, 3, 4, 5, 6]], dtype=torch.float32),
     )
     torch.testing.assert_close(
-        sequence[0]["right_robot_joint_position"],
+        sequence[0].select("right_joint[1-6]"),
         torch.tensor([[7, 8, 9, 10, 11, 12]], dtype=torch.float32),
     )
     torch.testing.assert_close(
-        sequence[0]["left_robot_gripper_control"],
+        sequence[0].select("left_joint7", "left_joint8"),
         torch.tensor([[0.2, -0.2]], dtype=torch.float32),
     )
     torch.testing.assert_close(
-        sequence[0]["right_robot_gripper_control"],
+        sequence[0].select("right_joint7", "right_joint8"),
         torch.tensor([[-0.1, 0.1]], dtype=torch.float32),
     )
 
@@ -489,9 +590,66 @@ def test_openpi_adapter_build_model_input_given_valid_obs_returns_input() -> (
 def test_openpi_adapter_build_model_input_missing_instruction_raises() -> None:
     adapter = OpenPiAdapter(joint_num=7)
     obs = _build_obs()
-    obs.pop("instruction")
+    obs = obs.model_copy(update={"instruction": None})
 
     with pytest.raises(ValueError, match="requires instruction"):
+        adapter.build_model_input(obs)
+
+
+def test_openpi_adapter_single_arm_obs_returns_model_input() -> None:
+    adapter = OpenPiAdapter(joint_num=8)
+
+    model_input = adapter.build_model_input(_build_single_arm_obs())
+
+    assert set(model_input) == {"image", "image_mask", "state", "prompt"}
+    assert model_input["prompt"] == "pick apple"
+    assert model_input["image_mask"] == {
+        "left_wrist_0_rgb": np.True_,
+        "right_wrist_0_rgb": np.False_,
+        "base_0_rgb": np.True_,
+    }
+    assert (
+        model_input["image"]["right_wrist_0_rgb"].shape
+        == model_input["image"]["left_wrist_0_rgb"].shape
+    )
+    assert (
+        model_input["image"]["right_wrist_0_rgb"].dtype
+        == model_input["image"]["left_wrist_0_rgb"].dtype
+    )
+    np.testing.assert_array_equal(
+        model_input["image"]["right_wrist_0_rgb"],
+        np.zeros_like(model_input["image"]["left_wrist_0_rgb"]),
+    )
+    np.testing.assert_allclose(
+        model_input["state"],
+        np.array([1, 2, 3, 3.14, 3.14, 3.14, 3.14, 0.2]),
+    )
+
+
+def test_openpi_adapter_dualarm_missing_right_camera_raises() -> None:
+    adapter = OpenPiAdapter(joint_num=7)
+    obs = _build_obs()
+    del obs.cameras["right_wrist"]
+
+    with pytest.raises(ValueError, match="requires canonical camera slot"):
+        adapter.build_model_input(obs)
+
+
+def test_openpi_adapter_single_arm_missing_base_camera_raises() -> None:
+    adapter = OpenPiAdapter(joint_num=8)
+    obs = _build_single_arm_obs()
+    del obs.cameras["base"]
+
+    with pytest.raises(ValueError, match="requires canonical camera slot"):
+        adapter.build_model_input(obs)
+
+
+def test_openpi_adapter_missing_manipulator_slot_raises_value_error() -> None:
+    adapter = OpenPiAdapter(joint_num=7)
+    obs = _build_obs()
+    del obs.manipulators["right_arm"]
+
+    with pytest.raises(ValueError, match="missing manipulator slots"):
         adapter.build_model_input(obs)
 
 
@@ -504,9 +662,9 @@ def test_openpi_policy_act_given_cached_actions_reuses_inference(
     second = policy.act(_build_obs())
     third = policy.act(_build_obs())
 
-    assert first["left_robot_joint_position"][0, 0].item() == 11.0
-    assert second["left_robot_joint_position"][0, 0].item() == 12.0
-    assert third["left_robot_joint_position"][0, 0].item() == 21.0
+    assert first.select("left_joint1")[0, 0].item() == 11.0
+    assert second.select("left_joint1")[0, 0].item() == 12.0
+    assert third.select("left_joint1")[0, 0].item() == 21.0
 
 
 def test_openpi_policy_act_sequence_returns_refreshed_sequence(
@@ -518,9 +676,9 @@ def test_openpi_policy_act_sequence_returns_refreshed_sequence(
     next_action = policy.act(_build_obs())
 
     assert len(sequence) == 2
-    assert sequence[0]["left_robot_joint_position"][0, 0].item() == 11.0
-    assert sequence[1]["left_robot_joint_position"][0, 0].item() == 12.0
-    assert next_action["left_robot_joint_position"][0, 0].item() == 21.0
+    assert sequence[0].select("left_joint1")[0, 0].item() == 11.0
+    assert sequence[1].select("left_joint1")[0, 0].item() == 12.0
+    assert next_action.select("left_joint1")[0, 0].item() == 21.0
 
 
 def test_openpi_policy_act_given_multi_env_obs_raises_value_error(
@@ -530,6 +688,37 @@ def test_openpi_policy_act_given_multi_env_obs_raises_value_error(
 
     with pytest.raises(ValueError, match="single environment"):
         policy.act(_build_obs(batch_size=2))
+
+
+def test_openpi_policy_act_given_single_arm_obs_returns_single_arm_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_openpi_runtime(
+        monkeypatch,
+        policy_factory=_FakeOpenPiPolicy,
+    )
+    cfg = OpenPiPolicyCfg(
+        model=OpenPiModelConfig(
+            model_type="pi05",
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        inference=OpenPiInferenceConfig(norm_stats_name="pi05"),
+        model_dir="/tmp/pi-checkpoint",
+        joint_num=8,
+    )
+    policy = OpenPiPolicy(cfg=cfg)
+
+    action = policy.act(_build_single_arm_obs())
+
+    torch.testing.assert_close(
+        action.select("panda_joint[1-7]"),
+        torch.tensor([[11, 2, 3, 4, 5, 6, 0.4]], dtype=torch.float32),
+    )
+    torch.testing.assert_close(
+        action.select("panda_finger_joint1", "panda_finger_joint2"),
+        torch.tensor([[8.5, 8.5]], dtype=torch.float32),
+    )
 
 
 def test_create_policy_from_model_cfg_openpi_camera_cfg_returns_cfg() -> None:

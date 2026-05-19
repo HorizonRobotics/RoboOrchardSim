@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 # Project RoboOrchard
 #
 # Copyright (c) 2026 Horizon Robotics. All Rights Reserved.
@@ -15,6 +16,7 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
+import asyncio
 import importlib
 import json
 import struct
@@ -24,11 +26,73 @@ import types
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
 import torch
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
+from robo_orchard_sim.policy.action_layout import compile_action_layout
+from robo_orchard_sim.policy.schema import (
+    CameraBinding,
+    CanonicalPolicyInput,
+    ManipulatorBinding,
+    PolicyBindingSchema,
+)
+
+
+def _build_dualarm_schema() -> PolicyBindingSchema:
+    return PolicyBindingSchema(
+        schema_version="1",
+        embodiment_type="dualarm_piper",
+        camera_slots={
+            "left_wrist": CameraBinding(obs_term="left_hand_camera_term"),
+            "right_wrist": CameraBinding(obs_term="right_hand_camera_term"),
+            "base": CameraBinding(obs_term="static_camera_term"),
+        },
+        manipulator_slots={
+            "left_arm": ManipulatorBinding(
+                joint_position_obs_key="left_joint_position",
+                arm_joint_name_specs=("left_joint[1-6]",),
+                gripper_joint_name_specs=("left_joint[7-8]",),
+                gripper_decode_coupling="mirrored",
+                gripper_policy_scale=2.0,
+            ),
+            "right_arm": ManipulatorBinding(
+                joint_position_obs_key="right_joint_position",
+                arm_joint_name_specs=("right_joint[1-6]",),
+                gripper_joint_name_specs=("right_joint[7-8]",),
+                gripper_decode_coupling="mirrored",
+                gripper_policy_scale=2.0,
+            ),
+        },
+    )
+
+
+def _build_franka_schema() -> PolicyBindingSchema:
+    return PolicyBindingSchema(
+        schema_version="1",
+        embodiment_type="franka_panda",
+        camera_slots={
+            "wrist": CameraBinding(obs_term="hand_camera_term"),
+            "base": CameraBinding(obs_term="static_camera_term"),
+        },
+        manipulator_slots={
+            "single_arm": ManipulatorBinding(
+                joint_position_obs_key="joint_position",
+                arm_joint_name_specs=("panda_joint[1-7]",),
+                gripper_joint_name_specs=(
+                    "panda_finger_joint1",
+                    "panda_finger_joint2",
+                ),
+                gripper_policy_representation="first_joint",
+                gripper_decode_coupling="symmetric",
+                gripper_policy_scale=2.0,
+            )
+        },
+    )
 
 
 def load_factory_module():
@@ -101,6 +165,58 @@ def build_openpi_test_observation() -> dict:
     }
 
 
+def build_openpi_canonical_observation() -> CanonicalPolicyInput:
+    camera_obs = {
+        "rgb": Sensor(
+            torch.zeros((1, 2, 2, 3), dtype=torch.uint8),
+            intrinsic_matrices=torch.eye(3).unsqueeze(0),
+        ),
+        "depth": Sensor(torch.ones((1, 2, 2, 1))),
+    }
+    return CanonicalPolicyInput(
+        cameras={
+            "left_wrist": camera_obs,
+            "right_wrist": camera_obs,
+            "base": camera_obs,
+        },
+        manipulators={
+            "left_arm": {"joint_position": torch.ones((1, 7))},
+            "right_arm": {"joint_position": torch.ones((1, 7))},
+        },
+        instruction="pick apple",
+        action_layout=compile_action_layout(_build_dualarm_schema()),
+    )
+
+
+def build_single_arm_canonical_observation() -> CanonicalPolicyInput:
+    camera_obs = {
+        "rgb": Sensor(
+            torch.zeros((1, 2, 2, 3), dtype=torch.uint8),
+            intrinsic_matrices=torch.eye(3).unsqueeze(0),
+            pose=Pose(
+                xyz=torch.tensor([[1.0, 2.0, 3.0]]),
+                quat=torch.tensor([[1.0, 0.0, 0.0, 0.0]]),
+            ),
+        ),
+        "depth": Sensor(torch.ones((1, 2, 2, 1))),
+    }
+    return CanonicalPolicyInput(
+        cameras={
+            "wrist": camera_obs,
+            "base": camera_obs,
+        },
+        manipulators={
+            "single_arm": {
+                "joint_position": torch.tensor(
+                    [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.1]]
+                ),
+            }
+        },
+        instruction="pick apple",
+        action_layout=compile_action_layout(_build_franka_schema()),
+    )
+
+
 def install_fake_websocket_client(monkeypatch, fake_ws: Mock) -> Mock:
     connect = Mock(return_value=fake_ws)
     client_module = types.ModuleType("websockets.sync.client")
@@ -119,6 +235,10 @@ def encode_binary_message_for_test(payload: dict) -> bytes:
     tensors: list[bytes] = []
 
     def extract(value):
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            tensor_idx = len(tensors)
+            tensors.append(bytes(value))
+            return {"__bytes_idx__": tensor_idx}
         if isinstance(value, dict):
             if "__tensor__" in value:
                 tensor_payload = dict(value["__tensor__"])
@@ -157,6 +277,76 @@ def encode_binary_message_for_test(payload: dict) -> bytes:
     return struct.pack("!Q", len(header_json)) + header_json + tensor_blob
 
 
+def encode_value_for_test(value):
+    if isinstance(value, UnifiedJointCommand):
+        return {
+            "__joint_command__": {
+                "values": {
+                    "__tensor__": encode_tensor_payload_for_test(value.values)
+                },
+                "joint_names": list(value.joint_names),
+            }
+        }
+    if isinstance(value, torch.Tensor):
+        return {"__tensor__": encode_tensor_payload_for_test(value)}
+    if isinstance(value, dict):
+        return {
+            key: encode_value_for_test(item) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [encode_value_for_test(item) for item in value]
+    if isinstance(value, tuple):
+        return [encode_value_for_test(item) for item in value]
+    return value
+
+
+def encode_tensor_payload_for_test(tensor: torch.Tensor) -> dict:
+    cpu = tensor.detach().cpu().contiguous()
+    return {
+        "dtype": str(cpu.dtype).replace("torch.", ""),
+        "shape": list(cpu.shape),
+        "data": cpu.numpy().tobytes(),
+    }
+
+
+def extract_canonical_obs_data_for_test(
+    observations: CanonicalPolicyInput,
+) -> dict:
+    obs: dict = {
+        "format": "canonical",
+        "instruction": observations.instruction,
+    }
+    if observations.action_layout is not None:
+        obs["action_layout"] = observations.action_layout.to_payload()
+
+    cameras: dict = {}
+    for slot, camera_obs in observations.cameras.items():
+        cam: dict = {}
+        if "rgb" in camera_obs:
+            rgb = camera_obs["rgb"]
+            cam["rgb"] = encode_tensor_payload_for_test(rgb.sensor_data)
+            if rgb.intrinsic_matrices is not None:
+                cam["intrinsic_matrices"] = encode_tensor_payload_for_test(
+                    rgb.intrinsic_matrices
+                )
+            if rgb.pose is not None:
+                cam["pose"] = {
+                    "xyz": encode_tensor_payload_for_test(rgb.pose.xyz),
+                    "quat": encode_tensor_payload_for_test(rgb.pose.quat),
+                }
+        if "depth" in camera_obs:
+            cam["depth"] = encode_tensor_payload_for_test(
+                camera_obs["depth"].sensor_data
+            )
+        cameras[slot] = cam
+    obs["cameras"] = cameras
+    obs["manipulators"] = {
+        slot: encode_value_for_test(manipulator_obs)
+        for slot, manipulator_obs in observations.manipulators.items()
+    }
+    return obs
+
+
 def decode_binary_message_for_test(message: bytes) -> dict:
     header_len = struct.unpack("!Q", message[:8])[0]
     header_end = 8 + header_len
@@ -171,6 +361,8 @@ def decode_binary_message_for_test(message: bytes) -> dict:
 
     def inject(value):
         if isinstance(value, dict):
+            if "__bytes_idx__" in value:
+                return tensors[value["__bytes_idx__"]]
             if "__tensor__" in value:
                 tensor_payload = dict(value["__tensor__"])
                 tensor_payload["data"] = tensors[value["__tensor_idx__"]]
@@ -341,7 +533,17 @@ def test_policy_client_request_action_sequence_given_openpi_type_omits_depth(
     server_module = load_server_module()
     fake_ws.recv.return_value = encode_binary_message_for_test(
         {
-            "actions": [],
+            "actions": encode_value_for_test(
+                [
+                    UnifiedJointCommand.from_specs(
+                        torch.tensor(
+                            [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]],
+                            dtype=torch.float32,
+                        ),
+                        ["left_joint[1-6]"],
+                    )
+                ]
+            ),
             "logging_tag": "remote-eval",
         }
     )
@@ -352,14 +554,75 @@ def test_policy_client_request_action_sequence_given_openpi_type_omits_depth(
         remote_policy_type="openpi",
     )
 
-    client.request_action_sequence(build_openpi_test_observation())
+    sequence = client.request_action_sequence(
+        build_openpi_canonical_observation()
+    )
 
     request = decode_binary_message_for_test(fake_ws.send.call_args.args[0])
-    assert request["obs_data"]["format"] == "openpi"
-    compact_camera = request["obs_data"]["cameras"]["left_hand_camera_term"]
-    assert set(compact_camera) == {"rgb", "intrinsic_matrices"}
-    assert "depth" not in compact_camera
+    assert request["obs_data"]["format"] == "canonical"
+    compact_camera = request["obs_data"]["cameras"]["left_wrist"]
+    assert set(compact_camera) == {"depth", "intrinsic_matrices", "rgb"}
     assert "pose" not in compact_camera
+    assert sequence[0].select("left_joint1")[0, 0].item() == 1.0
+
+
+def test_policy_client_request_action_sequence_single_arm_openpi_keeps_layout(
+    monkeypatch,
+) -> None:
+    fake_ws = Mock()
+    server_module = load_server_module()
+    fake_ws.recv.return_value = encode_binary_message_for_test(
+        {
+            "actions": encode_value_for_test(
+                [
+                    UnifiedJointCommand.from_specs(
+                        torch.tensor(
+                            [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]],
+                            dtype=torch.float32,
+                        ),
+                        ["panda_joint[1-7]"],
+                    )
+                ]
+            ),
+            "logging_tag": "remote-eval",
+        }
+    )
+    install_fake_websocket_client(monkeypatch, fake_ws)
+    client = server_module.PolicyClient(
+        host="127.0.0.1",
+        port=8765,
+        remote_policy_type="openpi",
+    )
+
+    client.request_action_sequence(build_single_arm_canonical_observation())
+
+    request = decode_binary_message_for_test(fake_ws.send.call_args.args[0])
+    assert request["obs_data"]["format"] == "canonical"
+    assert request["obs_data"]["action_layout"]["manipulator_order"] == [
+        "single_arm"
+    ]
+    assert "camera_slots" not in request["obs_data"]["action_layout"]
+    assert "camera_order" not in request["obs_data"]["action_layout"]
+
+
+def test_policy_client_request_action_sequence_openpi_raw_obs_raises(
+    monkeypatch,
+) -> None:
+    fake_ws = Mock()
+    server_module = load_server_module()
+    install_fake_websocket_client(monkeypatch, fake_ws)
+    client = server_module.PolicyClient(
+        host="127.0.0.1",
+        port=8765,
+        remote_policy_type="openpi",
+    )
+
+    try:
+        client.request_action_sequence(build_openpi_test_observation())
+    except ValueError as exc:
+        assert "CanonicalPolicyInput" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for raw openpi observations")
 
 
 def test_server_policy_reset_given_remote_client_sends_reset_request(
@@ -434,3 +697,62 @@ def test_server_policy_act_given_cached_remote_sequence_reuses_local_cache(
     assert torch.equal(
         second["left_robot_joint_position"].cpu(), torch.full((1, 6), 2.0)
     )
+
+
+def test_policy_websocket_server_handle_canonical_obs_applies_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server_module = load_server_module()
+
+    class _CapturingPolicy:
+        def __init__(self) -> None:
+            self.observations = []
+
+        def act(self, observations):
+            self.observations.append(observations)
+            return UnifiedJointCommand.from_specs(
+                torch.tensor([[1.0]], dtype=torch.float32),
+                ["joint1"],
+            )
+
+        def reset(self) -> None:
+            return None
+
+    class _FakeWebsocket:
+        def __init__(self, message: bytes) -> None:
+            self.remote_address = ("127.0.0.1", 8765)
+            self._messages = [message]
+            self.sent = []
+
+        def __aiter__(self):
+            self._iter = iter(self._messages)
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+        async def send(self, message: bytes) -> None:
+            self.sent.append(message)
+
+    policy = _CapturingPolicy()
+    server = server_module.PolicyWebsocketServer(policy=policy)
+    websocket = _FakeWebsocket(
+        encode_binary_message_for_test(
+            {
+                "type": "act",
+                "obs_data": extract_canonical_obs_data_for_test(
+                    build_single_arm_canonical_observation()
+                ),
+                "instruction": "updated instruction",
+            }
+        )
+    )
+
+    asyncio.run(server.handle_client(websocket))
+
+    assert len(policy.observations) == 1
+    assert isinstance(policy.observations[0], CanonicalPolicyInput)
+    assert policy.observations[0].instruction == "updated instruction"

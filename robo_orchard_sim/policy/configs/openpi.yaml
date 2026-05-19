@@ -1,4 +1,5 @@
 # Set model_dir here or export ROBO_ORCHARD_OPENPI_MODEL_DIR.
+# INTERNAL
 model:
   # pi0 | pi05 | pi0_fast
   model_type: pi05

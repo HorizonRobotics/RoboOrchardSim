@@ -29,12 +29,16 @@ from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx.cfg import (
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx.profile import (
     DUALARM_PIPERX_ROBOT_INFO_CFGS,
 )
+from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx.schema import (
+    build_dualarm_piperx_policy_binding_schema,
+)
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     RobotInfoCfg,
 )
+from robo_orchard_sim.policy.schema import PolicyBindingSchema
 
 
 class DualArmPiperXEmbodiment(DualArmPiperEmbodiment):
@@ -101,3 +105,7 @@ class DualArmPiperXEmbodiment(DualArmPiperEmbodiment):
             name: robot_info.with_robot_name(self.scene_name)
             for name, robot_info in DUALARM_PIPERX_ROBOT_INFO_CFGS.items()
         }
+
+    def get_policy_binding_schema(self) -> PolicyBindingSchema:
+        """Return the canonical policy binding schema for this embodiment."""
+        return build_dualarm_piperx_policy_binding_schema(self.name)

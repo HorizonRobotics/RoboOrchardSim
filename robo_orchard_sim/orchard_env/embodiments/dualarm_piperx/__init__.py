@@ -23,9 +23,13 @@ from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx.embodiment import (
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx.profile import (
     DUALARM_PIPERX_ROBOT_INFO_CFGS,
 )
+from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx.schema import (
+    build_dualarm_piperx_policy_binding_schema,
+)
 
 __all__ = [
     "DUALARM_PIPERX_CFG",
     "DUALARM_PIPERX_ROBOT_INFO_CFGS",
     "DualArmPiperXEmbodiment",
+    "build_dualarm_piperx_policy_binding_schema",
 ]

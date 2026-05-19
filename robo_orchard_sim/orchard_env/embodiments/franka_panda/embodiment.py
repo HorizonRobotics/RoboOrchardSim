@@ -71,6 +71,10 @@ from robo_orchard_sim.orchard_env.embodiments.franka_panda.cfg import (
 from robo_orchard_sim.orchard_env.embodiments.franka_panda.profile import (
     FRANKA_PANDA_ROBOT_INFO_CFGS,
 )
+from robo_orchard_sim.orchard_env.embodiments.franka_panda.schema import (
+    build_franka_panda_policy_binding_schema,
+)
+from robo_orchard_sim.policy.schema import PolicyBindingSchema
 
 RENDER_FPS = 30
 ACTION_FPS = 30
@@ -266,6 +270,10 @@ class FrankaPandaEmbodiment(EmbodimentBase):
             name: robot_info.with_robot_name(self.scene_name)
             for name, robot_info in FRANKA_PANDA_ROBOT_INFO_CFGS.items()
         }
+
+    def get_policy_binding_schema(self) -> PolicyBindingSchema:
+        """Return the canonical policy binding schema for this embodiment."""
+        return build_franka_panda_policy_binding_schema(self.name)
 
     def get_observation_cfg(self) -> ObservationManagerCfg:
         """Return robot state and frame-transform observation groups."""

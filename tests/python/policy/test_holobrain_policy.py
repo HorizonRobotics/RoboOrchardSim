@@ -27,10 +27,83 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from robo_orchard_sim.policy.action_layout import compile_action_layout
 from robo_orchard_sim.policy.holobrain.policy import (
     HolobrainPolicy,
     HolobrainPolicyCfg,
 )
+from robo_orchard_sim.policy.schema import (
+    CameraBinding,
+    CanonicalPolicyInput,
+    ManipulatorBinding,
+    PolicyBindingSchema,
+)
+
+
+def _build_dualarm_schema() -> PolicyBindingSchema:
+    return PolicyBindingSchema(
+        schema_version="1",
+        embodiment_type="dualarm_piper",
+        camera_slots={
+            "left_wrist": CameraBinding(obs_term="left_hand_camera_term"),
+            "base": CameraBinding(obs_term="static_camera_term"),
+            "right_wrist": CameraBinding(obs_term="right_hand_camera_term"),
+        },
+        manipulator_slots={
+            "left_arm": ManipulatorBinding(
+                joint_position_obs_key="left_joint_position",
+                arm_joint_name_specs=("left_joint[1-6]",),
+                gripper_joint_name_specs=("left_joint[7-8]",),
+                gripper_decode_coupling="mirrored",
+                gripper_policy_scale=2.0,
+            ),
+            "right_arm": ManipulatorBinding(
+                joint_position_obs_key="right_joint_position",
+                arm_joint_name_specs=("right_joint[1-6]",),
+                gripper_joint_name_specs=("right_joint[7-8]",),
+                gripper_decode_coupling="mirrored",
+                gripper_policy_scale=2.0,
+            ),
+        },
+    )
+
+
+def _build_franka_schema() -> PolicyBindingSchema:
+    return PolicyBindingSchema(
+        schema_version="1",
+        embodiment_type="franka_panda",
+        camera_slots={
+            "wrist": CameraBinding(obs_term="hand_camera_term"),
+            "base": CameraBinding(obs_term="static_camera_term"),
+        },
+        manipulator_slots={
+            "single_arm": ManipulatorBinding(
+                joint_position_obs_key="joint_position",
+                arm_joint_name_specs=("panda_joint[1-7]",),
+                gripper_joint_name_specs=(
+                    "panda_finger_joint1",
+                    "panda_finger_joint2",
+                ),
+                gripper_policy_representation="first_joint",
+                gripper_decode_coupling="symmetric",
+                gripper_policy_scale=2.0,
+            )
+        },
+    )
+
+
+def test_holobrain_policy_requirement_declares_contract() -> None:
+    requirement = HolobrainPolicy.policy_requirement()
+
+    assert requirement.required_camera_modalities == (
+        "rgb",
+        "depth",
+        "intrinsic",
+        "pose",
+    )
+    assert requirement.min_camera_count == 1
+    assert requirement.min_manipulator_count == 1
+    assert requirement.require_instruction is True
 
 
 class _Pose:
@@ -110,7 +183,7 @@ class _FakePipeline:
         )
 
 
-def _build_obs(batch_size: int = 1) -> dict:
+def _build_obs(batch_size: int = 1) -> CanonicalPolicyInput:
     rgb = torch.arange(batch_size * 12, dtype=torch.uint8).reshape(
         batch_size, 2, 2, 3
     )
@@ -123,18 +196,54 @@ def _build_obs(batch_size: int = 1) -> dict:
         "rgb": _Sensor(rgb, intrinsic, pose=pose),
         "depth": _Sensor(depth),
     }
-    return {
-        "/camera": {
-            "left_hand_camera_term": camera_obs,
-            "static_camera_term": camera_obs,
-            "right_hand_camera_term": camera_obs,
+    return CanonicalPolicyInput(
+        cameras={
+            "left_wrist": camera_obs,
+            "base": camera_obs,
+            "right_wrist": camera_obs,
         },
-        "/robot": {
-            "left_joint_position": torch.ones((batch_size, 7)),
-            "right_joint_position": torch.ones((batch_size, 7)),
+        manipulators={
+            "left_arm": {
+                "joint_position": torch.ones((batch_size, 7)),
+            },
+            "right_arm": {
+                "joint_position": torch.ones((batch_size, 7)),
+            },
         },
-        "instruction": "pick apple",
+        instruction="pick apple",
+        action_layout=compile_action_layout(_build_dualarm_schema()),
+    )
+
+
+def _build_single_arm_obs(batch_size: int = 1) -> CanonicalPolicyInput:
+    rgb = torch.arange(batch_size * 12, dtype=torch.uint8).reshape(
+        batch_size, 2, 2, 3
+    )
+    depth = torch.ones((batch_size, 2, 2, 1), dtype=torch.float32)
+    intrinsic = (
+        torch.eye(3, dtype=torch.float32).unsqueeze(0).repeat(batch_size, 1, 1)
+    )
+    pose = _Pose()
+    camera_obs = {
+        "rgb": _Sensor(rgb, intrinsic, pose=pose),
+        "depth": _Sensor(depth),
     }
+    return CanonicalPolicyInput(
+        cameras={
+            "wrist": camera_obs,
+            "base": camera_obs,
+        },
+        manipulators={
+            "single_arm": {
+                "joint_position": torch.tensor(
+                    [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.1]],
+                    dtype=torch.float32,
+                ).repeat(batch_size, 1),
+            },
+        },
+        instruction="pick apple",
+        action_layout=compile_action_layout(_build_franka_schema()),
+    )
 
 
 def _install_fake_holobrain_modules(
@@ -200,9 +309,9 @@ def test_holobrain_policy_act_reuses_cached_actions_expected_result(
     second = policy.act(_build_obs())
     third = policy.act(_build_obs())
 
-    assert first["left_robot_joint_position"][0, 0].item() == 11.0
-    assert second["left_robot_joint_position"][0, 0].item() == 12.0
-    assert third["left_robot_joint_position"][0, 0].item() == 21.0
+    assert first.select("left_joint1")[0, 0].item() == 11.0
+    assert second.select("left_joint1")[0, 0].item() == 12.0
+    assert third.select("left_joint1")[0, 0].item() == 21.0
 
 
 def test_holobrain_policy_act_valid_step_refreshes_cache_expected_result(
@@ -218,8 +327,8 @@ def test_holobrain_policy_act_valid_step_refreshes_cache_expected_result(
     first = policy.act(_build_obs())
     second = policy.act(_build_obs())
 
-    assert first["left_robot_joint_position"][0, 0].item() == 11.0
-    assert second["left_robot_joint_position"][0, 0].item() == 21.0
+    assert first.select("left_joint1")[0, 0].item() == 11.0
+    assert second.select("left_joint1")[0, 0].item() == 21.0
 
 
 def test_holobrain_policy_act_sequence_returns_refreshed_sequence(
@@ -232,9 +341,27 @@ def test_holobrain_policy_act_sequence_returns_refreshed_sequence(
     next_action = policy.act(_build_obs())
 
     assert len(sequence) == 2
-    assert sequence[0]["left_robot_joint_position"][0, 0].item() == 11.0
-    assert sequence[1]["left_robot_joint_position"][0, 0].item() == 12.0
-    assert next_action["left_robot_joint_position"][0, 0].item() == 21.0
+    assert sequence[0].select("left_joint1")[0, 0].item() == 11.0
+    assert sequence[1].select("left_joint1")[0, 0].item() == 12.0
+    assert next_action.select("left_joint1")[0, 0].item() == 21.0
+
+
+def test_holobrain_policy_act_given_single_arm_obs_returns_single_arm_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = _FakePipeline()
+    policy = _build_policy(monkeypatch, pipeline)
+
+    action = policy.act(_build_single_arm_obs())
+
+    torch.testing.assert_close(
+        action.select("panda_joint[1-7]"),
+        torch.tensor([[11, 2, 3, 4, 5, 6, 0.4]], dtype=torch.float32),
+    )
+    torch.testing.assert_close(
+        action.select("panda_finger_joint1", "panda_finger_joint2"),
+        torch.tensor([[8.5, 8.5]], dtype=torch.float32),
+    )
 
 
 def test_holobrain_policy_init_uses_env_model_dir_expected_result(
@@ -253,7 +380,7 @@ def test_holobrain_policy_init_uses_env_model_dir_expected_result(
 
     action = policy.act(_build_obs())
 
-    assert action["left_robot_joint_position"][0, 0].item() == 11.0
+    assert action.select("left_joint1")[0, 0].item() == 11.0
 
 
 def test_holobrain_policy_act_multi_env_input_raises_value_error() -> None:

@@ -17,45 +17,103 @@
 # INTERNAL
 
 from __future__ import annotations
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import cv2
 import numpy as np
 import torch
 
-OpenPiAction = dict[str, torch.Tensor]
-OPENPI_IMAGE_KEYS = (
-    "left_wrist_0_rgb",
-    "right_wrist_0_rgb",
-    "base_0_rgb",
+from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
+from robo_orchard_sim.policy.action_layout import (
+    CompiledActionLayout,
+    ManipulatorActionSpec,
+    validate_action_layout_compatibility,
 )
-CAMERA_BINDINGS = {
-    "left": {
-        "obs_term": "left_hand_camera_term",
-        "model_image_key": "left_wrist_0_rgb",
-    },
-    "right": {
-        "obs_term": "right_hand_camera_term",
-        "model_image_key": "right_wrist_0_rgb",
-    },
-    "middle": {
-        "obs_term": "static_camera_term",
-        "model_image_key": "base_0_rgb",
-    },
-}
+from robo_orchard_sim.policy.gripper_codec import (
+    policy_to_gripper_positions_torch,
+)
+from robo_orchard_sim.policy.schema import CanonicalPolicyInput
+
+OpenPiAction = UnifiedJointCommand
 DEFAULT_TARGET_INTRINSIC = [
     [290.0, 0.0, 196.0, 0.0],
     [0.0, 310.0, 126.0, 0.0],
     [0.0, 0.0, 1.0, 0.0],
     [0.0, 0.0, 0.0, 1.0],
 ]
+
+
+@dataclass(frozen=True)
+class _OpenPiCameraSpec:
+    position: str
+    model_image_key: str
+    single_arm_slot: str | None
+    dual_arm_slot: str | None
+    required_for_single_arm: bool
+    required_for_dual_arm: bool
+
+    def slot_for_arm_count(self, arm_count: int) -> str | None:
+        if arm_count == 1:
+            return self.single_arm_slot
+        if arm_count == 2:
+            return self.dual_arm_slot
+        raise ValueError(f"OpenPi supports only 1 or 2 arms, got {arm_count}.")
+
+    def required_for_arm_count(self, arm_count: int) -> bool:
+        if arm_count == 1:
+            return self.required_for_single_arm
+        if arm_count == 2:
+            return self.required_for_dual_arm
+        raise ValueError(f"OpenPi supports only 1 or 2 arms, got {arm_count}.")
+
+
+_OPENPI_CAMERA_SPECS = (
+    _OpenPiCameraSpec(
+        position="left",
+        model_image_key="left_wrist_0_rgb",
+        single_arm_slot="wrist",
+        dual_arm_slot="left_wrist",
+        required_for_single_arm=True,
+        required_for_dual_arm=True,
+    ),
+    _OpenPiCameraSpec(
+        position="right",
+        model_image_key="right_wrist_0_rgb",
+        single_arm_slot=None,
+        dual_arm_slot="right_wrist",
+        required_for_single_arm=False,
+        required_for_dual_arm=True,
+    ),
+    _OpenPiCameraSpec(
+        position="middle",
+        model_image_key="base_0_rgb",
+        single_arm_slot="base",
+        dual_arm_slot="base",
+        required_for_single_arm=True,
+        required_for_dual_arm=True,
+    ),
+)
+OPENPI_IMAGE_KEYS = tuple(
+    spec.model_image_key for spec in _OPENPI_CAMERA_SPECS
+)
 DEFAULT_CAMERAS = {
-    camera_position: {
+    spec.position: {
         "target_size": (392, 252),
         "target_intrinsic": [row[:] for row in DEFAULT_TARGET_INTRINSIC],
     }
-    for camera_position in CAMERA_BINDINGS
+    for spec in _OPENPI_CAMERA_SPECS
 }
+
+
+@dataclass(frozen=True)
+class _OpenPiCameraMapping:
+    slots_by_position: dict[str, str | None]
+    arm_count: int
+
+    def slot_for(self, spec: _OpenPiCameraSpec) -> str | None:
+        return self.slots_by_position[spec.position]
 
 
 class OpenPiAdapter:
@@ -65,7 +123,9 @@ class OpenPiAdapter:
     def required_observation_fields(cls) -> dict[str, Any]:
         return {
             "camera_terms": [
-                binding["obs_term"] for binding in CAMERA_BINDINGS.values()
+                "left_hand_camera_term",
+                "right_hand_camera_term",
+                "static_camera_term",
             ],
             "include_rgb": True,
             "include_depth": False,
@@ -83,7 +143,7 @@ class OpenPiAdapter:
         cameras: dict[str, Any] | None = None,
         enable_intrinsic_remap: bool = True,
     ) -> None:
-        self._joint_num = joint_num
+        del joint_num
         self._enable_intrinsic_remap = enable_intrinsic_remap
         self._camera_resize = (
             self._build_camera_resize(cameras)
@@ -91,10 +151,23 @@ class OpenPiAdapter:
             else {}
         )
 
-    def build_model_input(self, obs: dict[str, Any]) -> dict[str, Any]:
+    def build_model_input(self, obs: CanonicalPolicyInput) -> dict[str, Any]:
         instruction = self._require_instruction(obs)
-        images, intrinsics = self._extract_camera_inputs(obs)
-        joint_state = self._build_joint_state(obs)
+        layout = self._require_action_layout(obs)
+        validate_action_layout_compatibility(
+            manipulator_observations=obs.manipulators,
+            layout=layout,
+            context="OpenPi observation",
+        )
+        camera_mapping = self._compile_camera_mapping(
+            arm_count=len(layout.manipulator_order),
+            available_camera_slots=obs.cameras.keys(),
+        )
+        images, intrinsics = self._extract_camera_inputs(
+            obs,
+            camera_mapping=camera_mapping,
+        )
+        joint_state = self._build_joint_state(obs, layout=layout)
         images_for_model = (
             self._resize_images(images, intrinsics)
             if self._enable_intrinsic_remap
@@ -102,38 +175,61 @@ class OpenPiAdapter:
         )
         hist_joint_state = self._build_hist_joint_state(joint_state)
         return {
-            "image": self._build_openpi_images(images_for_model),
-            "image_mask": self._build_openpi_image_masks(),
+            "image": self._build_openpi_images(
+                images_for_model,
+                camera_mapping=camera_mapping,
+            ),
+            "image_mask": self._build_openpi_image_masks(camera_mapping),
             "state": hist_joint_state[0, :],
             "prompt": instruction,
         }
 
     @staticmethod
-    def _require_instruction(obs: dict[str, Any]) -> str:
-        instruction = obs.get("instruction")
+    def _require_instruction(obs: CanonicalPolicyInput) -> str:
+        instruction = obs.instruction
         if not instruction:
             raise ValueError("OpenPi observation requires instruction")
         return instruction
 
+    @staticmethod
+    def _require_action_layout(
+        obs: CanonicalPolicyInput,
+    ) -> CompiledActionLayout:
+        layout = obs.action_layout
+        if not isinstance(layout, CompiledActionLayout):
+            raise ValueError(
+                "OpenPi observation requires a compiled action layout"
+            )
+        return layout
+
     def _extract_camera_inputs(
         self,
-        obs: dict[str, Any],
+        obs: CanonicalPolicyInput,
+        *,
+        camera_mapping: _OpenPiCameraMapping,
     ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
-        images = {}
-        intrinsics = {}
-        for camera_binding in CAMERA_BINDINGS.values():
-            obs_term = camera_binding["obs_term"]
-            model_image_key = camera_binding["model_image_key"]
-            camera_obs = self._require_camera_obs(obs, obs_term)
+        images: dict[str, np.ndarray] = {}
+        intrinsics: dict[str, np.ndarray] = {}
+        for spec in _OPENPI_CAMERA_SPECS:
+            slot = camera_mapping.slot_for(spec)
+            if slot is None:
+                continue
+            if (
+                spec.required_for_arm_count(camera_mapping.arm_count)
+                and slot not in obs.cameras
+            ):
+                raise ValueError(
+                    f"OpenPi requires canonical camera slot {slot!r}."
+                )
+            camera_obs = obs.cameras[slot]
             rgb_sensor = camera_obs["rgb"]
-            image = rgb_sensor.sensor_data[0].cpu().numpy()
-            images[model_image_key] = image
+            images[spec.position] = rgb_sensor.sensor_data[0].cpu().numpy()
 
             intrinsic = np.eye(4, dtype=np.float64)
             intrinsic[:3, :3] = (
                 rgb_sensor.intrinsic_matrices[0].cpu().numpy()[:3, :3]
             )
-            intrinsics[model_image_key] = intrinsic
+            intrinsics[spec.position] = intrinsic
         return images, intrinsics
 
     def _build_camera_resize(
@@ -142,17 +238,17 @@ class OpenPiAdapter:
     ) -> dict[str, dict[str, Any]]:
         cameras = cameras or DEFAULT_CAMERAS
         resize_params = {}
-        for camera_position in CAMERA_BINDINGS:
-            if camera_position not in cameras:
+        for spec in _OPENPI_CAMERA_SPECS:
+            if spec.position not in cameras:
                 raise ValueError(
-                    f"Missing OpenPi camera resize config: {camera_position}"
+                    f"Missing OpenPi camera resize config: {spec.position}"
                 )
-            camera_cfg = cameras[camera_position]
+            camera_cfg = cameras[spec.position]
             target_size = tuple(self._cfg_get(camera_cfg, "target_size"))
             target_intrinsic = self._build_target_intrinsic(
                 self._cfg_get(camera_cfg, "target_intrinsic")
             )
-            resize_params[camera_position] = {
+            resize_params[spec.position] = {
                 "target_size": target_size,
                 "target_intrinsic": target_intrinsic,
                 "target_points": self._build_target_points(
@@ -168,34 +264,45 @@ class OpenPiAdapter:
             return cfg[name]
         return getattr(cfg, name)
 
-    @staticmethod
-    def _require_camera_obs(obs: dict[str, Any], obs_term: str) -> Any:
-        try:
-            return obs["/camera"][obs_term]
-        except KeyError as exc:
-            raise ValueError(
-                f"Missing required camera observation term: {obs_term}"
-            ) from exc
+    def _build_joint_state(
+        self,
+        obs: CanonicalPolicyInput,
+        *,
+        layout: CompiledActionLayout,
+    ) -> np.ndarray:
+        pieces = [
+            self._build_manipulator_joint_state(
+                obs.manipulators[slot],
+                manipulator=layout.manipulators[slot],
+            )
+            for slot in layout.manipulator_order
+        ]
+        return np.concatenate(pieces, axis=0)[None, :]
 
-    def _build_joint_state(self, obs: dict[str, Any]) -> np.ndarray:
-        robot_obs = obs["/robot"]
-        left_joint_state = (
-            robot_obs["left_joint_position"][0, : self._joint_num]
-            .cpu()
-            .numpy()
+    @staticmethod
+    def _build_manipulator_joint_state(
+        manipulator_obs: dict[str, Any],
+        *,
+        manipulator: ManipulatorActionSpec,
+    ) -> np.ndarray:
+        joint_position = (
+            manipulator_obs["joint_position"][0].detach().cpu().numpy()
         )
-        right_joint_state = (
-            robot_obs["right_joint_position"][0, : self._joint_num]
-            .cpu()
-            .numpy()
-        )
-        joint_state = np.concatenate(
-            [left_joint_state, right_joint_state],
-            axis=0,
-        )[None, :]
-        joint_state[:, self._joint_num - 1] *= 2.0
-        joint_state[:, 2 * self._joint_num - 1] *= 2.0
-        return joint_state
+        if joint_position.shape[0] < manipulator.arm_dim:
+            raise ValueError(
+                f"Manipulator {manipulator.slot!r} joint_position has "
+                f"{joint_position.shape[0]} dims, expected at least "
+                f"{manipulator.arm_dim}."
+            )
+        state = [joint_position[: manipulator.arm_dim]]
+        if manipulator.gripper_joint_names:
+            state.append(
+                manipulator.extract_gripper_policy(
+                    manipulator_obs,
+                    joint_position=joint_position,
+                )
+            )
+        return np.concatenate(state, axis=0)
 
     @staticmethod
     def _build_target_intrinsic(
@@ -229,33 +336,55 @@ class OpenPiAdapter:
         intrinsics: dict[str, np.ndarray],
     ) -> dict[str, np.ndarray]:
         resized_images = {}
-        for camera_position, camera_binding in CAMERA_BINDINGS.items():
-            model_image_key = camera_binding["model_image_key"]
+        for camera_position in images:
             resize_param = self._camera_resize[camera_position]
-            src_intrinsic = intrinsics[model_image_key][:3, :3]
+            src_intrinsic = intrinsics[camera_position][:3, :3]
             src_uv = (resize_param["target_points"] @ src_intrinsic.T).astype(
                 np.float32
             )
-            resized_images[model_image_key] = cv2.remap(
-                images[model_image_key],
+            resized_images[camera_position] = cv2.remap(
+                images[camera_position],
                 src_uv[..., 0],
                 src_uv[..., 1],
                 cv2.INTER_LINEAR,
             )
         return resized_images
 
-    @staticmethod
     def _build_openpi_images(
+        self,
         images: dict[str, np.ndarray],
+        *,
+        camera_mapping: _OpenPiCameraMapping,
     ) -> dict[str, np.ndarray]:
-        return {
-            key: OpenPiAdapter._as_rgb_uint8(images[key])
-            for key in OPENPI_IMAGE_KEYS
-        }
+        openpi_images = {}
+        for spec in _OPENPI_CAMERA_SPECS:
+            image = images.get(spec.position)
+            if image is None:
+                if (
+                    spec.position == "right"
+                    and camera_mapping.arm_count == 1
+                    and "left" in images
+                ):
+                    image = np.zeros_like(images["left"])
+                else:
+                    target_size = DEFAULT_CAMERAS[spec.position]["target_size"]
+                    image = np.zeros(
+                        (target_size[1], target_size[0], 3),
+                        dtype=np.uint8,
+                    )
+            openpi_images[spec.model_image_key] = self._as_rgb_uint8(image)
+        return openpi_images
 
-    @staticmethod
-    def _build_openpi_image_masks() -> dict[str, np.bool_]:
-        return {key: np.True_ for key in OPENPI_IMAGE_KEYS}
+    def _build_openpi_image_masks(
+        self,
+        camera_mapping: _OpenPiCameraMapping,
+    ) -> dict[str, np.bool_]:
+        return {
+            spec.model_image_key: np.bool_(
+                camera_mapping.slot_for(spec) is not None
+            )
+            for spec in _OPENPI_CAMERA_SPECS
+        }
 
     @staticmethod
     def _as_rgb_uint8(image: np.ndarray) -> np.ndarray:
@@ -271,17 +400,19 @@ class OpenPiAdapter:
     def build_action_sequence(
         self,
         actions: np.ndarray | torch.Tensor,
+        obs: CanonicalPolicyInput,
         *,
         device: torch.device | str,
         valid_action_step: int | None = None,
     ) -> list[OpenPiAction]:
+        layout = self._require_action_layout(obs)
         actions = self._extract_action_tensor(actions, device=device)
-        actions = self._truncate_action_dims(actions)
+        actions = self._truncate_action_dims(actions, layout=layout)
         actions = self._truncate_action_tensor(
             actions,
             valid_action_step=valid_action_step,
         )
-        return self._actions_to_sequence(actions)
+        return self._actions_to_sequence(actions, layout=layout)
 
     @staticmethod
     def _extract_action_tensor(
@@ -308,8 +439,16 @@ class OpenPiAdapter:
             return actions
         return actions[:valid_action_step]
 
-    def _truncate_action_dims(self, actions: torch.Tensor) -> torch.Tensor:
-        expected_dim = 2 * self._joint_num
+    def _truncate_action_dims(
+        self,
+        actions: torch.Tensor,
+        *,
+        layout: CompiledActionLayout,
+    ) -> torch.Tensor:
+        expected_dim = sum(
+            layout.manipulators[slot].model_dim
+            for slot in layout.manipulator_order
+        )
         if actions.shape[1] < expected_dim:
             raise ValueError(
                 "OpenPi model output actions must provide at least "
@@ -318,36 +457,84 @@ class OpenPiAdapter:
         return actions[:, :expected_dim]
 
     def _actions_to_sequence(
-        self, actions: torch.Tensor
+        self,
+        actions: torch.Tensor,
+        *,
+        layout: CompiledActionLayout,
     ) -> list[OpenPiAction]:
         sequence: list[OpenPiAction] = []
-        left_joint_end = self._joint_num - 1
-        right_joint_start = self._joint_num
-        right_joint_end = 2 * self._joint_num - 1
-
         for step_idx in range(actions.shape[0]):
-            left_gripper = actions[step_idx, left_joint_end]
-            right_gripper = actions[step_idx, right_joint_end]
-            sequence.append(
-                {
-                    "left_robot_joint_position": actions[
-                        step_idx : step_idx + 1, :left_joint_end
-                    ],
-                    "left_robot_gripper_control": self._build_gripper_control(
-                        left_gripper
-                    ),
-                    "right_robot_joint_position": actions[
-                        step_idx : step_idx + 1,
-                        right_joint_start:right_joint_end,
-                    ],
-                    "right_robot_gripper_control": self._build_gripper_control(
-                        right_gripper
-                    ),
-                }
-            )
+            cursor = 0
+            commands: list[UnifiedJointCommand] = []
+            for slot in layout.manipulator_order:
+                manipulator = layout.manipulators[slot]
+                commands.append(
+                    UnifiedJointCommand(
+                        values=actions[
+                            step_idx : step_idx + 1,
+                            cursor : cursor + manipulator.arm_dim,
+                        ],
+                        joint_names=manipulator.arm_joint_names,
+                    )
+                )
+                cursor += manipulator.arm_dim
+                if manipulator.gripper_joint_names:
+                    gripper = actions[
+                        step_idx,
+                        cursor : cursor + manipulator.gripper_policy_dim,
+                    ]
+                    commands.append(
+                        UnifiedJointCommand(
+                            values=policy_to_gripper_positions_torch(
+                                gripper,
+                                gripper_policy_representation=(
+                                    manipulator.gripper_policy_representation
+                                ),
+                                gripper_decode_coupling=(
+                                    manipulator.gripper_decode_coupling
+                                ),
+                                gripper_policy_scale=(
+                                    manipulator.gripper_policy_scale
+                                ),
+                                joint_count=len(
+                                    manipulator.gripper_joint_names
+                                ),
+                            ),
+                            joint_names=manipulator.gripper_joint_names,
+                        )
+                    )
+                    cursor += manipulator.gripper_policy_dim
+            sequence.append(UnifiedJointCommand.merge(*commands))
         return sequence
 
     @staticmethod
-    def _build_gripper_control(gripper: torch.Tensor) -> torch.Tensor:
-        half_gripper = gripper / 2
-        return torch.stack((half_gripper, -half_gripper)).unsqueeze(0)
+    def _compile_camera_mapping(
+        *,
+        arm_count: int,
+        available_camera_slots: Iterable[str],
+    ) -> _OpenPiCameraMapping:
+        available = set(available_camera_slots)
+        slots_by_position = {}
+        for spec in _OPENPI_CAMERA_SPECS:
+            slot = spec.slot_for_arm_count(arm_count)
+            slots_by_position[spec.position] = (
+                OpenPiAdapter._require_camera_slot(available, slot)
+                if slot is not None
+                else None
+            )
+        return _OpenPiCameraMapping(
+            slots_by_position=slots_by_position,
+            arm_count=arm_count,
+        )
+
+    @staticmethod
+    def _require_camera_slot(
+        available_camera_slots: set[str],
+        slot: str,
+    ) -> str:
+        if slot not in available_camera_slots:
+            raise ValueError(
+                f"OpenPi requires canonical camera slot {slot!r}, "
+                f"got {tuple(sorted(available_camera_slots))}."
+            )
+        return slot

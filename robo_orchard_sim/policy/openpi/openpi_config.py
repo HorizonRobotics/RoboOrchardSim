@@ -21,7 +21,7 @@ import dataclasses
 from collections.abc import Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 @dataclasses.dataclass(frozen=True)
@@ -36,6 +36,8 @@ class OpenPiTransformPipeline:
 
 class OpenPiModelConfig(BaseModel):
     """User-provided OpenPI model config loaded from YAML."""
+
+    model_config = ConfigDict(protected_namespaces=())
 
     model_type: Literal["pi0", "pi05", "pi0_fast"]
     max_token_len: int = 128

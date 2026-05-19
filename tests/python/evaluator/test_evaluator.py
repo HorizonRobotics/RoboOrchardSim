@@ -32,7 +32,12 @@ from robo_orchard_core.envs.env_base import EnvStepReturn
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 
 from robo_orchard_sim.evaluator import Evaluator, EvaluatorCfg, LaunchConfig
+from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+from robo_orchard_sim.policy.schema import (
+    CanonicalPolicyInput,
+    PolicyBindingSchema,
+)
 from robo_orchard_sim.tasks.instructions.base import InstructionActor
 from robo_orchard_sim.tasks.validators.base import (
     ValidatorActor,
@@ -502,6 +507,21 @@ class _StubEmbodiment:
                 ),
                 gripper_open_val=[0.05, -0.05],
             ),
+        }
+
+    def get_policy_binding_schema(self) -> PolicyBindingSchema:
+        return PolicyBindingSchema(
+            schema_version="1",
+            embodiment_type="stub",
+        )
+
+    def translate_joint_command_to_env_action(
+        self,
+        action: UnifiedJointCommand,
+    ) -> dict[str, Any]:
+        return {
+            "translated_joint_action": action.values.clone(),
+            "joint_names": action.joint_names,
         }
 
 
@@ -1202,6 +1222,49 @@ class TestEvaluator:
         assert env.step_calls == [{"joint_action": 1}]
         assert len(record) == 0
 
+    def test_episode_policy_input_canonicalizes_and_translates_action(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _CanonicalPolicy(PolicyMixin):
+            def __init__(self) -> None:
+                self.seen_inputs: list[CanonicalPolicyInput] = []
+
+            def reset(self) -> None:
+                return None
+
+            def act(
+                self,
+                observations: CanonicalPolicyInput,
+            ) -> UnifiedJointCommand:
+                self.seen_inputs.append(observations)
+                return UnifiedJointCommand.from_specs(
+                    torch.tensor([[1.0, 2.0]], dtype=torch.float32),
+                    ["joint1", "joint2"],
+                )
+
+        env = _StubStepEnv(episodes=[[_StepState()]])
+        orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+        )()
+        policy = _CanonicalPolicy()
+
+        evaluator.evaluate(policy)
+
+        assert isinstance(policy.seen_inputs[0], CanonicalPolicyInput)
+        assert policy.seen_inputs[0].cameras == {}
+        assert policy.seen_inputs[0].manipulators == {}
+        assert torch.equal(
+            env.step_calls[0]["translated_joint_action"],
+            torch.tensor([[1.0, 2.0]], dtype=torch.float32),
+        )
+        assert env.step_calls[0]["joint_names"] == ("joint1", "joint2")
+
     def test_episode_settle_timeout_prints_moving_asset_report(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -1284,10 +1347,11 @@ class TestEvaluator:
 
         evaluator.evaluate(policy)
 
-        assert policy.observations_seen[0] == {
-            "settle_step": 2,
-            "instruction": "instruction-template-0-actor-0",
-        }
+        assert policy.observations_seen[0]["instruction"] == (
+            "instruction-template-0-actor-0"
+        )
+        assert policy.observations_seen[0]["cameras"] == {}
+        assert policy.observations_seen[0]["manipulators"] == {}
 
     def test_evaluate_with_instruction_prints_instruction_text(
         self,

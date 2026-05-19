@@ -40,6 +40,7 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
 from robo_orchard_sim.orchard_env.joint_command import (
     UnifiedJointCommand,
 )
+from robo_orchard_sim.policy.schema import PolicyBindingSchema
 
 
 class EmbodimentBase:
@@ -144,3 +145,10 @@ class EmbodimentBase:
                 f"{available or '<none>'}."
             )
         return robot_info_cfgs[manipulator_name]
+
+    def get_policy_binding_schema(self) -> PolicyBindingSchema:
+        """Return the canonical policy binding schema for this embodiment."""
+        raise NotImplementedError(
+            f"Embodiment {self.__class__.__name__} does not define a "
+            "policy binding schema."
+        )

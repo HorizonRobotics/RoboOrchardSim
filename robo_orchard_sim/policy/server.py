@@ -50,6 +50,13 @@ import yaml
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
+from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
+from robo_orchard_sim.policy.action_layout import CompiledActionLayout
+from robo_orchard_sim.policy.schema import (
+    CanonicalPolicyInput,
+    PolicyRequirement,
+)
+
 logger = logging.getLogger(__name__)
 
 _MAX_MSG = 200 * 1024 * 1024  # 200 MB – large enough for image payloads
@@ -80,6 +87,8 @@ class _PoseProxy:
 
 def _rebuild_observations(obs_data: dict) -> dict:
     """Rebuild wire-format observations into policy input structure."""
+    if obs_data.get("format") == "canonical":
+        return _rebuild_canonical_observations(obs_data)
     remote_policy_type = obs_data.get("format", "full")
     if remote_policy_type != "full":
         return _rebuild_profiled_observations(
@@ -165,6 +174,46 @@ def _resolve_observation_fields(remote_policy_type: str) -> dict[str, Any]:
             raise ValueError(
                 f"Unsupported remote policy type: {remote_policy_type}"
             )
+
+
+def _rebuild_canonical_observations(obs_data: dict) -> CanonicalPolicyInput:
+    cameras: dict[str, dict[str, Any]] = {}
+    for slot, d in obs_data.get("cameras", {}).items():
+        pose = None
+        if "pose" in d:
+            pose = _PoseProxy(
+                xyz=_decode_tensor_payload(d["pose"]["xyz"]),
+                quat=_decode_tensor_payload(d["pose"]["quat"]),
+            )
+        camera_obs: dict[str, Any] = {}
+        if "rgb" in d:
+            camera_obs["rgb"] = _SensorProxy(
+                _decode_tensor_payload(d["rgb"]),
+                _decode_tensor_payload(d["intrinsic_matrices"])
+                if "intrinsic_matrices" in d
+                else None,
+                pose=pose,
+            )
+        if "depth" in d:
+            camera_obs["depth"] = _SensorProxy(
+                _decode_tensor_payload(d["depth"])
+            )
+        cameras[slot] = camera_obs
+
+    manipulators = {
+        slot: _decode_value(manipulator_obs)
+        for slot, manipulator_obs in obs_data.get("manipulators", {}).items()
+    }
+    return CanonicalPolicyInput(
+        instruction=obs_data.get("instruction"),
+        cameras=cameras,
+        manipulators=manipulators,
+        action_layout=(
+            CompiledActionLayout.from_payload(obs_data["action_layout"])
+            if "action_layout" in obs_data
+            else None
+        ),
+    )
 
 
 def _encode_tensor_payload(value: torch.Tensor) -> dict[str, Any]:
@@ -265,6 +314,13 @@ def _decode_binary_message(message: bytes) -> dict[str, Any]:
 
 
 def _encode_value(value: Any) -> Any:
+    if isinstance(value, UnifiedJointCommand):
+        return {
+            "__joint_command__": {
+                "values": {"__tensor__": _encode_tensor_payload(value.values)},
+                "joint_names": list(value.joint_names),
+            }
+        }
     if isinstance(value, torch.Tensor):
         return {"__tensor__": _encode_tensor_payload(value)}
     if isinstance(value, dict):
@@ -278,6 +334,12 @@ def _encode_value(value: Any) -> Any:
 
 def _decode_value(value: Any) -> Any:
     if isinstance(value, dict):
+        if "__joint_command__" in value:
+            payload = value["__joint_command__"]
+            return UnifiedJointCommand(
+                values=_decode_tensor_payload(payload["values"]["__tensor__"]),
+                joint_names=tuple(payload["joint_names"]),
+            )
         if "__tensor__" in value:
             return _decode_tensor_payload(value["__tensor__"])
         return {key: _decode_value(item) for key, item in value.items()}
@@ -287,6 +349,11 @@ def _decode_value(value: Any) -> Any:
 
 
 def _move_to_device(value: Any, device: str) -> Any:
+    if isinstance(value, UnifiedJointCommand):
+        return UnifiedJointCommand(
+            values=value.values.to(device),
+            joint_names=value.joint_names,
+        )
     if isinstance(value, torch.Tensor):
         return value.to(device)
     if isinstance(value, dict):
@@ -299,16 +366,18 @@ def _move_to_device(value: Any, device: str) -> Any:
 
 
 def _extract_obs_data(
-    observations: dict,
+    observations: dict | CanonicalPolicyInput,
     *,
     remote_policy_type: str = "full",
 ) -> dict:
     """Convert live observations into a pickle-safe dict of CPU tensors."""
+    if isinstance(observations, CanonicalPolicyInput):
+        return _extract_canonical_obs_data(observations)
     if remote_policy_type != "full":
-        return _extract_profiled_obs_data(
-            observations,
-            remote_policy_type=remote_policy_type,
-            observation_fields=_resolve_observation_fields(remote_policy_type),
+        raise ValueError(
+            "Remote policy type "
+            f"{remote_policy_type!r} requires CanonicalPolicyInput "
+            "observations."
         )
 
     obs: dict[str, Any] = {}
@@ -336,6 +405,49 @@ def _extract_obs_data(
         for k, v in observations["/robot"].items():
             robot[k] = _encode_value(v)
         obs["robot"] = robot
+    return obs
+
+
+def _extract_canonical_obs_data(
+    observations: CanonicalPolicyInput,
+) -> dict[str, Any]:
+    obs: dict[str, Any] = {
+        "format": "canonical",
+        "instruction": observations.instruction,
+    }
+    if observations.action_layout is not None:
+        obs["action_layout"] = observations.action_layout.to_payload()
+    cameras: dict[str, dict[str, Any]] = {}
+    for slot, camera_obs in observations.cameras.items():
+        cam: dict[str, Any] = {}
+        if "rgb" in camera_obs:
+            cam["rgb"] = _encode_tensor_payload(camera_obs["rgb"].sensor_data)
+            intrinsic_matrices = getattr(
+                camera_obs["rgb"],
+                "intrinsic_matrices",
+                None,
+            )
+            if intrinsic_matrices is not None:
+                cam["intrinsic_matrices"] = _encode_tensor_payload(
+                    intrinsic_matrices
+                )
+            pose = getattr(camera_obs["rgb"], "pose", None)
+            if pose is not None:
+                cam["pose"] = {
+                    "xyz": _encode_tensor_payload(pose.xyz),
+                    "quat": _encode_tensor_payload(pose.quat),
+                }
+        if "depth" in camera_obs:
+            cam["depth"] = _encode_tensor_payload(
+                camera_obs["depth"].sensor_data
+            )
+        cameras[slot] = cam
+    obs["cameras"] = cameras
+
+    manipulators: dict[str, Any] = {}
+    for slot, manipulator_obs in observations.manipulators.items():
+        manipulators[slot] = _encode_value(manipulator_obs)
+    obs["manipulators"] = manipulators
     return obs
 
 
@@ -378,6 +490,37 @@ def _extract_profiled_obs_data(
     return obs
 
 
+def _resolve_policy_requirement(
+    remote_policy_type: str,
+) -> PolicyRequirement | None:
+    match remote_policy_type:
+        case "openpi":
+            from robo_orchard_sim.policy.openpi.policy import OpenPiPolicy
+
+            return OpenPiPolicy.policy_requirement()
+        case "holobrain":
+            from robo_orchard_sim.policy.holobrain.policy import (
+                HolobrainPolicy,
+            )
+
+            return HolobrainPolicy.policy_requirement()
+        case _:
+            return None
+
+
+def _apply_instruction(
+    observations: dict[str, Any] | CanonicalPolicyInput,
+    instruction: str | None,
+) -> dict[str, Any] | CanonicalPolicyInput:
+    if instruction is None:
+        return observations
+    if isinstance(observations, CanonicalPolicyInput):
+        return observations.model_copy(update={"instruction": instruction})
+    observations = dict(observations)
+    observations["instruction"] = instruction
+    return observations
+
+
 class PolicyWebsocketServer:
     """WebSocket server that hosts a policy for remote inference."""
 
@@ -394,6 +537,10 @@ class PolicyWebsocketServer:
         self.logging_tag = logging_tag or f"{host}:{port}"
 
     async def _handle(self, websocket):
+        await self.handle_client(websocket)
+
+    async def handle_client(self, websocket):
+        """Serve one connected websocket client."""
         remote = websocket.remote_address
         logger.info(
             "[%s] Client connected from %s",
@@ -423,9 +570,10 @@ class PolicyWebsocketServer:
                         )
 
                     obs = _rebuild_observations(req["obs_data"])
-                    instruction = req.get("instruction")
-                    if instruction is not None:
-                        obs["instruction"] = instruction
+                    obs = _apply_instruction(
+                        obs,
+                        req.get("instruction"),
+                    )
                     if req_type == "act_sequence":
                         actions = self._act_sequence(obs)
                     else:
@@ -466,7 +614,7 @@ class PolicyWebsocketServer:
             ) from exc
 
         async with websockets.serve(
-            self._handle, self.host, self.port, max_size=_MAX_MSG
+            self.handle_client, self.host, self.port, max_size=_MAX_MSG
         ):
             logger.info(
                 "[%s] Policy server listening on ws://%s:%s",
@@ -534,15 +682,25 @@ class PolicyClient:
             raise RuntimeError(f"Remote policy error: {response['error']}")
         return response
 
+    @staticmethod
+    def _resolve_instruction(
+        observations: dict[str, Any] | CanonicalPolicyInput,
+        instruction: str | None,
+    ) -> str | None:
+        if instruction is not None:
+            return instruction
+        if isinstance(observations, CanonicalPolicyInput):
+            return observations.instruction
+        return observations.get("instruction")
+
     def request_action(
         self,
-        observations: dict[str, Any],
+        observations: dict[str, Any] | CanonicalPolicyInput,
         *,
         instruction: str | None = None,
     ) -> "RemoteAction":
         """Send observations to server and return predicted actions."""
-        if instruction is None:
-            instruction = observations.get("instruction")
+        instruction = self._resolve_instruction(observations, instruction)
         req = {
             "type": "act",
             "obs_data": _extract_obs_data(
@@ -559,13 +717,12 @@ class PolicyClient:
 
     def request_action_sequence(
         self,
-        observations: dict[str, Any],
+        observations: dict[str, Any] | CanonicalPolicyInput,
         *,
         instruction: str | None = None,
     ) -> list["RemoteAction"]:
         """Send observations to server and return predicted actions."""
-        if instruction is None:
-            instruction = observations.get("instruction")
+        instruction = self._resolve_instruction(observations, instruction)
         req = {
             "type": "act_sequence",
             "obs_data": _extract_obs_data(
@@ -601,7 +758,7 @@ class PolicyClient:
         self.close()
 
 
-RemoteAction = dict[str, torch.Tensor] | torch.Tensor
+RemoteAction = UnifiedJointCommand | dict[str, torch.Tensor] | torch.Tensor
 
 
 class ServerPolicy(PolicyMixin[dict[str, Any], RemoteAction]):
@@ -651,6 +808,9 @@ class ServerPolicy(PolicyMixin[dict[str, Any], RemoteAction]):
             logging_tag=cfg.logging_tag,
             remote_policy_type=cfg.remote_policy_type,
         )
+
+    def policy_requirement(self) -> PolicyRequirement | None:
+        return _resolve_policy_requirement(self.cfg.remote_policy_type)
 
     def close(self) -> None:
         self._client.close()

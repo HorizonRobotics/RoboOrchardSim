@@ -32,6 +32,12 @@ from robo_orchard_core.utils.config import (
 )
 
 from robo_orchard_sim.evaluator.base import EpisodeResult, EvaluationResult
+from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
+from robo_orchard_sim.policy.canonicalizer import (
+    canonicalize_observations,
+    validate_policy_compatibility,
+)
+from robo_orchard_sim.policy.schema import CanonicalPolicyInput
 from robo_orchard_sim.tasks.validators.base import (
     Validator,
     ValidatorActor,
@@ -629,9 +635,22 @@ class Evaluator:
             metrics={},
         )
         for step_idx in range(self.cfg.max_steps):
-            policy_input = dict(observations)
-            policy_input["instruction"] = instruction_text
+            policy_input = self._build_policy_input(
+                policy=policy,
+                observations=observations,
+                instruction_text=instruction_text,
+            )
             action = policy(policy_input)
+            if isinstance(action, UnifiedJointCommand):
+                if self._task is None:
+                    raise RuntimeError(
+                        "Task runtime is required to translate "
+                        "UnifiedJointCommand actions."
+                    )
+                embodiment = self._task.embodiment
+                action = embodiment.translate_joint_command_to_env_action(
+                    action
+                )
             step_return = env.step(action)
             observations = step_return.observations
             validator_output = validator.evaluate(env, env_idx=0)
@@ -659,6 +678,41 @@ class Evaluator:
                 break
 
         return steps, stop_reason, validator_output
+
+    def _build_policy_input(
+        self,
+        *,
+        policy: PolicyMixin,
+        observations: dict[str, Any],
+        instruction_text: str | None,
+    ) -> Any:
+        assert self._task is not None
+        canonical = canonicalize_observations(
+            observations=observations,
+            instruction=instruction_text,
+            schema=self._task.embodiment.get_policy_binding_schema(),
+        )
+        self._validate_policy_input(policy=policy, canonical=canonical)
+        return canonical
+
+    @staticmethod
+    def _validate_policy_input(
+        *,
+        policy: PolicyMixin,
+        canonical: CanonicalPolicyInput,
+    ) -> None:
+        policy_requirement = getattr(policy, "policy_requirement", None)
+        if not callable(policy_requirement):
+            return
+
+        requirement = policy_requirement()
+        if requirement is None:
+            return
+
+        validate_policy_compatibility(
+            canonical=canonical,
+            requirement=requirement,
+        )
 
     def _run_episode(
         self,

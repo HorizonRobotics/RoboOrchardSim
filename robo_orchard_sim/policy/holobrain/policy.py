@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 import os
-from typing import Any
+from typing import Any, TypeAlias
 
 import gymnasium as gym
 import torch
@@ -24,13 +24,18 @@ from pydantic import field_validator
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
+from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
 from robo_orchard_sim.policy.holobrain.adapter import HolobrainAdapter
+from robo_orchard_sim.policy.schema import (
+    CanonicalPolicyInput,
+    PolicyRequirement,
+)
 
-HolobrainAction = dict[str, torch.Tensor]
+HolobrainAction: TypeAlias = UnifiedJointCommand
 _MODEL_DIR_ENV_VAR = "ROBO_ORCHARD_HOLOBRAIN_MODEL_DIR"
 
 
-class HolobrainPolicy(PolicyMixin[dict[str, Any], HolobrainAction]):
+class HolobrainPolicy(PolicyMixin[CanonicalPolicyInput, HolobrainAction]):
     """Local Holobrain policy with an embedded inference pipeline."""
 
     cfg: "HolobrainPolicyCfg"
@@ -57,7 +62,7 @@ class HolobrainPolicy(PolicyMixin[dict[str, Any], HolobrainAction]):
         self._cached_actions = []
         self._cached_index = 0
 
-    def act(self, obs: dict[str, Any]) -> HolobrainAction:
+    def act(self, obs: CanonicalPolicyInput) -> HolobrainAction:
         """Return one action, reusing the local cached horizon if possible."""
         self._validate_observation_batch(obs)
         if self._cached_index >= len(self._cached_actions):
@@ -67,7 +72,10 @@ class HolobrainPolicy(PolicyMixin[dict[str, Any], HolobrainAction]):
         self._cached_index += 1
         return action
 
-    def act_sequence(self, obs: dict[str, Any]) -> list[HolobrainAction]:
+    def act_sequence(
+        self,
+        obs: CanonicalPolicyInput,
+    ) -> list[HolobrainAction]:
         """Return a freshly inferred action horizon for remote batch use."""
         sequence = self._get_fresh_action_sequence(obs)
         self._cached_actions = []
@@ -75,33 +83,59 @@ class HolobrainPolicy(PolicyMixin[dict[str, Any], HolobrainAction]):
         return sequence
 
     def _get_fresh_action_sequence(
-        self, obs: dict[str, Any]
+        self, obs: CanonicalPolicyInput
     ) -> list[HolobrainAction]:
         self._validate_observation_batch(obs)
         self._refresh_action_cache(obs)
         return list(self._cached_actions)
 
-    def _refresh_action_cache(self, obs: dict[str, Any]) -> None:
+    def _refresh_action_cache(self, obs: CanonicalPolicyInput) -> None:
         self._cached_actions = self._run_inference(obs)
         self._cached_index = 0
 
-    def _run_inference(self, obs: dict[str, Any]) -> list[HolobrainAction]:
+    def _run_inference(
+        self,
+        obs: CanonicalPolicyInput,
+    ) -> list[HolobrainAction]:
         model_input = self._adapter.build_model_input(obs)
         model_output = self._pipeline(model_input)
-        device = obs["/robot"]["left_joint_position"].device
+        _, device = self._observation_batch_info(obs)
         return self._adapter.build_action_sequence(
             model_output,
+            obs,
             device=device,
             valid_action_step=self.cfg.valid_action_step,
         )
 
     @staticmethod
-    def _validate_observation_batch(obs: dict[str, Any]) -> None:
-        batch_size = int(obs["/robot"]["left_joint_position"].shape[0])
+    def _validate_observation_batch(obs: CanonicalPolicyInput) -> None:
+        batch_size, _ = HolobrainPolicy._observation_batch_info(obs)
         if batch_size != 1:
             raise ValueError(
                 "HolobrainPolicy currently supports single environment only"
             )
+
+    @staticmethod
+    def _observation_batch_info(
+        obs: CanonicalPolicyInput,
+    ) -> tuple[int, torch.device | str]:
+        try:
+            manipulator_obs = next(iter(obs.manipulators.values()))
+        except StopIteration as exc:
+            raise ValueError(
+                "Holobrain observation must contain at least one manipulator"
+            ) from exc
+        joint_position = manipulator_obs["joint_position"]
+        return int(joint_position.shape[0]), joint_position.device
+
+    @classmethod
+    def policy_requirement(cls) -> PolicyRequirement:
+        return PolicyRequirement(
+            required_camera_modalities=("rgb", "depth", "intrinsic", "pose"),
+            min_camera_count=1,
+            min_manipulator_count=1,
+            require_instruction=True,
+        )
 
     @staticmethod
     def _build_adapter(cfg: "HolobrainPolicyCfg") -> HolobrainAdapter:
