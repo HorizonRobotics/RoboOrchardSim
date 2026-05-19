@@ -221,9 +221,75 @@ def test_unknown_asset_id_raises_with_suggestions(mini_asset_root: Path):
 def test_query_no_filter_returns_all_sorted(mini_asset_root: Path):
     reg = AssetRegistry(str(mini_asset_root))
     metas = reg.query(AssetFilter())
-    ids = [m.asset_id for m in metas]
-    assert ids == sorted(ids)
-    assert len(ids) == 6
+    uuids = [m.uuid for m in metas]
+    assert uuids == sorted(uuids)
+    assert len(uuids) == 6
+
+
+def test_query_sorted_by_uuid_when_asset_id_diverges(tmp_path: Path):
+    """Regression: query result sorts by uuid, not asset_id.
+
+    Built with divergent uuid/asset_id orderings so sort-by-asset_id and
+    sort-by-uuid produce different sequences; verifies query honors uuid.
+    """
+    import json
+    from textwrap import dedent
+
+    def _urdf(name: str, uuid: str, category: str) -> str:
+        return dedent(f"""\
+            <?xml version='1.0' encoding='utf-8'?>
+            <robot name="{name}">
+              <link name="{name}">
+                <inertial>
+                  <mass value="0.15"/>
+                  <origin xyz="0 0 0"/>
+                  <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0"
+                           iyz="0.0" izz="1.0"/>
+                </inertial>
+                <extra_info>
+                  <uuid>{uuid}</uuid>
+                  <domain>food</domain>
+                  <super_category>fruits</super_category>
+                  <category>{category}</category>
+                  <name>{category}</name>
+                  <color>red</color>
+                  <shape>sphere</shape>
+                  <material>organic</material>
+                  <description>test</description>
+                  <min_height>0.05</min_height>
+                  <max_height>0.10</max_height>
+                  <real_height>0.08</real_height>
+                  <min_mass>0.10</min_mass>
+                  <max_mass>0.20</max_mass>
+                  <version>v0.1.0</version>
+                  <generate_time>20260519000000</generate_time>
+                  <tags></tags>
+                </extra_info>
+              </link>
+            </robot>""")
+
+    def _write(rel: str, name: str, uuid: str, category: str) -> None:
+        d = tmp_path / rel
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.urdf").write_text(_urdf(name, uuid, category))
+        (d / f"{name}.usd").write_text("fake")
+        (d / "interaction.json").write_text(json.dumps({"interaction": {}}))
+
+    # asset_id alphabetical: [apple_001, zebra_001]
+    # uuid alphabetical:     [aaa-zebra, zzz-apple]  -> reversed
+    _write("food/fruits/apple_001", "apple_001", "zzz-apple", "apple")
+    _write("food/fruits/zebra_001", "zebra_001", "aaa-zebra", "zebra")
+
+    reg = AssetRegistry(str(tmp_path))
+    metas = reg.query(AssetFilter())
+
+    uuids = [m.uuid for m in metas]
+    asset_ids = [m.asset_id for m in metas]
+
+    # By uuid: aaa-zebra comes first
+    assert uuids == ["aaa-zebra", "zzz-apple"]
+    # Sort-by-asset_id would give [apple_001, zebra_001] — the OPPOSITE order
+    assert asset_ids == ["zebra_001", "apple_001"]
 
 
 def test_query_by_tag_graspable(mini_asset_root: Path):

@@ -294,9 +294,9 @@ class AssetRegistry:
 
     # ---- to be implemented in later tasks ----
     def query(self, asset_filter: AssetFilter) -> list[AssetMeta]:
-        """Return all metas matching asset_filter, sorted by asset_id."""
+        """Return all metas matching asset_filter, sorted by uuid."""
         matches = [m for m in self._metas.values() if asset_filter.matches(m)]
-        matches.sort(key=lambda m: m.asset_id)
+        matches.sort(key=lambda m: m.uuid)
         return matches
 
     def build_spec(
@@ -489,7 +489,7 @@ class AssetSampler:
             pool.append(m)
 
         # deterministic baseline ordering
-        pool.sort(key=lambda m: m.asset_id)
+        pool.sort(key=lambda m: m.uuid)
 
         if len(pool) < spec.min_count:
             raise InsufficientPoolError(
@@ -552,7 +552,7 @@ class AssetSampler:
                 continue
             pool.append(m)
 
-        pool.sort(key=lambda m: m.asset_id)
+        pool.sort(key=lambda m: m.uuid)
 
         if len(pool) < pool_size:
             raise InsufficientPoolError(
