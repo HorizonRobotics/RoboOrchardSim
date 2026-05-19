@@ -181,14 +181,23 @@ class PoseResetTerm(
                         )
                 root_states = asset.data.default_root_state[env_ids].clone()
 
-                positions = (
-                    root_states[:, 0:3]
-                    + self._env.scene.env_origins[env_ids]
-                    + rand_samples[:, 0:3]
-                )
-                orientations = math_utils.quat_mul(
-                    root_states[:, 3:7], rand_samples[:, 3:7]
-                )
+                if self._mode == "orderly":
+                    # pose_list entries are absolute world-frame poses;
+                    # env_origins still applies for multi-env layouts.
+                    positions = (
+                        self._env.scene.env_origins[env_ids]
+                        + rand_samples[:, 0:3]
+                    )
+                    orientations = rand_samples[:, 3:7]
+                else:
+                    positions = (
+                        root_states[:, 0:3]
+                        + self._env.scene.env_origins[env_ids]
+                        + rand_samples[:, 0:3]
+                    )
+                    orientations = math_utils.quat_mul(
+                        root_states[:, 3:7], rand_samples[:, 3:7]
+                    )
                 asset.write_root_pose_to_sim(
                     torch.cat([positions, orientations], dim=-1),
                     env_ids=env_ids,
