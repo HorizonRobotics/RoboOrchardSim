@@ -17,6 +17,9 @@
 from robo_orchard_sim.orchard_env.scene.plane_table_scene import (
     PlaneTableScene,
 )
+from robo_orchard_sim.orchard_env.scene.room_table_scene import (
+    RoomTableScene,
+)
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
 
-__all__ = ["PlaneTableScene", "SceneBase"]
+__all__ = ["PlaneTableScene", "RoomTableScene", "SceneBase"]

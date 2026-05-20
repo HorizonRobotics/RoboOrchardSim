@@ -36,6 +36,9 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
 from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
     FrankaPandaEmbodiment,
 )
+from robo_orchard_sim.orchard_env.scene.room_table_scene import (
+    RoomTableScene,
+)
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
 from robo_orchard_sim.task_suite import base as task_base
 from robo_orchard_sim.task_suite.base import TaskDefinition
@@ -136,6 +139,12 @@ def test_resolve_scene_rejects_unknown_registered_name() -> None:
 
     with pytest.raises(ValueError, match="Unknown scene"):
         UnknownSceneTaskDefinition.resolve_scene()
+
+
+def test_resolve_scene_missing_yaml_scene_returns_room_table() -> None:
+    scene = DummyTaskDefinition.resolve_scene()
+
+    assert isinstance(scene, RoomTableScene)
 
 
 def test_resolve_embodiment_prefers_yaml_over_class_default(

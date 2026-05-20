@@ -35,6 +35,10 @@ from robo_orchard_sim.task_suite import (
 )
 from robo_orchard_sim.task_suite.base import TaskDefinition
 
+TASK_SUITE_ROOT = (
+    Path(__file__).resolve().parents[4] / "robo_orchard_sim" / "task_suite"
+)
+
 
 def _stub_task_def_with_config(yaml_path: str) -> type[TaskDefinition]:
     """Build a minimal TaskDefinition subclass pointing at a YAML."""
@@ -81,7 +85,7 @@ def test_resolve_asset_configs_returns_none_when_absent(tmp_path: Path):
         textwrap.dedent(
             """\
             scene:
-              type: plane_table
+              type: room_table
             """
         )
     )
@@ -101,6 +105,19 @@ def test_resolve_asset_configs_returns_none_when_config_path_unset():
             raise NotImplementedError
 
     assert _NoConfigTask.resolve_asset_configs() is None
+
+
+def test_task_suite_yaml_scene_backgrounds_explicit_configs_use_room_table():
+    yaml_paths = sorted(TASK_SUITE_ROOT.rglob("*.yaml"))
+
+    scene_types = {
+        path.relative_to(TASK_SUITE_ROOT).as_posix(): yaml.safe_load(
+            path.read_text()
+        )["scene"]["type"]
+        for path in yaml_paths
+        if "scene" in yaml.safe_load(path.read_text())
+    }
+    assert set(scene_types.values()) == {"room_table"}
 
 
 @pytest.mark.parametrize(
@@ -162,7 +179,7 @@ def test_place_a2b_yaml_ships_valid_task_pose_range(yaml_name: str):
     assert "task" in raw, (
         f"{yaml_name} at {yaml_path} is missing the task block"
     )
-    params = raw["task"]["params"]
+    params = raw["task"]["params"]["pose_reset"]
     assert "pose_range" in params
     assert "min_separation" in params
     assert "mode" in params

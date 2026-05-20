@@ -130,6 +130,12 @@ def _bootstrap_scene_registry() -> None:
         )
 
         register_scene("plane_table", PlaneTableScene)
+    if "room_table" not in SCENE_REGISTRY:
+        from robo_orchard_sim.orchard_env.scene.room_table_scene import (
+            RoomTableScene,
+        )
+
+        register_scene("room_table", RoomTableScene)
 
 
 def _bootstrap_embodiment_registry() -> None:
