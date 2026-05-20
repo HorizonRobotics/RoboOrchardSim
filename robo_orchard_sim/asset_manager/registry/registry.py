@@ -31,6 +31,7 @@ import pyarrow.parquet as pq
 from robo_orchard_sim.asset_manager.registry.build_index import (
     INDEX_FILENAME,
     SCHEMA_VERSION,
+    asset_set_fingerprint,
     build_asset_index,
 )
 from robo_orchard_sim.asset_manager.registry.errors import (
@@ -132,6 +133,36 @@ class AssetRegistry:
         self._by_tag: dict[str, list[str]] = {}
         self._load(auto_build=auto_build_index)
 
+    def _check_asset_set_staleness(self, table, schema_meta, *, auto_build):
+        """Rebuild (or warn) if the asset set changed since the index build."""
+        stored = schema_meta.get(b"asset_set_fingerprint")
+        if stored is None:
+            logger.info(
+                "index at %s has no asset_set_fingerprint (older build); "
+                "staleness check skipped until next rebuild",
+                self._index_path,
+            )
+            return table
+        current = asset_set_fingerprint(self._asset_root)
+        if stored.decode() == current:
+            return table
+        if auto_build:
+            logger.info(
+                "asset set changed since index build; rebuilding %s",
+                self._index_path,
+            )
+            build_asset_index(
+                str(self._asset_root), output_path=str(self._index_path)
+            )
+            return pq.read_table(str(self._index_path))
+        logger.warning(
+            "asset set changed since index build at %s; index may be stale "
+            "(new/removed assets invisible). Rebuild with build_asset_index "
+            "or pass auto_build_index=True.",
+            self._index_path,
+        )
+        return table
+
     def _load(self, *, auto_build: bool) -> None:
         index_path = self._index_path
         if not index_path.exists():
@@ -199,6 +230,10 @@ class AssetRegistry:
                     f"rebuilt asset_index.parquet schema_version={version!r} "
                     f"expected {SCHEMA_VERSION!r}"
                 )
+
+        table = self._check_asset_set_staleness(
+            table, schema_meta, auto_build=auto_build
+        )
 
         # --- atomic load (Fix 1 + Fix 2) ---
         metas: dict[str, AssetMeta] = {}

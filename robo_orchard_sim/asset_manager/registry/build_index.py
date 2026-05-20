@@ -237,13 +237,31 @@ def _row_from_parsed(
     }
 
 
-def _build_table(rows: list[dict]) -> pa.Table:
+def asset_set_fingerprint(root: Path) -> str:
+    """sha256 over sorted asset dir paths (add/remove/rename detection)."""
+    rels: list[str] = []
+    for domain in sorted(root.iterdir()):
+        if not domain.is_dir():
+            continue
+        for super_dir in sorted(domain.iterdir()):
+            if not super_dir.is_dir():
+                continue
+            for asset_dir in sorted(super_dir.iterdir()):
+                if asset_dir.is_dir():
+                    rels.append(str(asset_dir.relative_to(root)))
+    return hashlib.sha256("\n".join(rels).encode()).hexdigest()
+
+
+def _build_table(rows: list[dict], fingerprint: str) -> pa.Table:
     if rows:
         table = pa.Table.from_pylist(rows, schema=_EMPTY_SCHEMA)
     else:
         table = _EMPTY_SCHEMA.empty_table()
     return table.replace_schema_metadata(
-        {b"schema_version": SCHEMA_VERSION.encode()}
+        {
+            b"schema_version": SCHEMA_VERSION.encode(),
+            b"asset_set_fingerprint": fingerprint.encode(),
+        }
     )
 
 
@@ -260,6 +278,7 @@ def build_asset_index(
         output_path = str(root / INDEX_FILENAME)
 
     report = BuildReport(output_path=output_path)
+    fingerprint = asset_set_fingerprint(root)
     asset_dirs = _find_asset_dirs(root)
     report.total_scanned = len(asset_dirs)
 
@@ -311,7 +330,7 @@ def build_asset_index(
 
     report.total_indexed = len(rows)
 
-    table = _build_table(rows)
+    table = _build_table(rows, fingerprint)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output_path)
     logger.info(

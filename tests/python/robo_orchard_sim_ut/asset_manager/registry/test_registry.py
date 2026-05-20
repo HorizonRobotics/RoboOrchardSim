@@ -351,3 +351,48 @@ def test_query_with_exclude(mini_asset_root: Path):
         AssetFilter(category="apple", exclude=frozenset({"u-apple-001"}))
     )
     assert [m.asset_id for m in metas] == ["apple_002"]
+
+
+def test_registry_rebuilds_when_asset_set_changes(mini_asset_root):
+    """Adding an asset after the index is built triggers an auto-rebuild."""
+    import shutil
+
+    reg = AssetRegistry(str(mini_asset_root))
+    before = len(reg)
+    assert not reg.has("u-apple-999")
+
+    # Clone an existing asset into a new dir with a distinct uuid/asset_id.
+    src = mini_asset_root / "food/fruits/apple_001"
+    dst = mini_asset_root / "food/fruits/apple_999"
+    shutil.copytree(src, dst)
+    (dst / "apple_001.urdf").rename(dst / "apple_999.urdf")
+    (dst / "apple_001.usd").rename(dst / "apple_999.usd")
+    urdf = dst / "apple_999.urdf"
+    urdf.write_text(
+        urdf.read_text()
+        .replace("u-apple-001", "u-apple-999")
+        .replace("apple_001", "apple_999")
+    )
+
+    # auto_build_index=True (default): stale fingerprint -> rebuild -> visible.
+    reg2 = AssetRegistry(str(mini_asset_root))
+    assert len(reg2) == before + 1
+    assert reg2.has("u-apple-999")
+
+
+def test_registry_warns_but_keeps_stale_index_without_autobuild(
+    mini_asset_root, caplog
+):
+    """auto_build_index=False: stale set warns, new asset stays invisible."""
+    import logging
+    import shutil
+
+    AssetRegistry(str(mini_asset_root))  # build initial index
+    src = mini_asset_root / "food/fruits/apple_001"
+    dst = mini_asset_root / "food/fruits/apple_999"
+    shutil.copytree(src, dst)
+
+    with caplog.at_level(logging.WARNING):
+        reg = AssetRegistry(str(mini_asset_root), auto_build_index=False)
+    assert not reg.has("u-apple-999")
+    assert any("stale" in r.message.lower() for r in caplog.records)
