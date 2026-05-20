@@ -132,11 +132,14 @@ class AssetResolver:
         registry: AssetRegistry,
         splits: AssetSplits | None = None,
         rng: np.random.Generator | None = None,
+        *,
+        active_snapshot: frozenset[str] | None = None,
     ) -> None:
         self._registry = registry
         self._splits = splits
         self._sampler = AssetSampler(registry)
         self._rng = rng or np.random.default_rng()
+        self._active_snapshot = active_snapshot
 
     def resolve(
         self,
@@ -344,12 +347,17 @@ class AssetResolver:
         only_in = self._resolve_split_only_in(role, entry, err_repr=str(entry))
         if only_in is not None and uuid not in only_in:
             split_name = entry.get("split")
+            if split_name is not None and self._active_snapshot is not None:
+                scope_desc = f"split {split_name!r} ∩ active_snapshot"
+            elif split_name is not None:
+                scope_desc = f"split {split_name!r}"
+            else:
+                scope_desc = "active_snapshot"
             logger.warning(
-                "role %r: pinned uuid %r is not in split %r; "
-                "uuid takes precedence.",
+                "role %r: pinned uuid %r is not in %s; uuid takes precedence.",
                 role,
                 uuid,
-                split_name,
+                scope_desc,
             )
 
         return meta, self._registry.build_spec(meta, name=prim_name, role=role)
@@ -360,27 +368,47 @@ class AssetResolver:
         entry: dict,
         err_repr: str,
     ) -> frozenset[str] | None:
-        """Resolve the `split` field to a `only_in` uuid set.
+        """Resolve the `split` field to an `only_in` uuid set.
 
-        Returns None when the entry omits ``split`` (no split filter
-        applied, full library) or when the resolver has no splits
-        configured. Raises AssetResolutionError for unknown split names.
+        Returns None when neither split nor active_snapshot applies.
+        Raises AssetResolutionError for unknown split names or when
+        the resulting (split ∩ active_snapshot) is empty.
         """
+        only_in: frozenset[str] | None = None
         split_name = entry.get("split")
-        if split_name is None:
-            return None
-        if self._splits is None:
-            return None
-        if split_name not in _SPLIT_FIELDS:
-            raise AssetResolutionError(
-                role=role,
-                filter_repr=err_repr,
-                cause=ValueError(
-                    f"Unknown split '{split_name}'. "
-                    f"Must be one of: {sorted(_SPLIT_FIELDS)}"
-                ),
+        if split_name is not None and self._splits is not None:
+            if split_name not in _SPLIT_FIELDS:
+                raise AssetResolutionError(
+                    role=role,
+                    filter_repr=err_repr,
+                    cause=ValueError(
+                        f"Unknown split '{split_name}'. "
+                        f"Must be one of: {sorted(_SPLIT_FIELDS)}"
+                    ),
+                )
+            only_in = getattr(self._splits, split_name)
+
+        if self._active_snapshot is not None:
+            only_in = (
+                (only_in & self._active_snapshot)
+                if only_in is not None
+                else self._active_snapshot
             )
-        return getattr(self._splits, split_name)
+            if not only_in:
+                scope_desc = (
+                    f"split {split_name!r} ∩ active_snapshot"
+                    if split_name is not None
+                    else "active_snapshot"
+                )
+                raise AssetResolutionError(
+                    role=role,
+                    filter_repr=err_repr,
+                    cause=ValueError(
+                        f"{scope_desc} is empty — snapshot does not cover "
+                        "any assets for this role"
+                    ),
+                )
+        return only_in
 
     def _resolve_distractors(
         self,

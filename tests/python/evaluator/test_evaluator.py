@@ -627,10 +627,13 @@ class TestEvaluator:
         monkeypatch.setattr(
             evaluator_module,
             "_create_asset_resolver",
-            lambda *, registry_obj, seed: types.SimpleNamespace(
-                registry=registry_obj,
-                splits=None,
-                rng=f"rng:{seed}",
+            lambda *, registry_obj, seed, active_snapshot=None: (
+                types.SimpleNamespace(
+                    registry=registry_obj,
+                    splits=None,
+                    rng=f"rng:{seed}",
+                    active_snapshot=active_snapshot,
+                )
             ),
         )
         monkeypatch.setattr(
@@ -1636,6 +1639,41 @@ class TestEvaluator:
             ]
             == "instruction-template-7-actor-7"
         )
+
+    def test_evaluator_init_systemexits_on_snapshot_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import robo_orchard_sim.asset_manager.snapshot as snap_mod
+        import robo_orchard_sim.evaluator.evaluator as evaluator_module
+        from robo_orchard_sim.asset_manager.snapshot.errors import (
+            InvalidSnapshotYamlError,
+        )
+
+        snap_path = tmp_path / "bad_snap.yaml"
+        snap_path.write_text("placeholder", encoding="utf-8")
+
+        def _raise_snapshot_error(path, registry, *, strict=True):
+            raise InvalidSnapshotYamlError("bad yaml")
+
+        monkeypatch.setattr(
+            evaluator_module,
+            "_create_asset_registry",
+            lambda asset_root: f"registry:{asset_root}",
+        )
+        monkeypatch.setattr(snap_mod, "load_snapshot", _raise_snapshot_error)
+
+        cfg = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+            snapshot_path=snap_path,
+        )
+
+        with pytest.raises(SystemExit, match="snapshot"):
+            cfg()
 
     def test_episode_records_distinct_meta_dicts_for_multi_env(
         self,

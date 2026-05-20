@@ -658,3 +658,83 @@ class TestResolveByUuid:
             mini_resolver.resolve(configs)
         assert exc_info.value.role == "pick"
         assert isinstance(exc_info.value.cause, KeyError)
+
+
+class TestActiveSnapshot:
+    """active_snapshot restricts resolved assets to the snapshot uuid set."""
+
+    @staticmethod
+    def _build_spec_passthrough(meta, **_kw):
+        return meta
+
+    def test_resolve_active_snapshot_restricts_pool_to_snapshot(
+        self, mini_registry
+    ):
+        with patch.object(
+            mini_registry,
+            "build_spec",
+            side_effect=self._build_spec_passthrough,
+        ):
+            resolver = AssetResolver(
+                registry=mini_registry,
+                active_snapshot=frozenset({"u-apple-001"}),
+                rng=np.random.default_rng(42),
+            )
+            result = resolver.resolve(
+                {"pick": {"filter": {}, "prim_name": "x"}}
+            )
+        assert result["pick"].usd_path.endswith("apple_001.usd")
+
+    def test_resolve_active_snapshot_intersects_split_returns_overlap(
+        self, mini_registry
+    ):
+        from robo_orchard_sim.asset_manager.splits.splits import AssetSplits
+
+        splits = AssetSplits(
+            name="t",
+            seen=frozenset({"u-apple-001", "u-apple-002", "u-orange-001"}),
+        )
+        with patch.object(
+            mini_registry,
+            "build_spec",
+            side_effect=self._build_spec_passthrough,
+        ):
+            resolver = AssetResolver(
+                registry=mini_registry,
+                splits=splits,
+                active_snapshot=frozenset({"u-apple-002", "u-box-001"}),
+                rng=np.random.default_rng(42),
+            )
+            result = resolver.resolve(
+                {"pick": {"filter": {}, "prim_name": "x", "split": "seen"}}
+            )
+        # seen ∩ snapshot = {u-apple-002}
+        assert result["pick"].usd_path.endswith("apple_002.usd")
+
+    def test_resolve_active_snapshot_disjoint_from_split_raises(
+        self, mini_registry
+    ):
+        from robo_orchard_sim.asset_manager.splits.splits import AssetSplits
+
+        splits = AssetSplits(name="t", seen=frozenset({"u-apple-001"}))
+        with patch.object(
+            mini_registry,
+            "build_spec",
+            side_effect=self._build_spec_passthrough,
+        ):
+            resolver = AssetResolver(
+                registry=mini_registry,
+                splits=splits,
+                active_snapshot=frozenset({"u-orange-001"}),
+                rng=np.random.default_rng(42),
+            )
+            with pytest.raises(AssetResolutionError, match="snapshot"):
+                resolver.resolve(
+                    {
+                        "pick": {
+                            "filter": {},
+                            "prim_name": "x",
+                            "split": "seen",
+                        }
+                    }
+                )

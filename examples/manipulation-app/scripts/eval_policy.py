@@ -115,6 +115,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default="logs/records",
         help="Output directory for MCAP recording files.",
     )
+    parser.add_argument(
+        "--snapshot",
+        dest="snapshot_path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional snapshot YAML; restricts asset sampling to its "
+            "uuid set for reproducibility."
+        ),
+    )
     return parser
 
 
@@ -201,6 +211,7 @@ def main() -> None:
             seed=args.seed,
             episode_num=args.episode_num,
             max_steps=args.max_steps,
+            snapshot_path=args.snapshot_path,
         )
         with evaluator_cfg() as evaluator:
             result = evaluator.evaluate(policy)

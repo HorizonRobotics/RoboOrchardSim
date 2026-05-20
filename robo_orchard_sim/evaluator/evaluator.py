@@ -19,6 +19,7 @@
 from __future__ import annotations
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -72,7 +73,12 @@ def _create_asset_registry(asset_root: str):
     return AssetRegistry(asset_root)
 
 
-def _create_asset_resolver(*, registry_obj: Any, seed: int):
+def _create_asset_resolver(
+    *,
+    registry_obj: Any,
+    seed: int,
+    active_snapshot: frozenset[str] | None = None,
+):
     """Create the resolver used to assemble one episode-scoped task.
 
     The resolver is seeded from the episode seed supplied by the evaluator.
@@ -86,6 +92,7 @@ def _create_asset_resolver(*, registry_obj: Any, seed: int):
         registry=registry_obj,
         splits=None,  # TODO: support splits
         rng=np.random.default_rng(seed),
+        active_snapshot=active_snapshot,
     )
 
 
@@ -134,6 +141,22 @@ class Evaluator:
         self._env: IsaacManagerBasedEnv | None = None
         self._task: OrchardEnv | None = None
         self._record_run_dir: str | None = None
+        self._active_snapshot_uuids: frozenset[str] | None = None
+        if self.cfg.snapshot_path is not None:
+            from robo_orchard_sim.asset_manager.snapshot import (
+                SnapshotError,
+                load_snapshot,
+            )
+
+            _reg = _create_asset_registry(self.cfg.asset_root)
+            try:
+                self._active_snapshot_uuids = load_snapshot(
+                    self.cfg.snapshot_path, _reg
+                ).uuids
+            except SnapshotError as exc:
+                raise SystemExit(
+                    f"\nERROR loading snapshot {self.cfg.snapshot_path}: {exc}"
+                ) from exc
         if self.cfg.enable_recording:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
             self._record_run_dir = os.path.join(
@@ -238,6 +261,7 @@ class Evaluator:
         resolver = _create_asset_resolver(
             registry_obj=registry_obj,
             seed=seed,
+            active_snapshot=self._active_snapshot_uuids,
         )
         task_builder = _get_task_builder()
         task = task_builder(
@@ -770,3 +794,4 @@ class EvaluatorCfg(ClassConfig):
     episode_num: int = 1
     max_steps: int = 1000
     max_settle_steps: int = 50
+    snapshot_path: Path | None = None

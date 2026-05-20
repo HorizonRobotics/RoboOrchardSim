@@ -19,6 +19,7 @@
 from __future__ import annotations
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -106,6 +107,24 @@ class TaskDataSynthesisRunner:
             "Data synthesis recordings will be written to: "
             f"{self.cfg.record_dir}"
         )
+
+        self._active_snapshot_uuids: frozenset[str] | None = None
+        if self.cfg.snapshot_path is not None:
+            from robo_orchard_sim.asset_manager.registry import AssetRegistry
+            from robo_orchard_sim.asset_manager.snapshot import (
+                SnapshotError,
+                load_snapshot,
+            )
+
+            _reg = AssetRegistry(self.cfg.asset_root)
+            try:
+                self._active_snapshot_uuids = load_snapshot(
+                    self.cfg.snapshot_path, _reg
+                ).uuids
+            except SnapshotError as exc:
+                raise SystemExit(
+                    f"\nERROR loading snapshot {self.cfg.snapshot_path}: {exc}"
+                ) from exc
 
     def iter_episode_seeds(self) -> range:
         """Return the deterministic seed sequence used by this run."""
@@ -390,6 +409,7 @@ class TaskDataSynthesisRunner:
             registry=registry,
             splits=None,  # TODO: support splits when task configs expose them.
             rng=np.random.default_rng(seed),
+            active_snapshot=self._active_snapshot_uuids,
         )
         config_path = self._resolve_config_path()
 
@@ -791,6 +811,7 @@ class TaskDataSynthesisCfg(ClassConfig[TaskDataSynthesisRunner]):
     record_dir: str = "logs/data_synthesis"
     output_config_dir: str | None = "configs/data_synthesis"
     task_save_root: str | None = None
+    snapshot_path: Path | None = None
     launch: LaunchConfig = LaunchConfig()
     debug_vis: bool = False
     user_data: dict[str, Any] = {}

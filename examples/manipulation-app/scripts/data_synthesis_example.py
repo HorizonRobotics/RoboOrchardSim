@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import os
 from datetime import datetime
+from pathlib import Path
 
 from robo_orchard_sim.runner.data_synthesis import single_task
 
@@ -64,6 +65,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             f"Asset library root. Defaults to the ${_ASSET_ROOT_ENV} env "
             "var and is required if that env var is not set."
+        ),
+    )
+    parser.add_argument(
+        "--snapshot",
+        dest="snapshot_path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional snapshot YAML; restricts asset sampling to its "
+            "uuid set for reproducibility."
         ),
     )
     parser.add_argument(
