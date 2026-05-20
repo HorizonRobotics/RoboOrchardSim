@@ -1,0 +1,17 @@
+[
+  {
+    "natural_language": "Pick up the bread far from the chewing_gum and put it into the mug.",
+    "formal_logic": "SEQ(Pick(bread), PlaceAt(bread, mug))",
+    "operator": "SEQ",
+    "actions": ["Pick", "PlaceAt"],
+    "spatial_relation": "far",
+    "src_objects": ["bread"],
+    "dest_object": "mug",
+    "position": {
+      "src":          {"category": "bread",       "position": [0.7322589176128462,  0.11838865657335057, 0.05], "rotation": [1.0, 0.0, 0.0, 0.0]},
+      "ref":          {"category": "chewing_gum", "position": [0.7009374730363911, -0.42273990536365713, 0.05], "rotation": [1.0, 0.0, 0.0, 0.0]},
+      "dest":         {"category": "mug",         "position": [0.8480974614669410, -0.35056158433972530, 0.05], "rotation": [1.0, 0.0, 0.0, 0.0]},
+      "distractor_0": {"category": "bread",       "position": [0.4426335440387950,  0.00358804302925281, 0.05], "rotation": [1.0, 0.0, 0.0, 0.0]}
+    }
+  }
+]

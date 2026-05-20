@@ -67,16 +67,14 @@ def test_parse_layout_rejects_role_mismatch():
 @pytest.mark.parametrize(
     "mutate,err_match",
     [
-        (lambda p: p.pop("asset_bindings"), "asset_bindings"),
-        (lambda p: p["asset_bindings"]["src"].pop("position"), "position"),
+        (lambda p: p.pop("position"), "position"),
+        (lambda p: p["position"]["src"].pop("position"), "position"),
         (
-            lambda p: p["asset_bindings"]["src"].__setitem__(
-                "position", [0.0, 0.0]
-            ),
+            lambda p: p["position"]["src"].__setitem__("position", [0.0, 0.0]),
             "position",
         ),
         (
-            lambda p: p["asset_bindings"]["src"].__setitem__(
+            lambda p: p["position"]["src"].__setitem__(
                 "rotation", [1.0, 0.0, 0.0]
             ),
             "rotation",

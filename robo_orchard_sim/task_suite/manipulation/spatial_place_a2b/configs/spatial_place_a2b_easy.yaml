@@ -28,7 +28,7 @@ embodiment:
     right_joint7: 0.05
     right_joint8: -0.05
 
-layout: spatial_pick_easy.json
+layout: spatial_place_a2b_easy.json
 
 asset_configs:
   pick:

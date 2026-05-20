@@ -14,7 +14,7 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""Spatial-pick task definitions (D3) driven by upstream layout JSON."""
+"""Layout-driven spatial place-a2b task definitions (upstream layout JSON)."""
 
 from __future__ import annotations
 import logging
@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from robo_orchard_sim.task_suite.base import TaskDefinition
-from robo_orchard_sim.task_suite.manipulation.spatial_pick import action_plan
+from robo_orchard_sim.task_suite.manipulation.spatial_place_a2b.action_plan import (  # noqa: E501
+    build_task_atomic_action_plan,
+)
 from robo_orchard_sim.task_suite.registration import register_task
 
 if TYPE_CHECKING:
@@ -38,10 +40,10 @@ _DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _DIR / "configs"
 
 
-class SpatialPickTaskDefinitionBase(TaskDefinition):
-    """Layout-driven spatial-pick base."""
+class SpatialPlaceA2BTaskDefinitionBase(TaskDefinition):
+    """Layout-driven spatial place-a2b base."""
 
-    NAMED_ROLES: ClassVar[dict[str, str]] = {"src": "pick"}
+    NAMED_ROLES: ClassVar[dict[str, str]] = {"src": "pick", "dest": "place"}
     """Upstream JSON role -> task slot. Other roles auto-fill distractor_*."""
 
     @classmethod
@@ -53,13 +55,9 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
         from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
         from robo_orchard_sim.orchard_env.layout.loader import parse_layout
         from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
-        from robo_orchard_sim.orchard_env.tasks.pick_task import (
-            PickAssets,
-            PickTask,
-            PickTaskParams,
-        )
-        from robo_orchard_sim.task_suite.manipulation.semantic_pick.pick_env import (  # noqa: E501
-            PickTaskDefinitionBase,
+        from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
+            PlaceA2BTask,
+            PlaceA2BTaskAssets,
         )
 
         if resolver is None:
@@ -85,15 +83,12 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
                 f"{cls.__name__} requires num_envs == 1; got "
                 f"{cfg.scene.num_envs}"
             )
-        if cfg.task is not None and "pose_reset" in cfg.task.params:
+        if cfg.task is not None and "pose_range" in cfg.task.params:
             logger.warning(
-                "%s: pose_reset in YAML is ignored under layout mode "
+                "%s: pose_range in YAML is ignored under layout mode "
                 "(pose comes from the layout JSON).",
                 cls.__name__,
             )
-        task_params = PickTaskParams(
-            **cls.resolve_task_params(config_path=path)
-        )
 
         yaml_path = cls._resolve_config_path(path)
         seq = parse_layout((yaml_path.parent / cfg.layout).resolve())
@@ -104,24 +99,25 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
             cls.NAMED_ROLES,
             slot_filters=cfg.asset_configs,
         )
-        pick_assets = PickAssets(
+        place_assets = PlaceA2BTaskAssets(
             pick=assets["pick"],
+            place=assets["place"],
             distractors=(
-                [assets[slot] for slot in sorted(assets) if slot != "pick"]
+                [
+                    assets[slot]
+                    for slot in sorted(assets)
+                    if slot not in ("pick", "place")
+                ]
                 or None
             ),
         )
-        scene = cls.resolve_scene(config_path=path)
-        PickTaskDefinitionBase._apply_light_reset_scene_overrides(
-            scene, task_params
-        )
 
         return OrchardEnv(
-            scene=scene,
+            scene=cls.resolve_scene(config_path=path),
             embodiment=cls.resolve_embodiment(config_path=path),
-            task=PickTask(
-                assets=pick_assets,
-                params=task_params,
+            task=PlaceA2BTask(
+                assets=place_assets,
+                params=None,
                 instruction=cls.resolve_instruction(config_path=path),
             ),
             layout_builder=layout_builder,
@@ -132,40 +128,45 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
         cls,
         orchard_env: "OrchardEnv",
     ) -> list["BaseExecutorCfg"]:
-        """Default atomic plan: pick + lift."""
+        """Default atomic plan: pick, lift, place."""
         del cls
-        return action_plan.build_task_atomic_action_plan(orchard_env)
+        return build_task_atomic_action_plan(orchard_env)
 
 
-def _make_spatial_pick_task_definition_class(
+def _make_spatial_place_a2b_task_definition_class(
     *,
     class_name: str,
     namespace: str,
     yaml_name: str,
-) -> type[SpatialPickTaskDefinitionBase]:
+) -> type[SpatialPlaceA2BTaskDefinitionBase]:
     task_cls = type(
         class_name,
-        (SpatialPickTaskDefinitionBase,),
+        (SpatialPlaceA2BTaskDefinitionBase,),
         {
             "__doc__": (
-                f"Task definition for the '{namespace}' spatial-pick variant."
+                f"Task definition for the '{namespace}' spatial place-a2b "
+                "variant."
             ),
             "__module__": __name__,
             "namespace": namespace,
             "config_path": str(_CONFIG_DIR / yaml_name),
         },
     )
-    return cast(type[SpatialPickTaskDefinitionBase], register_task(task_cls))
+    return cast(
+        type[SpatialPlaceA2BTaskDefinitionBase], register_task(task_cls)
+    )
 
 
-SpatialPickEasyTaskDefinition = _make_spatial_pick_task_definition_class(
-    class_name="SpatialPickEasyTaskDefinition",
-    namespace="spatial_pick_easy",
-    yaml_name="spatial_pick_easy.yaml",
+SpatialPlaceA2BEasyTaskDefinition = (
+    _make_spatial_place_a2b_task_definition_class(
+        class_name="SpatialPlaceA2BEasyTaskDefinition",
+        namespace="spatial_place_a2b_easy",
+        yaml_name="spatial_place_a2b_easy.yaml",
+    )
 )
 
 
 __all__ = [
-    "SpatialPickTaskDefinitionBase",
-    "SpatialPickEasyTaskDefinition",
+    "SpatialPlaceA2BTaskDefinitionBase",
+    "SpatialPlaceA2BEasyTaskDefinition",
 ]

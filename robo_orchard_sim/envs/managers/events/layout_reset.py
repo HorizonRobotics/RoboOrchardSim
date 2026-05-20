@@ -52,14 +52,21 @@ class LayoutResetTerm(
         self._cfg = cfg
         self._env = env
         self._count = 0
-        if env.pool_alias_state is None:
+        needs_pool = any(
+            len(members) >= 2
+            for members in cfg.role_member_by_category.values()
+        )
+        if needs_pool and env.pool_alias_state is None:
             raise RuntimeError(
-                "LayoutResetTerm requires env.pool_alias_state to be "
-                "available; got None"
+                "LayoutResetTerm requires env.pool_alias_state for "
+                "multi-category roles; got None"
             )
-        for role, members in cfg.role_member_by_category.items():
-            if len(members) >= 2 and not env.pool_alias_state.has_pool(role):
-                env.pool_alias_state.register_pool(role)
+        if env.pool_alias_state is not None:
+            for role, members in cfg.role_member_by_category.items():
+                if len(members) >= 2 and not env.pool_alias_state.has_pool(
+                    role
+                ):
+                    env.pool_alias_state.register_pool(role)
 
     def __call__(self, event_msg: ResetEvent) -> None:
         idx = self._count

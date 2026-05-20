@@ -10,7 +10,7 @@
     "src_objects": ["apple"],
     "dest_object": "banana",
 
-    "asset_bindings": {
+    "position": {
         "src": {
             "category": "apple",
             "position": [0.0451, 0.1068, 0.8324],

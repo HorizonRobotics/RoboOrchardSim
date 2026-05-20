@@ -108,3 +108,26 @@ def test_pool_role_stows_inactive_members_and_binds_alias():
         "inactive not stowed"
     )
     assert env.pool_alias_state.resolve("src") == "src__apple"
+
+
+def test_single_category_role_works_without_pool_alias_state():
+    """Single-entry layout (all ObjectSpec) must not require pool_alias_state.
+
+    Regression: LayoutResetTerm.__init__ used to raise RuntimeError whenever
+    env.pool_alias_state was None, only attached for pooled layouts.
+    """
+    env, poses = _env_with_recorder()
+    env.pool_alias_state = None
+    cfg = _cfg(
+        entries=[
+            _layout({"src": ("apple", (0.5, 0.6, 0.7), (1.0, 0.0, 0.0, 0.0))})
+        ],
+        role_member_by_category={"src": {"apple": "src__apple"}},
+    )
+
+    term = LayoutResetTerm(cfg, env)
+    term(MagicMock(env_ids=None))
+
+    teleported = [p for p in poses if p[0] == "src__apple"]
+    assert teleported, "single-category role was not teleported"
+    assert torch.allclose(teleported[0][1][:3], torch.tensor((0.5, 0.6, 0.7)))

@@ -68,7 +68,7 @@ asset_configs:
     # uuid: <asset-uuid>            # pin a specific asset; takes precedence
     #                                 over filter/split (mismatch -> warning).
     filter:
-      # tags: [graspable]           # AND-match; requires URDF <tags>
+      # tags: [is_graspable]        # AND-match; requires URDF <tags>
       super_category: fruits          # ware / tableware / ornaments / ...
       category: peach                 # mug / bowl / toothbrush / ...
       # color: white
@@ -89,7 +89,7 @@ asset_configs:
     match: [super_category]         # fields equal to anchor's
     differ: [category]              # fields differing from anchor's
     # filter:                       # optional absolute filter
-    #   tags: [graspable]
+    #   tags: [is_graspable]
     min_count: 1                    # fail if pool < min_count
     max_count: 3                    # sample min(len(pool), max_count)
     prim_name_prefix: distractor

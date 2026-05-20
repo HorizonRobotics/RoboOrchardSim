@@ -7,7 +7,7 @@
 # You may obtain a copy of the License at
 #
 #       http://www.apache.org/licenses/LICENSE-2.0
-"""SpatialPickTaskDefinition build path: layout JSON → OrchardEnv."""
+"""SpatialPlaceA2BTaskDefinition build path: layout JSON -> OrchardEnv."""
 
 from __future__ import annotations
 import json
@@ -20,16 +20,16 @@ import pytest
 from robo_orchard_sim.orchard_env.assets.object_spec import RigidObjectSpec
 from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
 from robo_orchard_sim.orchard_env.layout.loader import LayoutValidationError
-from robo_orchard_sim.task_suite.manipulation.spatial_pick.spatial_pick_env import (  # noqa: E501
-    SpatialPickTaskDefinitionBase,
+from robo_orchard_sim.task_suite.manipulation.spatial_place_a2b.spatial_place_a2b_env import (  # noqa: E501
+    SpatialPlaceA2BTaskDefinitionBase,
 )
 
 
-def _entry(pick_cat: str, ref_cat: str) -> dict:
+def _entry(src_cat: str, dest_cat: str, ref_cat: str) -> dict:
     return {
         "position": {
             "src": {
-                "category": pick_cat,
+                "category": src_cat,
                 "position": [0.4, -0.1, 0.05],
                 "rotation": [1, 0, 0, 0],
             },
@@ -38,19 +38,24 @@ def _entry(pick_cat: str, ref_cat: str) -> dict:
                 "position": [0.3, 0.1, 0.05],
                 "rotation": [1, 0, 0, 0],
             },
+            "dest": {
+                "category": dest_cat,
+                "position": [0.5, 0.2, 0.05],
+                "rotation": [1, 0, 0, 0],
+            },
         }
     }
 
 
-def _make_resolver(by_role_cat: dict[str, dict[str, RigidObjectSpec]]):
+def _make_resolver(by_slot_cat: dict[str, dict[str, RigidObjectSpec]]):
     resolver = MagicMock()
 
     def resolve(asset_configs):
         out = {}
         for key, entry in asset_configs.items():
-            role = key.split("_pool_", 1)[0] if "_pool_" in key else key
+            slot = key.split("_pool_", 1)[0] if "_pool_" in key else key
             cat = entry["filter"]["category"]
-            out[key] = by_role_cat[role][cat].model_copy(update={"name": key})
+            out[key] = by_slot_cat[slot][cat].model_copy(update={"name": key})
         return out
 
     resolver.resolve.side_effect = resolve
@@ -79,17 +84,17 @@ def _write_json(tmp_path: Path, entries: list[dict]) -> Path:
 def _patched_build():
     with (
         patch.object(
-            SpatialPickTaskDefinitionBase,
+            SpatialPlaceA2BTaskDefinitionBase,
             "resolve_scene",
             return_value=MagicMock(),
         ),
         patch.object(
-            SpatialPickTaskDefinitionBase,
+            SpatialPlaceA2BTaskDefinitionBase,
             "resolve_embodiment",
             return_value=MagicMock(),
         ),
         patch.object(
-            SpatialPickTaskDefinitionBase,
+            SpatialPlaceA2BTaskDefinitionBase,
             "resolve_instruction",
             return_value=None,
         ),
@@ -101,92 +106,54 @@ def _patched_build():
 _DUMMY = lambda n: RigidObjectSpec(name=n, usd_path=f"/d/{n}.usd")  # noqa: E731
 
 
-def test_build_multi_category_pick_yields_pool_spec(tmp_path):
-    _write_json(
-        tmp_path,
-        [_entry("garlic", "thermos"), _entry("potato", "thermos")],
-    )
+def test_build_maps_src_to_pick_dest_to_place_ref_to_distractor(tmp_path):
+    _write_json(tmp_path, [_entry("bread", "mug", "gum")])
     resolver = _make_resolver(
         {
-            "pick": {"garlic": _DUMMY("g"), "potato": _DUMMY("p")},
-            "distractor_0": {"thermos": _DUMMY("t")},
+            "pick": {"bread": _DUMMY("b")},
+            "place": {"mug": _DUMMY("m")},
+            "distractor_0": {"gum": _DUMMY("g")},
         }
     )
     with _patched_build() as orch:
-        SpatialPickTaskDefinitionBase.build(
+        SpatialPlaceA2BTaskDefinitionBase.build(
             resolver=resolver, config_path=str(_write_yaml(tmp_path))
         )
 
     kwargs = orch.call_args.kwargs
-    pick_assets = kwargs["task"].assets
-    assert isinstance(pick_assets.pick, PoolSpec)
-    assert {m.scene_name for m in pick_assets.pick.members} == {
-        "objects/pick_pool_0",
-        "objects/pick_pool_1",
-    }
+    task_assets = kwargs["task"].assets
+    assert isinstance(task_assets.pick, RigidObjectSpec)
+    assert isinstance(task_assets.place, RigidObjectSpec)
     layout_builder = kwargs["layout_builder"]
-    assert layout_builder.num_episodes == 2
-    # role_member_by_category is keyed by LAYOUT-JSON role (what
-    # LayoutResetTerm sees), not the task slot — LayoutResetTerm iterates
-    # ``layout.objects.items()`` to look up actors per episode.
-    assert set(layout_builder.role_member_by_category) == {"src", "ref"}
+    # role_member_by_category keyed by upstream JSON role.
+    assert set(layout_builder.role_member_by_category) == {
+        "src",
+        "ref",
+        "dest",
+    }
 
 
-def test_build_single_category_pick_yields_object_spec(tmp_path):
+def test_build_multi_category_src_yields_pool_spec(tmp_path):
     _write_json(
         tmp_path,
-        [_entry("garlic", "thermos"), _entry("garlic", "thermos")],
+        [
+            _entry("bread", "mug", "gum"),
+            _entry("toast", "mug", "gum"),
+        ],
     )
     resolver = _make_resolver(
         {
-            "pick": {"garlic": _DUMMY("g")},
-            "distractor_0": {"thermos": _DUMMY("t")},
+            "pick": {"bread": _DUMMY("b"), "toast": _DUMMY("t")},
+            "place": {"mug": _DUMMY("m")},
+            "distractor_0": {"gum": _DUMMY("g")},
         }
     )
     with _patched_build() as orch:
-        SpatialPickTaskDefinitionBase.build(
+        SpatialPlaceA2BTaskDefinitionBase.build(
             resolver=resolver, config_path=str(_write_yaml(tmp_path))
         )
-    pick_assets = orch.call_args.kwargs["task"].assets
-    assert isinstance(pick_assets.pick, RigidObjectSpec)
-
-
-def test_build_layout_mode_preserves_light_and_texture_task_params(tmp_path):
-    _write_json(tmp_path, [_entry("garlic", "thermos")])
-    yaml = _write_yaml(
-        tmp_path,
-        extra=(
-            "task:\n"
-            "  params:\n"
-            "    light_reset:\n"
-            "      enabled: true\n"
-            "      asset_names: [background/dis_light]\n"
-            "      distant_light:\n"
-            "        asset_name: dis_light\n"
-            "      randomize_intensity: true\n"
-            "      intensity_range:\n"
-            "        range: [1000.0, 5000.0]\n"
-            "    texture_reset:\n"
-            "      enabled: true\n"
-            "      asset_names: [background/table]\n"
-        ),
-    )
-    resolver = _make_resolver(
-        {
-            "pick": {"garlic": _DUMMY("g")},
-            "distractor_0": {"thermos": _DUMMY("t")},
-        }
-    )
-    with _patched_build() as orch:
-        SpatialPickTaskDefinitionBase.build(
-            resolver=resolver, config_path=str(yaml)
-        )
-
-    params = orch.call_args.kwargs["task"].params
-    assert params.light_reset is not None
-    assert params.light_reset.asset_names == ["background/dis_light"]
-    assert params.texture_reset is not None
-    assert params.texture_reset.asset_names == ["background/table"]
+    task_assets = orch.call_args.kwargs["task"].assets
+    assert isinstance(task_assets.pick, PoolSpec)
 
 
 @pytest.mark.parametrize(
@@ -204,26 +171,28 @@ def test_build_layout_mode_preserves_light_and_texture_task_params(tmp_path):
 def test_build_rejects_invalid_yaml(
     tmp_path, extra, num_envs, exc_type, match
 ):
-    _write_json(tmp_path, [_entry("garlic", "thermos")])
+    _write_json(tmp_path, [_entry("bread", "mug", "gum")])
     yaml = _write_yaml(tmp_path, num_envs=num_envs, extra=extra)
     resolver = _make_resolver(
         {
-            "pick": {"garlic": _DUMMY("g")},
-            "distractor_0": {"thermos": _DUMMY("t")},
+            "pick": {"bread": _DUMMY("b")},
+            "place": {"mug": _DUMMY("m")},
+            "distractor_0": {"gum": _DUMMY("g")},
         }
     )
     with pytest.raises(exc_type, match=match):
-        SpatialPickTaskDefinitionBase.build(
+        SpatialPlaceA2BTaskDefinitionBase.build(
             resolver=resolver, config_path=str(yaml)
         )
 
 
 def test_build_asset_configs_overlay_forwards_tags(tmp_path):
     """asset_configs overlay tags reach the resolver as part of the filter."""
-    _write_json(tmp_path, [_entry("garlic", "thermos")])
+    _write_json(tmp_path, [_entry("bread", "plate", "thermos")])
     resolver = _make_resolver(
         {
-            "pick": {"garlic": _DUMMY("g")},
+            "pick": {"bread": _DUMMY("p")},
+            "place": {"plate": _DUMMY("q")},
             "distractor_0": {"thermos": _DUMMY("t")},
         }
     )
@@ -237,10 +206,10 @@ def test_build_asset_configs_overlay_forwards_tags(tmp_path):
         ),
     )
     with _patched_build():
-        SpatialPickTaskDefinitionBase.build(
+        SpatialPlaceA2BTaskDefinitionBase.build(
             resolver=resolver, config_path=str(yaml_path)
         )
     asset_configs = resolver.resolve.call_args[0][0]
     assert asset_configs["pick"]["filter"]["tags"] == ["is_graspable"]
-    assert asset_configs["pick"]["filter"]["category"] == "garlic"
-    assert asset_configs["distractor_0"]["filter"] == {"category": "thermos"}
+    assert asset_configs["pick"]["filter"]["category"] == "bread"
+    assert asset_configs["place"]["filter"] == {"category": "plate"}

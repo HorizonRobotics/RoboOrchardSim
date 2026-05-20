@@ -40,9 +40,10 @@ def _bootstrap_task_definitions() -> None:
         place_a2b as _place_a2b,
         semantic_pick as _pick,
         spatial_pick as _spatial_pick,
+        spatial_place_a2b as _spatial_place_a2b,
     )
 
-    del _pick, _place_a2b, _spatial_pick
+    del _pick, _place_a2b, _spatial_pick, _spatial_place_a2b
 
 
 def build_task(

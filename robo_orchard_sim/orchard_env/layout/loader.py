@@ -53,18 +53,18 @@ def _parse_binding(role: str, spec: dict[str, Any]) -> LayoutObject:
     for key in ("category", "position", "rotation"):
         if key not in spec:
             raise LayoutValidationError(
-                f"asset_bindings[{role!r}] missing required field {key!r}"
+                f"position[{role!r}] missing required field {key!r}"
             )
     pos = spec["position"]
     rot = spec["rotation"]
     if len(pos) != 3:
         raise LayoutValidationError(
-            f"asset_bindings[{role!r}].position must be 3 floats [x,y,z], "
+            f"position[{role!r}].position must be 3 floats [x,y,z], "
             f"got {len(pos)}: {pos}"
         )
     if len(rot) != 4:
         raise LayoutValidationError(
-            f"asset_bindings[{role!r}].rotation must be 4 floats [w,x,y,z], "
+            f"position[{role!r}].rotation must be 4 floats [w,x,y,z], "
             f"got {len(rot)}: {rot}"
         )
     return LayoutObject(
@@ -93,8 +93,8 @@ def parse_layout(path: str | Path) -> LayoutSequence:
     Accepts a top-level list of layout dicts (one per episode) or a single
     top-level dict (auto-wrapped into a length-1 sequence). All entries must
     declare the same set of role keys; mismatch raises
-    ``LayoutValidationError``. Non-``asset_bindings`` fields are preserved
-    verbatim under ``Layout.raw`` / ``LayoutSequence.raw``.
+    ``LayoutValidationError``. Non-``position`` fields are preserved verbatim
+    under ``Layout.raw`` / ``LayoutSequence.raw``.
     """
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if isinstance(raw, dict):
@@ -123,12 +123,12 @@ def parse_layout(path: str | Path) -> LayoutSequence:
 def _parse_one_layout(raw: dict[str, Any], idx: int | None = None) -> Layout:
     """Parse a single layout dict into a ``Layout``."""
     where = f"entry[{idx}] " if idx is not None else ""
-    if "asset_bindings" not in raw:
+    if "position" not in raw:
         raise LayoutValidationError(
-            f"{where}missing required field 'asset_bindings'"
+            f"{where}missing required field 'position'"
         )
     objects = {
         role: _parse_binding(role, spec)
-        for role, spec in raw["asset_bindings"].items()
+        for role, spec in raw["position"].items()
     }
     return Layout(objects=objects, raw=raw)

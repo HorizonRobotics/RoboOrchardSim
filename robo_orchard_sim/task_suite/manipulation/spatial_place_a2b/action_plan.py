@@ -14,15 +14,22 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""Default atomic action plans for spatial pick tasks."""
+"""Atomic action plans for spatial place-a2b tasks.
+
+Differs from the shared place_a2b plan by inserting an explicit lift
+(Move with gripper held CLOSED) between grasp and transport, so the
+grasped object is raised before the place motion runs.
+"""
 
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from robo_orchard_sim.tasks.trajs_gen.base_executor import ObjectInfo
 from robo_orchard_sim.tasks.trajs_gen.executors import (
+    BackToDefaultExecutorCfg,
     MoveExecutorCfg,
     PickExecutorCfg,
+    PlaceExecutorCfg,
 )
 from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
     BoundManipulatorResolver,
@@ -43,7 +50,7 @@ _DUALARM_PIPER_ROBOT_NAMES = {"dualarm_piper", "dualarm_piperx"}
 def build_task_atomic_action_plan(
     orchard_env: "OrchardEnv",
 ) -> list[BaseExecutorCfg]:
-    """Build the default pick-and-move atomic action plan."""
+    """Build the spatial place-a2b atomic action plan (pick, lift, place)."""
     robot_name = cast(Any, orchard_env.embodiment).name
     if robot_name in _DUALARM_PIPER_ROBOT_NAMES:
         return _build_dualarm_piper_action_plan(orchard_env)
@@ -53,7 +60,7 @@ def build_task_atomic_action_plan(
     robot_infos = orchard_env.embodiment.get_robot_info_cfgs()
     available = ", ".join(sorted(robot_infos))
     raise ValueError(
-        "No spatial_pick action plan for robot "
+        "No spatial_place_a2b action plan for robot "
         f"{robot_name!r}. Available manipulators: {available or '<none>'}."
     )
 
@@ -61,9 +68,10 @@ def build_task_atomic_action_plan(
 def _build_dualarm_piper_action_plan(
     orchard_env: "OrchardEnv",
 ) -> list[BaseExecutorCfg]:
-    """Build the dual-arm Piper spatial-pick action plan."""
+    """Build the dual-arm Piper spatial place-a2b action plan."""
     task = cast(Any, orchard_env.task)
     pick_obj = task.pick_object.scene_name
+    place_obj = task.place_object.scene_name
     left_arm = orchard_env.embodiment.get_robot_info_cfg("left_arm")
     right_arm = orchard_env.embodiment.get_robot_info_cfg("right_arm")
 
@@ -76,10 +84,7 @@ def _build_dualarm_piper_action_plan(
         true_robot_info=left_arm,
         false_robot_info=right_arm,
     )
-    arm = BoundManipulatorResolver(
-        binding_key="spatial-pick",
-        selector=selector,
-    )
+    arm = BoundManipulatorResolver(binding_key="pick-move", selector=selector)
 
     return [
         PickExecutorCfg(
@@ -103,15 +108,43 @@ def _build_dualarm_piper_action_plan(
             gripper_state="CLOSED",
             priority=0,
         ),
+        PlaceExecutorCfg(
+            robot_info=arm,
+            pick_object_info=ObjectInfo(
+                name=pick_obj, mode="active", action="place", part="body"
+            ),
+            place_object_info=ObjectInfo(
+                name=place_obj, mode="passive", action="place", part="body"
+            ),
+            pre_place_cfg=MoveByJointOffsetCfg(
+                joint_id_idxs=[1],
+                joint_offsets=[-0.15],
+            ),
+            constrain="free",
+            priority=0,
+        ),
+        MoveExecutorCfg(
+            robot_info=arm,
+            target=MoveByJointOffsetCfg(
+                joint_id_idxs=[1],
+                joint_offsets=[-0.15],
+            ),
+            priority=0,
+        ),
+        BackToDefaultExecutorCfg(
+            robot_info=arm,
+            priority=0,
+        ),
     ]
 
 
 def _build_franka_panda_action_plan(
     orchard_env: "OrchardEnv",
 ) -> list[BaseExecutorCfg]:
-    """Build the Franka Panda spatial-pick action plan."""
+    """Build the Franka Panda spatial place-a2b action plan."""
     task = cast(Any, orchard_env.task)
     pick_obj = task.pick_object.scene_name
+    place_obj = task.place_object.scene_name
     arm = orchard_env.embodiment.get_robot_info_cfg("main_arm")
 
     return [
@@ -121,7 +154,7 @@ def _build_franka_panda_action_plan(
                 name=pick_obj, mode="passive", action="pick", part="body"
             ),
             pre_grasp=MoveByDisplacementCfg(
-                distance=-0.06,
+                distance=-0.15,
                 direction="z",
                 frame="gripper",
             ),
@@ -136,6 +169,35 @@ def _build_franka_panda_action_plan(
                 frame="world",
             ),
             gripper_state="CLOSED",
+            priority=0,
+        ),
+        PlaceExecutorCfg(
+            robot_info=arm,
+            pick_object_info=ObjectInfo(
+                name=pick_obj, mode="active", action="place", part="body"
+            ),
+            place_object_info=ObjectInfo(
+                name=place_obj, mode="passive", action="place", part="body"
+            ),
+            pre_place_cfg=MoveByDisplacementCfg(
+                distance=-0.15,
+                direction="z",
+                frame="gripper",
+            ),
+            constrain="free",
+            priority=0,
+        ),
+        MoveExecutorCfg(
+            robot_info=arm,
+            target=MoveByDisplacementCfg(
+                distance=0.15,
+                direction="z",
+                frame="world",
+            ),
+            priority=0,
+        ),
+        BackToDefaultExecutorCfg(
+            robot_info=arm,
             priority=0,
         ),
     ]

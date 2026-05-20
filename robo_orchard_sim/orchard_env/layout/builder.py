@@ -54,41 +54,112 @@ class LayoutBuilder:
     layouts: LayoutSequence
     role_member_by_category: Mapping[str, Mapping[str, str]]
 
+    @staticmethod
+    def _validate_slot_filters(
+        overlay: Mapping[str, Mapping[str, Any]] | None,
+        valid_slots: set[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Validate overlay; return {slot: filter} keyed by task slot."""
+        if not overlay:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for slot, entry in overlay.items():
+            if slot not in valid_slots:
+                raise LayoutValidationError(
+                    f"asset_configs[{slot!r}]: unknown slot; valid slots are "
+                    f"{sorted(valid_slots)}"
+                )
+            if not isinstance(entry, Mapping):
+                raise LayoutValidationError(
+                    f"asset_configs[{slot!r}] must be a mapping, "
+                    f"got {type(entry).__name__}"
+                )
+            if "filter" not in entry:
+                raise LayoutValidationError(
+                    f"asset_configs[{slot!r}] must contain 'filter' "
+                    f"(layout mode only honors the filter sub-key)"
+                )
+            extra = set(entry) - {"filter"}
+            if extra:
+                raise LayoutValidationError(
+                    f"asset_configs[{slot!r}]: unexpected key(s) "
+                    f"{sorted(extra)}; layout mode only honors 'filter' "
+                    f"(prim_name / pool_size / uuid / split / anchor "
+                    f"are auto-derived or N/A)"
+                )
+            if not isinstance(entry["filter"], Mapping):
+                raise LayoutValidationError(
+                    f"asset_configs[{slot!r}].filter must be a mapping, "
+                    f"got {type(entry['filter']).__name__}"
+                )
+            filter_body = dict(entry["filter"])
+            if "category" in filter_body:
+                raise LayoutValidationError(
+                    f"asset_configs[{slot!r}].filter: 'category' is "
+                    f"forbidden in layout mode (layout JSON is the "
+                    f"authoritative source)"
+                )
+            out[slot] = filter_body
+        return out
+
     @classmethod
     def build(
         cls,
         layouts: LayoutSequence,
         resolver: AssetResolver,
-        role_map: Mapping[str, str],
+        named_roles: Mapping[str, str],
+        slot_filters: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> tuple[dict[str, ObjectSpec | PoolSpec], LayoutBuilder]:
-        """Resolve per (role × unique-category) and return (assets, builder).
+        """Resolve per (slot × unique-category) and return (assets, builder).
 
-        1 unique category per role → ``ObjectSpec``; ≥2 → ``PoolSpec`` named
-        ``{slot}_pool_{idx}`` so ``env_base`` auto-attaches ``PoolAliasState``.
+        ``named_roles`` maps upstream JSON role → task slot (e.g.
+        ``{"src": "pick", "dest": "place"}``). Every other upstream role
+        found in the layout is assigned, in insertion order, to
+        ``distractor_0``, ``distractor_1``, … . 1 unique category per
+        slot → ``ObjectSpec``; ≥2 → ``PoolSpec`` named ``{slot}_pool_{idx}``.
 
-        Args:
-            layouts (LayoutSequence): Parsed layout sequence.
-            resolver (AssetResolver): Asset resolver used to materialise each
-                (role, category) pair into an ``ObjectSpec``.
-            role_map (Mapping[str, str]): JSON role name → task-slot name
-                mapping (e.g. ``{"pick": "pick", "ref": "distractor_0"}``).
-
-        Returns:
-            tuple[dict[str, ObjectSpec | PoolSpec], LayoutBuilder]: Keyed by
-            task slot — pass straight to the task's assets schema. The
-            ``LayoutBuilder`` carries the per-episode cycling state and is
-            handed to ``OrchardEnv(layout_builder=...)``.
+        ``slot_filters`` overlays per-slot filter dicts; layout JSON's
+        ``category`` always wins. ``role_member_by_category`` stays keyed
+        by the upstream JSON role, since ``LayoutResetTerm`` indexes it
+        while iterating ``layout.objects``.
         """
-        layout_roles = list(role_map.keys())
-        seen_per_role: dict[str, list[str]] = {r: [] for r in layout_roles}
-        seen_sets: dict[str, set[str]] = {r: set() for r in layout_roles}
+        if not layouts.entries:
+            raise LayoutValidationError("empty layout sequence")
+
+        # Every named role must exist in every entry.
         for idx, entry in enumerate(layouts.entries):
-            missing = [r for r in layout_roles if r not in entry.objects]
+            missing = [r for r in named_roles if r not in entry.objects]
             if missing:
                 raise LayoutValidationError(
-                    f"entry[{idx}] missing role(s) {missing!r}; "
-                    f"role_map declared {sorted(layout_roles)}"
+                    f"entry[{idx}] missing named role(s) {missing!r}; "
+                    f"named_roles declared {sorted(named_roles)}"
                 )
+
+        # parse_layout already enforces identical role-key sets across
+        # entries, but LayoutBuilder.build may be called with a hand-built
+        # LayoutSequence — re-check so distractor slot count stays stable.
+        first = layouts.entries[0].objects
+        first_roles = set(first)
+        for idx, entry in enumerate(layouts.entries[1:], start=1):
+            if set(entry.objects) != first_roles:
+                raise LayoutValidationError(
+                    f"entry[{idx}] role keys differ from entry[0]: "
+                    f"{sorted(entry.objects)} vs {sorted(first_roles)}"
+                )
+
+        # Other roles = entry roles not in named_roles, in insertion order.
+        other_roles = [r for r in first if r not in named_roles]
+        role_to_slot: dict[str, str] = dict(named_roles)
+        for i, role in enumerate(other_roles):
+            role_to_slot[role] = f"distractor_{i}"
+
+        valid_slots = set(role_to_slot.values())
+        slot_filter_map = cls._validate_slot_filters(slot_filters, valid_slots)
+
+        layout_roles = list(role_to_slot.keys())
+        seen_per_role: dict[str, list[str]] = {r: [] for r in layout_roles}
+        seen_sets: dict[str, set[str]] = {r: set() for r in layout_roles}
+        for entry in layouts.entries:
             for role in layout_roles:
                 cat = entry.objects[role].category
                 if cat not in seen_sets[role]:
@@ -100,11 +171,13 @@ class LayoutBuilder:
 
         asset_configs: dict[str, dict[str, Any]] = {}
         for layout_role, cats in seen_per_role.items():
-            slot = role_map[layout_role]
+            slot = role_to_slot[layout_role]
+            slot_overlay = slot_filter_map.get(slot, {})
             for i, cat in enumerate(cats):
                 key = _scene_name(slot, i, len(cats))
+                filter_dict: dict[str, Any] = {**slot_overlay, "category": cat}
                 asset_configs[key] = {
-                    "filter": {"category": cat},
+                    "filter": filter_dict,
                     "prim_name": key,
                 }
         resolved = resolver.resolve(asset_configs)
@@ -112,7 +185,7 @@ class LayoutBuilder:
         assets: dict[str, ObjectSpec | PoolSpec] = {}
         role_member_by_category: dict[str, dict[str, str]] = {}
         for layout_role, cats in seen_per_role.items():
-            slot = role_map[layout_role]
+            slot = role_to_slot[layout_role]
             specs = [
                 resolved[_scene_name(slot, i, len(cats))]
                 for i in range(len(cats))
@@ -124,8 +197,6 @@ class LayoutBuilder:
                         f"{type(spec).__name__}"
                     )
             specs = [s.with_default_namespace("objects") for s in specs]
-            # keyed by the layout JSON role; LayoutResetTerm iterates layout
-            # entries (which carry JSON role names) and indexes this map.
             role_member_by_category[layout_role] = {
                 cat: specs[i].scene_name for i, cat in enumerate(cats)
             }
