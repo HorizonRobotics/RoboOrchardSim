@@ -18,11 +18,11 @@
 
 from robo_orchard_sim.asset_manager.splits.errors import (
     AssetSplitsError,
-    DuplicateAssetIdInSplitError,
+    DuplicateUuidInSplitError,
     EmptySeenSplitError,
     InvalidSplitsYamlError,
     OverlappingSplitsError,
-    UnknownAssetIdError,
+    UnknownUuidError,
     UnsupportedSchemaVersionError,
 )
 from robo_orchard_sim.asset_manager.splits.splits import (
@@ -34,12 +34,12 @@ from robo_orchard_sim.asset_manager.splits.splits import (
 __all__ = (
     "AssetSplits",
     "AssetSplitsError",
-    "DuplicateAssetIdInSplitError",
+    "DuplicateUuidInSplitError",
     "EmptySeenSplitError",
     "InvalidSplitsYamlError",
     "load_asset_splits",
     "OverlappingSplitsError",
     "SCHEMA_VERSION",
-    "UnknownAssetIdError",
+    "UnknownUuidError",
     "UnsupportedSchemaVersionError",
 )

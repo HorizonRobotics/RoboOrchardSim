@@ -627,10 +627,10 @@ class TestEvaluator:
         monkeypatch.setattr(
             evaluator_module,
             "_create_asset_resolver",
-            lambda *, registry_obj, seed, active_snapshot=None: (
+            lambda *, registry_obj, seed, active_snapshot=None, splits=None: (
                 types.SimpleNamespace(
                     registry=registry_obj,
-                    splits=None,
+                    splits=splits,
                     rng=f"rng:{seed}",
                     active_snapshot=active_snapshot,
                 )
@@ -1674,6 +1674,106 @@ class TestEvaluator:
 
         with pytest.raises(SystemExit, match="snapshot"):
             cfg()
+
+    def test_evaluator_init_systemexits_on_splits_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import robo_orchard_sim.asset_manager.splits as splits_mod
+        import robo_orchard_sim.evaluator.evaluator as evaluator_module
+        from robo_orchard_sim.asset_manager.splits.errors import (
+            InvalidSplitsYamlError,
+        )
+
+        splits_path = tmp_path / "bad_splits.yaml"
+        splits_path.write_text("placeholder", encoding="utf-8")
+
+        def _raise_splits_error(path, registry, *, strict=True):
+            raise InvalidSplitsYamlError("bad yaml")
+
+        monkeypatch.setattr(
+            evaluator_module,
+            "_create_asset_registry",
+            lambda asset_root: f"registry:{asset_root}",
+        )
+        monkeypatch.setattr(
+            splits_mod, "load_asset_splits", _raise_splits_error
+        )
+
+        cfg = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+            splits_path=splits_path,
+        )
+
+        with pytest.raises(SystemExit, match="splits"):
+            cfg()
+
+    def test_evaluator_init_loads_splits_when_path_given(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import robo_orchard_sim.asset_manager.splits as splits_mod
+        import robo_orchard_sim.evaluator.evaluator as evaluator_module
+
+        sentinel = object()
+        splits_path = tmp_path / "splits.yaml"
+        splits_path.write_text("placeholder", encoding="utf-8")
+        monkeypatch.setattr(
+            evaluator_module,
+            "_create_asset_registry",
+            lambda asset_root: f"registry:{asset_root}",
+        )
+        monkeypatch.setattr(
+            splits_mod,
+            "load_asset_splits",
+            lambda path, registry, **kw: sentinel,
+        )
+
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+            splits_path=splits_path,
+        )()
+
+        assert evaluator._splits is sentinel
+
+    def test_evaluator_passes_splits_to_resolver(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import robo_orchard_sim.asset_manager.splits as splits_mod
+
+        sentinel = object()
+        env = _StubStepEnv(episodes=[[_StepState()]])
+        orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
+        registry = self.patch_runtime(monkeypatch, tasks=[orchard_env])
+        monkeypatch.setattr(
+            splits_mod,
+            "load_asset_splits",
+            lambda path, registry, **kw: sentinel,
+        )
+        splits_path = tmp_path / "splits.yaml"
+        splits_path.write_text("placeholder", encoding="utf-8")
+
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=1,
+            splits_path=splits_path,
+        )()
+        evaluator.evaluate(_StubPolicy())
+
+        assert evaluator._splits is sentinel
+        assert registry.build_kwargs[0]["resolver"].splits is sentinel
 
     def test_episode_records_distinct_meta_dicts_for_multi_env(
         self,

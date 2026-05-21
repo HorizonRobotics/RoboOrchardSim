@@ -38,24 +38,22 @@ class UnsupportedSchemaVersionError(AssetSplitsError):
         )
 
 
-class DuplicateAssetIdInSplitError(AssetSplitsError):
-    """Raised when the same asset_id appears more than once in a split list."""
+class DuplicateUuidInSplitError(AssetSplitsError):
+    """Raised when the same uuid appears more than once in a split list."""
 
-    def __init__(self, split_name: str, asset_id: str) -> None:
+    def __init__(self, split_name: str, uuid: str) -> None:
         self.split_name = split_name
-        self.asset_id = asset_id
-        super().__init__(
-            f"Duplicate asset_id '{asset_id}' in split '{split_name}'"
-        )
+        self.uuid = uuid
+        super().__init__(f"Duplicate uuid '{uuid}' in split '{split_name}'")
 
 
-class UnknownAssetIdError(AssetSplitsError):
-    """Raised when asset_ids in the YAML are not found in the registry."""
+class UnknownUuidError(AssetSplitsError):
+    """Raised when uuids in the YAML are not found in the registry."""
 
-    def __init__(self, unknown_ids: tuple[str, ...]) -> None:
-        self.unknown_ids = unknown_ids
-        joined = ", ".join(unknown_ids)
-        super().__init__(f"Unknown asset_id(s) not in registry: {joined}")
+    def __init__(self, unknown_uuids: tuple[str, ...]) -> None:
+        self.unknown_uuids = unknown_uuids
+        joined = ", ".join(unknown_uuids)
+        super().__init__(f"Unknown uuid(s) not in registry: {joined}")
 
 
 class EmptySeenSplitError(AssetSplitsError):

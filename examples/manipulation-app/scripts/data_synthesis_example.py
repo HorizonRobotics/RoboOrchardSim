@@ -78,6 +78,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--splits",
+        dest="splits_path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional benchmark splits YAML; binds seen / unseen_category / "
+            "unseen_instance for a task config's `split:` field."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=0,

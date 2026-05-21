@@ -178,6 +178,8 @@ def build_task_cfgs_for_group(
     group_id: str,
     asset_root: str,
     task_root_dir: str,
+    splits_path: Path | None = None,
+    snapshot_path: Path | None = None,
 ) -> list[TaskDataSynthesisCfg]:
     """Build runner task configs for one manifest group."""
     del task_root_dir
@@ -196,6 +198,8 @@ def build_task_cfgs_for_group(
                 seed=group.seed + config_index * plan.episodes_per_config,
                 episode_num=plan.episodes_per_config,
                 task_save_root=task_save_root,
+                snapshot_path=snapshot_path,
+                splits_path=splits_path,
                 user_data={
                     "batch_id": plan.batch_id,
                     "group_id": group.group_id,
@@ -331,6 +335,8 @@ def run_group_data_synthesis(
     group_id: str,
     asset_root: str,
     task_root_dir: str,
+    splits_path: Path | None = None,
+    snapshot_path: Path | None = None,
 ) -> MultiTaskRunResult:
     """Run one manifest group through the multi-task synthesis runner."""
     task_cfgs = build_task_cfgs_for_group(
@@ -338,6 +344,8 @@ def run_group_data_synthesis(
         group_id=group_id,
         asset_root=asset_root,
         task_root_dir=task_root_dir,
+        splits_path=splits_path,
+        snapshot_path=snapshot_path,
     )
     copy_task_configs_to_output_dirs(
         task_cfgs=task_cfgs,

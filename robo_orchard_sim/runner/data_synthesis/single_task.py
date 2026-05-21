@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -28,6 +28,9 @@ from robo_orchard_core.utils.config import ClassConfig, ClassType_co
 
 from robo_orchard_sim.orchard_env.joint_command import EnvActionState
 from robo_orchard_sim.tasks.validators.base import ValidatorOutput
+
+if TYPE_CHECKING:
+    from robo_orchard_sim.asset_manager.splits import AssetSplits
 
 
 @dataclass
@@ -109,22 +112,43 @@ class TaskDataSynthesisRunner:
         )
 
         self._active_snapshot_uuids: frozenset[str] | None = None
-        if self.cfg.snapshot_path is not None:
+        self._splits: AssetSplits | None = None
+        if (
+            self.cfg.snapshot_path is not None
+            or self.cfg.splits_path is not None
+        ):
             from robo_orchard_sim.asset_manager.registry import AssetRegistry
-            from robo_orchard_sim.asset_manager.snapshot import (
-                SnapshotError,
-                load_snapshot,
-            )
 
             _reg = AssetRegistry(self.cfg.asset_root)
-            try:
-                self._active_snapshot_uuids = load_snapshot(
-                    self.cfg.snapshot_path, _reg
-                ).uuids
-            except SnapshotError as exc:
-                raise SystemExit(
-                    f"\nERROR loading snapshot {self.cfg.snapshot_path}: {exc}"
-                ) from exc
+            if self.cfg.snapshot_path is not None:
+                from robo_orchard_sim.asset_manager.snapshot import (
+                    SnapshotError,
+                    load_snapshot,
+                )
+
+                try:
+                    self._active_snapshot_uuids = load_snapshot(
+                        self.cfg.snapshot_path, _reg
+                    ).uuids
+                except SnapshotError as exc:
+                    raise SystemExit(
+                        "\nERROR loading snapshot "
+                        f"{self.cfg.snapshot_path}: {exc}"
+                    ) from exc
+            if self.cfg.splits_path is not None:
+                from robo_orchard_sim.asset_manager.splits import (
+                    AssetSplitsError,
+                    load_asset_splits,
+                )
+
+                try:
+                    self._splits = load_asset_splits(
+                        self.cfg.splits_path, _reg
+                    )
+                except AssetSplitsError as exc:
+                    raise SystemExit(
+                        f"\nERROR loading splits {self.cfg.splits_path}: {exc}"
+                    ) from exc
 
     def iter_episode_seeds(self) -> range:
         """Return the deterministic seed sequence used by this run."""
@@ -407,7 +431,7 @@ class TaskDataSynthesisRunner:
         registry = AssetRegistry(self.cfg.asset_root)
         resolver = AssetResolver(
             registry=registry,
-            splits=None,  # TODO: support splits when task configs expose them.
+            splits=self._splits,
             rng=np.random.default_rng(seed),
             active_snapshot=self._active_snapshot_uuids,
         )
@@ -812,6 +836,7 @@ class TaskDataSynthesisCfg(ClassConfig[TaskDataSynthesisRunner]):
     output_config_dir: str | None = "configs/data_synthesis"
     task_save_root: str | None = None
     snapshot_path: Path | None = None
+    splits_path: Path | None = None
     launch: LaunchConfig = LaunchConfig()
     debug_vis: bool = False
     user_data: dict[str, Any] = {}

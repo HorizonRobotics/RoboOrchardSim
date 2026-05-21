@@ -125,6 +125,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "uuid set for reproducibility."
         ),
     )
+    parser.add_argument(
+        "--splits",
+        dest="splits_path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional benchmark splits YAML; binds seen / unseen_category / "
+            "unseen_instance for a task config's `split:` field."
+        ),
+    )
     return parser
 
 
@@ -212,6 +222,7 @@ def main() -> None:
             episode_num=args.episode_num,
             max_steps=args.max_steps,
             snapshot_path=args.snapshot_path,
+            splits_path=args.splits_path,
         )
         with evaluator_cfg() as evaluator:
             result = evaluator.evaluate(policy)

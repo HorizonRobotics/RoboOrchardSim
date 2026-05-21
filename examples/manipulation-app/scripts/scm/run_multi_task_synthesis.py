@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 import argparse
+from pathlib import Path
 
 from robo_orchard_sim.runner.data_synthesis.batch_synthesis import (
     load_batch_plan,
@@ -33,6 +34,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--group-id", required=True)
     parser.add_argument("--asset-root", required=True)
     parser.add_argument("--output-root-dir", required=True)
+    parser.add_argument(
+        "--snapshot",
+        dest="snapshot_path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional snapshot YAML; restricts asset sampling to its "
+            "uuid set for reproducibility."
+        ),
+    )
+    parser.add_argument(
+        "--splits",
+        dest="splits_path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional benchmark splits YAML; binds seen / unseen_category / "
+            "unseen_instance for a task config's `split:` field."
+        ),
+    )
     return parser
 
 
@@ -44,6 +65,8 @@ def main() -> None:
         group_id=args.group_id,
         asset_root=args.asset_root,
         task_root_dir=args.output_root_dir,
+        splits_path=args.splits_path,
+        snapshot_path=args.snapshot_path,
     )
     print(
         f"group run finished: tasks={result.total_tasks}, "
