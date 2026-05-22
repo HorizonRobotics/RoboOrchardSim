@@ -161,6 +161,14 @@ class ArticulationJointCuroboTrajPlanner(ArticulationJointTrajPlannerMixin):
 
         self.reset()
 
+    def close(self) -> None:
+        """Release large planner objects before dropping the planner cache."""
+        self.planner = None
+        self.ik_solver = None
+        self.kinematics_model = None
+        self._usd_helper = None
+        self.world_cfg_list.clear()
+
     def _get_default_world_config(self) -> WorldConfig:
         filename = os.path.join(get_world_configs_path(), "collision_base.yml")
         with open(filename, "r") as f:

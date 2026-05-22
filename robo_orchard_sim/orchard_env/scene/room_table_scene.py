@@ -74,17 +74,30 @@ class RoomTableScene(SceneBase):
             render_interval=self.get_render_interval(),
             dt=1.0 / self.physics_fps,
             physx=PhysxCfg(enable_ccd=True),
+            # 5090
             render=RenderCfg(
                 # enable_translucency=True,
                 # enable_reflections=True,
                 # enable_global_illumination=True,
                 # enable_ambient_occlusion=True,
-                enable_dlssg=True,
-                enable_dl_denoiser=True,
-                # antialiasing_mode="FXAA",
+                enable_dlssg=False,
+                # enable_dl_denoiser=True,
+                antialiasing_mode="FXAA",
                 dlss_mode=3,
-                # samples_per_pixel=4
+                samples_per_pixel=64,
             ),
+            # 4090
+            # render=RenderCfg(
+            #     # enable_translucency=True,
+            #     # enable_reflections=True,
+            #     # enable_global_illumination=True,
+            #     # enable_ambient_occlusion=True,
+            #     enable_dlssg=True,
+            #     enable_dl_denoiser=True,
+            #     # antialiasing_mode="FXAA",
+            #     dlss_mode=3,
+            #     # samples_per_pixel=4
+            # ),
         )
 
     def get_assets_cfg(self) -> dict[str, GroupAssetCfg]:

@@ -41,6 +41,8 @@ def render_submit_jsons(
     batch_plan_path: str,
     task_root_dir: str,
     asset_root: str,
+    snapshot_path: str | Path | None = None,
+    splits_path: str | Path | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Render one AIDI submit JSON payload per batch group."""
     rendered: list[tuple[str, dict[str, Any]]] = []
@@ -61,23 +63,26 @@ def render_submit_jsons(
         template_cmd = submit_json.get("cmd", [])
         if not isinstance(template_cmd, list):
             raise ValueError("submit template cmd must be a list")
+        run_args = [
+            "python3",
+            "examples/manipulation-app/scripts/scm/"
+            "run_multi_task_synthesis.py",
+            "--batch-plan",
+            shell_quote(batch_plan_path),
+            "--group-id",
+            shell_quote(group_id),
+            "--asset-root",
+            shell_quote(asset_root),
+            "--output-root-dir",
+            shell_quote(f"{task_root_dir.rstrip('/')}/{group_id}"),
+        ]
+        if snapshot_path is not None:
+            run_args.extend(["--snapshot", shell_quote(snapshot_path)])
+        if splits_path is not None:
+            run_args.extend(["--splits", shell_quote(splits_path)])
         submit_json["cmd"] = [
             *template_cmd,
-            " ".join(
-                [
-                    "python3",
-                    "examples/manipulation-app/scripts/scm/"
-                    "run_multi_task_synthesis.py",
-                    "--batch-plan",
-                    shell_quote(batch_plan_path),
-                    "--group-id",
-                    shell_quote(group_id),
-                    "--asset-root",
-                    shell_quote(asset_root),
-                    "--output-root-dir",
-                    shell_quote(f"{task_root_dir.rstrip('/')}/{group_id}"),
-                ]
-            ),
+            " ".join(run_args),
         ]
         rendered.append((f"{job_name}.json", submit_json))
     return rendered
@@ -150,6 +155,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--cluster-output-root", required=True)
     parser.add_argument("--asset-root", required=True)
+    parser.add_argument(
+        "--snapshot",
+        dest="snapshot_path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional snapshot YAML forwarded to run_multi_task_synthesis.py."
+        ),
+    )
+    parser.add_argument(
+        "--splits",
+        dest="splits_path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional benchmark splits YAML forwarded to "
+            "run_multi_task_synthesis.py."
+        ),
+    )
     parser.add_argument("--submit", action="store_true")
     return parser
 
@@ -172,6 +196,8 @@ def main() -> None:
         batch_plan_path=args.batch_plan,
         task_root_dir=args.cluster_output_root,
         asset_root=args.asset_root,
+        snapshot_path=args.snapshot_path,
+        splits_path=args.splits_path,
     )
     json_paths = write_submit_jsons(rendered, args.submit_json_dir)
     for path in json_paths:

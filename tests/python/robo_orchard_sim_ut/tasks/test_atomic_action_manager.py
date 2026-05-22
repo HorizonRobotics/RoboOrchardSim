@@ -54,7 +54,11 @@ class _FakePlanner:
 class _FakePlannerInstance:
     def __init__(self, cfg: "_FakePlannerCfg", env_nums: int) -> None:
         self.env_nums = env_nums
+        self.close_calls = 0
         cfg.instances.append(self)
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 class _FakePlannerCfg:
@@ -623,6 +627,25 @@ def test_clear_clear_planner_instances_discards_cached_planner_instance():
     manager.get_action(env)
 
     assert len(planner_cfg.instances) == 2
+
+
+def test_clear_clear_planner_instances_closes_cached_planner_instance():
+    planner_cfg = _FakePlannerCfg()
+    manager = _make_manager(
+        _FakeTrajectoryExecutorCfg(
+            robot_info=_PlannerResolvingManipulatorResolver(
+                planner_cfg=planner_cfg
+            ),
+            action_type="fake",
+            trajectories=[[[1.0]]],
+        )
+    )
+    env = _FakeEnv()
+
+    manager.get_action(env)
+    manager.clear(clear_planner_instances=True)
+
+    assert planner_cfg.instances[0].close_calls == 1
 
 
 def test_manager_cfg_debug_vis_disabled_skips_target_marker(monkeypatch):

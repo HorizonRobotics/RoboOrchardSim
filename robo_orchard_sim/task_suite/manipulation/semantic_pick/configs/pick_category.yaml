@@ -77,10 +77,14 @@ task:
 asset_configs:
   pick:
     prim_name: pick_object
+    split: seen
+    filter:
+      tags: [is_graspable]
 
   distractors:
     anchor: pick
     differ: [category]
+    split: seen
     min_count: 1
     max_count: 5
     prim_name_prefix: distractor

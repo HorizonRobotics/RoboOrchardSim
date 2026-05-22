@@ -208,6 +208,9 @@ class TaskDataSynthesisRunner:
                         error=f"{type(exc).__name__}: {exc}",
                     )
                 )
+            finally:
+                action_manager.clear(clear_planner_instances=False)
+
         self._write_successful_recording_paths(summaries)
         return self._build_task_run_result(summaries)
 
@@ -262,6 +265,15 @@ class TaskDataSynthesisRunner:
             error=error,
             user_data=dict(self.cfg.user_data),
         )
+
+    def _pump_sim_app_updates(
+        self,
+        sim_app: Any,
+        *,
+        update_count: int = 3,
+    ) -> None:
+        for _ in range(update_count):
+            sim_app.update()
 
     def create_launcher(self) -> Any:
         """Create the Isaac application launcher for this run."""
@@ -404,6 +416,7 @@ class TaskDataSynthesisRunner:
             )
             self._finalize_episode_recording(env)
 
+        self._pump_sim_app_updates(sim_app)
         print(
             f"Episode {episode_index + 1} finished: "
             f"steps={steps}, stop_reason={stop_reason}, "

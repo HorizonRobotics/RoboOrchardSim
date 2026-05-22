@@ -90,6 +90,8 @@ class ManipulatorBindingContext:
         """
         self._selected.clear()
         if clear_planner_instances:
+            for planner in self._planner_instances.values():
+                planner.close()
             self._planner_instances.clear()
 
 

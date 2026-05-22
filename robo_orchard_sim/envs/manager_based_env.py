@@ -198,9 +198,10 @@ class IsaacManagerBasedEnv(
 
     def close(self):
         """Cleanup for the environment."""
-        if hasattr(self.record_manager, "close"):
+        if not self._is_closed:
             self.record_manager.close()
-        IsaacEnv.close(self)
+            del self.record_manager
+            IsaacEnv.close(self)
         # We don't need to call `del` on the managers since they are weak
         # references and will be garbage collected automatically.
 

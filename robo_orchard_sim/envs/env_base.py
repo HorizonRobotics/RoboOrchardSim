@@ -305,8 +305,9 @@ class IsaacEnv(
         if not self._is_closed:
             # destructor is order-sensitive
             del self.viewport_camera_controller
-            # del self.action_manager
-            # del self.observation_manager
+            del self.action_manager
+            del self.observation_manager
+            del self.event_manager
 
             # hotfix for the issue where some assets are not deleted
             # in the scene
