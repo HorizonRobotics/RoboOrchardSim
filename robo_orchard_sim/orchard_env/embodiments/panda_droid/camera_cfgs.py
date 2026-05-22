@@ -72,11 +72,11 @@ PANDA_DROID_WRIST_CAMERA_CFG.prim_path = (
     "{ENV_REGEX_NS}/franka_panda/panda_hand/droid_wrist_camera"
 )
 PANDA_DROID_WRIST_CAMERA_CFG.offset = CameraOffset(
-    xyz=(-0.0723751, 0.02661379, 0.01563972),
+    xyz=(0.0723751, 0.02661379, 0.01563972),
     quat=(
-        0.6941665195090226,
-        -0.13050039885300427,
+        0.6989368818183482,
         0.11220394077741205,
-        -0.6989368818183482,
+        0.13050039885300427,
+        0.6941665195090226,
     ),
 )
