@@ -164,7 +164,9 @@ def test_canonicalize_observations_given_schema_maps_expected_slots() -> None:
     )
 
 
-def test_canonicalize_observations_single_arm_scalarizes_gripper() -> None:
+def test_canonicalize_observations_single_arm_preserves_physical_joints() -> (
+    None
+):
     canonical = canonicalize_observations(
         observations=_build_franka_raw_observation(),
         instruction="pick apple",
@@ -173,11 +175,11 @@ def test_canonicalize_observations_single_arm_scalarizes_gripper() -> None:
 
     assert canonical.manipulators["single_arm"]["joint_position"].shape == (
         1,
-        8,
+        9,
     )
     torch.testing.assert_close(
         canonical.manipulators["single_arm"]["joint_position"],
-        torch.tensor([[1, 2, 3, 4, 5, 6, 7, 0.2]], dtype=torch.float32),
+        torch.tensor([[1, 2, 3, 4, 5, 6, 7, 0.1, 0.1]], dtype=torch.float32),
     )
 
 

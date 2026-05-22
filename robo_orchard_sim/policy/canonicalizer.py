@@ -19,13 +19,7 @@
 from __future__ import annotations
 from typing import Any
 
-import torch
-
-from robo_orchard_sim.orchard_env.joint_command import resolve_joint_name_specs
 from robo_orchard_sim.policy.action_layout import compile_action_layout
-from robo_orchard_sim.policy.gripper_codec import (
-    gripper_positions_to_policy_torch,
-)
 from robo_orchard_sim.policy.schema import (
     CanonicalPolicyInput,
     PolicyBindingSchema,
@@ -147,17 +141,6 @@ def canonicalize_observations(
                 slot_obs["gripper_position"] = robot_obs[
                     binding.gripper_position_obs_key
                 ]
-            elif binding.gripper_joint_name_specs:
-                slot_obs["joint_position"] = _build_policy_joint_position(
-                    joint_position=joint_position,
-                    arm_dim=len(
-                        resolve_joint_name_specs(binding.arm_joint_name_specs)
-                    ),
-                    gripper_policy_representation=(
-                        binding.gripper_policy_representation
-                    ),
-                    gripper_policy_scale=binding.gripper_policy_scale,
-                )
             manipulators[slot] = slot_obs
 
     return CanonicalPolicyInput(
@@ -182,23 +165,3 @@ def _validate_camera_metadata(
         raise ValueError(f"Camera slot {slot!r} requires intrinsic metadata.")
     if require_pose and getattr(rgb_sensor, "pose", None) is None:
         raise ValueError(f"Camera slot {slot!r} requires pose metadata.")
-
-
-def _build_policy_joint_position(
-    *,
-    joint_position: torch.Tensor,
-    arm_dim: int,
-    gripper_policy_representation: str,
-    gripper_policy_scale: float,
-) -> torch.Tensor:
-    """Convert gripper joints into policy values appended to arm joints."""
-    if joint_position.shape[-1] <= arm_dim:
-        return joint_position
-    arm_position = joint_position[..., :arm_dim]
-    gripper_position = joint_position[..., arm_dim:]
-    gripper_policy = gripper_positions_to_policy_torch(
-        gripper_position,
-        gripper_policy_representation=gripper_policy_representation,
-        gripper_policy_scale=gripper_policy_scale,
-    )
-    return torch.cat((arm_position, gripper_policy), dim=-1)
