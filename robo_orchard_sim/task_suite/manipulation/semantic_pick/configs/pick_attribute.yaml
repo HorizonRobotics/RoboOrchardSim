@@ -76,8 +76,8 @@ task:
 asset_configs:
   pick:
     filter:
-      super_category: fruits
       category: peach
+      tags: [is_graspable]
     prim_name: pick_object
 
   distractors:
@@ -85,5 +85,5 @@ asset_configs:
     match: [category]
     differ: [color]
     min_count: 1
-    max_count: 1
+    max_count: 2
     prim_name_prefix: distractor

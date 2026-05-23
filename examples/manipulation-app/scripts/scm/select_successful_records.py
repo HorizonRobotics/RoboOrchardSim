@@ -82,12 +82,11 @@ def _resolve_task_root(
     return _resolve_path(summary_dir, task_save_root)
 
 
-def _load_asset_uuid_from_config(
+def _load_config_payload(
     *,
     summary_dir: Path,
     asset: dict[str, Any],
-    target_role: str,
-) -> str | None:
+) -> dict[str, Any] | None:
     task_root = _resolve_task_root(summary_dir=summary_dir, asset=asset)
     config_path_value = asset.get("config_path")
     if task_root is None or not isinstance(config_path_value, str):
@@ -99,6 +98,18 @@ def _load_asset_uuid_from_config(
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(payload, dict):
         return None
+    return payload
+
+
+def _load_asset_uuid_from_config(
+    *,
+    summary_dir: Path,
+    asset: dict[str, Any],
+    target_role: str,
+) -> str | None:
+    payload = _load_config_payload(summary_dir=summary_dir, asset=asset)
+    if payload is None:
+        return None
     asset_configs = payload.get("asset_configs")
     if not isinstance(asset_configs, dict):
         return None
@@ -109,6 +120,31 @@ def _load_asset_uuid_from_config(
     if not isinstance(uuid, str) or not uuid:
         return None
     return uuid
+
+
+def _asset_attribute_from_config(
+    *,
+    summary_dir: Path,
+    asset: dict[str, Any],
+) -> str:
+    payload = _load_config_payload(summary_dir=summary_dir, asset=asset)
+    if payload is None:
+        return ""
+    asset_configs = payload.get("asset_configs")
+    if not isinstance(asset_configs, dict):
+        return ""
+    distractors = asset_configs.get("distractors")
+    if not isinstance(distractors, dict):
+        distractors = asset_configs.get("distrcators")
+    if not isinstance(distractors, dict):
+        return ""
+    differ = distractors.get("differ")
+    if isinstance(differ, str):
+        return differ
+    if not isinstance(differ, list):
+        return ""
+    attributes = [value for value in differ if isinstance(value, str)]
+    return ",".join(attributes)
 
 
 def _looks_like_uuid_prefix(value: str) -> bool:
@@ -289,6 +325,10 @@ def _select_from_summary(
             task=task_name,
             target_role=target_role,
         )
+        asset_attribute = _asset_attribute_from_config(
+            summary_dir=summary_dir,
+            asset=asset,
+        )
         rate = _success_rate(asset)
         if min_success_rate <= rate <= max_success_rate:
             successful_paths = _read_successful_paths(
@@ -302,6 +342,7 @@ def _select_from_summary(
                     "asset_id": asset_name,
                     "uuid": asset_uuid,
                     "mcap_paths": sampled_paths,
+                    "attribute": asset_attribute,
                 }
             )
             kept_assets += 1

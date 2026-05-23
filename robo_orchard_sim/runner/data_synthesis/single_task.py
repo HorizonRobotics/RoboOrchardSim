@@ -457,15 +457,15 @@ class TaskDataSynthesisRunner:
                 config_path=config_path,
             )
         except KeyError as exc:
-            raise SystemExit(f"\nERROR: {exc}") from exc
+            raise ValueError(f"\nERROR: {exc}") from exc
         except AssetResolverError as exc:
-            raise SystemExit(
+            raise RuntimeError(
                 f"\nERROR resolving assets from registry: {exc}\n"
                 "Check the asset_configs: block in the task YAML, or pass "
                 "a different --config."
             ) from exc
         except ValueError as exc:
-            raise SystemExit(f"\nERROR: {exc}") from exc
+            raise ValueError(f"\nERROR: {exc}") from exc
 
     def prepare_recording(
         self,
