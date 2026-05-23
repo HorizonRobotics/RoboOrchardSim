@@ -122,7 +122,7 @@ class PlaceA2BTaskDefinitionBase(TaskDefinition):
             )
 
         resolved = resolver.resolve(asset_configs)
-        task_assets = PlaceA2BTaskAssets(**resolved)
+        task_assets = PlaceA2BTaskAssets.from_resolved(resolved)
         task_params = PlaceA2BTaskParams(
             **cls.resolve_task_params(config_path=config_path)
         )

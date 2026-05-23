@@ -126,7 +126,7 @@ class PickTaskDefinitionBase(TaskDefinition):
             )
 
         resolved = resolver.resolve(asset_configs)
-        task_assets = PickAssets(**resolved)
+        task_assets = PickAssets.from_resolved(resolved)
         task_params = PickTaskParams(
             **cls.resolve_task_params(config_path=config_path)
         )

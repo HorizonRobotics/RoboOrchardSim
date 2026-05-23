@@ -72,6 +72,32 @@ class TaskAssetsBase(Config):
 
     distractors: Any = None
 
+    @classmethod
+    def from_resolved(cls, resolved: Mapping[str, Any]) -> "TaskAssetsBase":
+        """Build assets, folding every non-target role into distractors."""
+        targets = {
+            role: resolved[role]
+            for role in cls.required_object_fields
+            if role in resolved
+        }
+        rest = [
+            value
+            for role, value in resolved.items()
+            if role not in cls.required_object_fields
+        ]
+        if not rest:
+            distractors: Any = None
+        elif len(rest) == 1 and not isinstance(rest[0], list):
+            distractors = rest[0]
+        elif any(not isinstance(value, list) for value in rest):
+            raise TypeError(
+                f"{cls.__name__} does not support multiple distractor "
+                "groups when one is a pool."
+            )
+        else:
+            distractors = [spec for group in rest for spec in group]
+        return cls(**targets, distractors=distractors)
+
     @model_validator(mode="before")
     @classmethod
     def validate_required_objects(cls, value: Any) -> Any:

@@ -52,9 +52,9 @@ task:
       enabled: true
       preset: default_table_texture
 
-# Template consumed by AssetResolver. Top-level keys = role names
-# (must match PlaceA2BTaskAssets fields). Entries with an `anchor`
-# key are distractors; others are targets.
+# Template consumed by AssetResolver. Entries with an `anchor` key are
+# distractors (role name is free); all others are targets and must
+# match PlaceA2BTaskAssets fields.
 asset_configs:
 
   pick:
@@ -75,13 +75,18 @@ asset_configs:
       category: plate
     prim_name: place_object
 
-  distractors:
-    anchor: pick                    # anchor role (must be a target above)
-    match: [category]         # fields equal to anchor's
-    differ: [color]              # fields differing from anchor's
-    # filter:                       # optional absolute filter
-    #   tags: [is_graspable]
-    min_count: 1                    # fail if pool < min_count
-    max_count: 3                    # sample min(len(pool), max_count)
-    prim_name_prefix: distractor
-    # split: seen
+  distractors_pick:
+    anchor: pick
+    filter:
+      tags: [is_graspable]
+    min_count: 3
+    max_count: 3
+    prim_name_prefix: dpick
+
+  distractors_place:
+    anchor: place
+    filter:
+      tags: [is_container]
+    min_count: 1
+    max_count: 1
+    prim_name_prefix: dplace

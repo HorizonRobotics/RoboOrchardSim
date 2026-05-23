@@ -106,6 +106,10 @@ def test_pick_task_definition_build_assigns_instruction_to_task(
         def __init__(self, **resolved):
             self.resolved = resolved
 
+        @classmethod
+        def from_resolved(cls, resolved):
+            return cls(**resolved)
+
     class FakePickTaskParams:
         def __init__(self, **params):
             self.params = params
