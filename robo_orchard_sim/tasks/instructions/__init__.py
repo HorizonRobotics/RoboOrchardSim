@@ -18,6 +18,7 @@
 
 from robo_orchard_sim.tasks.instructions.base import (  # noqa: F401
     InstructionActor,
+    InstructionRenderError,
     InstructionWrapper,
     render_instruction_from_registry,
 )
@@ -36,6 +37,7 @@ from robo_orchard_sim.tasks.instructions.registry import (  # noqa: F401
 __all__ = [
     "InstructionWrapper",
     "InstructionActor",
+    "InstructionRenderError",
     "render_instruction_from_registry",
     "extract_instruction_actor_uuids_from_mcap",
     "render_instruction_from_mcap",

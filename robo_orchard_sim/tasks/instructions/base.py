@@ -133,8 +133,11 @@ def _build_instruction_actor(
     fallback_description: str,
     actor_description_mode: Literal["raw", "seen", "unseen"],
     actor_description_seed: int | None,
+    attribute_name: str | None = None,
+    attribute_value: str | None = None,
 ) -> "InstructionActor":
     resolved_category = category or str(payload.get("category") or "unknown")
+    resolved_category = resolved_category.replace("_", " ")
     raw_description, seen_descriptions, unseen_descriptions = (
         _parse_caption_payload(
             uuid=uuid,
@@ -158,7 +161,42 @@ def _build_instruction_actor(
         category=resolved_category,
         seen_descriptions=seen_descriptions,
         unseen_descriptions=unseen_descriptions,
+        attribute_name=attribute_name,
+        attribute_value=attribute_value,
     )
+
+
+def _resolve_single_asset_attribute(
+    *,
+    uuid: str,
+    color: frozenset[str] | None,
+    shape: frozenset[str] | None,
+    material: frozenset[str] | None,
+    attribute_name: str,
+) -> str:
+    values_by_attribute = {
+        "color": color,
+        "shape": shape,
+        "material": material,
+    }
+    try:
+        values = values_by_attribute[attribute_name]
+    except KeyError as exc:
+        raise InstructionRenderError(
+            f"Unsupported asset attribute: {attribute_name!r}"
+        ) from exc
+    if not values:
+        raise InstructionRenderError(
+            f"Asset {uuid!r} has no {attribute_name!r} value"
+        )
+    if attribute_name == "color" and len(values) <= 2:
+        return " and ".join(sorted(values))
+    if len(values) != 1:
+        raise InstructionRenderError(
+            f"Asset {uuid!r} has multiple {attribute_name!r} values: "
+            f"{sorted(values)}"
+        )
+    return next(iter(values))
 
 
 @dataclasses.dataclass(slots=True)
@@ -171,6 +209,8 @@ class InstructionActor:
     category: str = "unknown"
     seen_descriptions: list[str] = dataclasses.field(default_factory=list)
     unseen_descriptions: list[str] = dataclasses.field(default_factory=list)
+    attribute_name: str | None = None
+    attribute_value: str | None = None
 
     def __post_init__(self) -> None:
         if self.category == "":
@@ -257,7 +297,14 @@ class InstructionActor:
         meta = registry.get_meta(uuid)
         category = str(meta.category)
         fallback_description = str(meta.description or category)
-        payload = _load_caption_payload(Path(str(meta.caption_path)))
+        payload = _load_caption_payload(
+            Path(
+                str(meta.caption_path).replace(
+                    "caption_candidates_updated.json",
+                    "caption_candidates.json",
+                )
+            )
+        )
         return _build_instruction_actor(
             uuid=str(meta.uuid),
             category=category,
@@ -265,6 +312,46 @@ class InstructionActor:
             fallback_description=fallback_description,
             actor_description_mode=actor_description_mode,
             actor_description_seed=actor_description_seed,
+        )
+
+    @classmethod
+    def from_registry_with_attribute(
+        cls,
+        uuid: str,
+        registry: "AssetRegistry",
+        *,
+        attribute_name: str,
+        actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
+        actor_description_seed: int | None = None,
+    ) -> "InstructionActor":
+        """Build an instruction actor with one structured asset attribute."""
+        meta = registry.get_meta(uuid)
+        category = str(meta.category)
+        fallback_description = str(meta.description or category)
+        payload = _load_caption_payload(
+            Path(
+                str(meta.caption_path).replace(
+                    "caption_candidates_updated.json",
+                    "caption_candidates.json",
+                )
+            )
+        )
+        attribute_value = _resolve_single_asset_attribute(
+            uuid=str(meta.uuid),
+            color=meta.color,
+            shape=meta.shape,
+            material=meta.material,
+            attribute_name=attribute_name,
+        )
+        return _build_instruction_actor(
+            uuid=str(meta.uuid),
+            category=category,
+            payload=payload,
+            fallback_description=fallback_description,
+            actor_description_mode=actor_description_mode,
+            actor_description_seed=actor_description_seed,
+            attribute_name=attribute_name,
+            attribute_value=attribute_value,
         )
 
 
