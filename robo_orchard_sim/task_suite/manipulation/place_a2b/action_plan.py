@@ -94,6 +94,15 @@ def _build_dualarm_piper_action_plan(
             grasp_mode="Top-down",
             priority=0,
         ),
+        MoveExecutorCfg(
+            robot_info=arm,
+            target=MoveByJointOffsetCfg(
+                joint_id_idxs=[1],
+                joint_offsets=[-0.15],
+            ),
+            gripper_state="CLOSED",
+            priority=0,
+        ),
         PlaceExecutorCfg(
             robot_info=arm,
             pick_object_info=ObjectInfo(
@@ -104,7 +113,7 @@ def _build_dualarm_piper_action_plan(
             ),
             pre_place_cfg=MoveByJointOffsetCfg(
                 joint_id_idxs=[1],
-                joint_offsets=[-0.15],
+                joint_offsets=[-0.2],
             ),
             constrain="free",
             priority=0,
