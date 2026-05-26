@@ -93,15 +93,15 @@ class FrankaPandaEmbodiment(EmbodimentBase):
     def _get_camera_asset_map() -> GroupAssetCfg:
         """Build the camera asset mapping used across the embodiment."""
         from robo_orchard_sim.orchard_env.embodiments.franka_panda.camera_cfgs import (  # noqa: E501
-            FRANKA_PANDA_HAND_CAMERA_CFG,
-            FRANKA_PANDA_STATIC_CAMERA_CFG,
-            FRANKA_PANDA_VIS_CAMERA_CFG,
+            FRANKA_PANDA_DROID_EXT1_CAMERA_CFG,
+            FRANKA_PANDA_DROID_EXT2_CAMERA_CFG,
+            FRANKA_PANDA_DROID_WRIST_CAMERA_CFG,
         )
 
         return {
-            "static_camera": FRANKA_PANDA_STATIC_CAMERA_CFG,
-            "hand_camera": FRANKA_PANDA_HAND_CAMERA_CFG,
-            "vis_camera": FRANKA_PANDA_VIS_CAMERA_CFG,
+            "ext1_camera": FRANKA_PANDA_DROID_EXT1_CAMERA_CFG,
+            "ext2_camera": FRANKA_PANDA_DROID_EXT2_CAMERA_CFG,
+            "wrist_camera": FRANKA_PANDA_DROID_WRIST_CAMERA_CFG,
         }
 
     @staticmethod
@@ -159,9 +159,9 @@ class FrankaPandaEmbodiment(EmbodimentBase):
         cls, robot_scene_name: str
     ) -> dict[str, FrameTransformTermCfg]:
         camera_parent_body_names = {
-            "static_camera": "panda_link0",
-            "hand_camera": "panda_hand",
-            "vis_camera": "panda_link0",
+            "ext1_camera": "panda_link0",
+            "ext2_camera": "panda_link0",
+            "wrist_camera": "panda_hand",
         }
         return {
             f"{camera_name}_tf": FrameTransformTermCfg(

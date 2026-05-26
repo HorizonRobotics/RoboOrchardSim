@@ -149,11 +149,21 @@ def _build_franka_panda_action_plan(
                 name=pick_obj, mode="passive", action="pick", part="body"
             ),
             pre_grasp=MoveByDisplacementCfg(
-                distance=-0.15,
+                distance=0.15,
                 direction="z",
-                frame="gripper",
+                frame="world",
             ),
             grasp_mode="Top-down",
+            priority=0,
+        ),
+        MoveExecutorCfg(
+            robot_info=arm,
+            target=MoveByDisplacementCfg(
+                distance=0.15,
+                direction="z",
+                frame="world",
+            ),
+            gripper_state="CLOSED",
             priority=0,
         ),
         PlaceExecutorCfg(
@@ -165,9 +175,9 @@ def _build_franka_panda_action_plan(
                 name=place_obj, mode="passive", action="place", part="body"
             ),
             pre_place_cfg=MoveByDisplacementCfg(
-                distance=-0.15,
+                distance=0.15,
                 direction="z",
-                frame="gripper",
+                frame="world",
             ),
             constrain="free",
             priority=0,
