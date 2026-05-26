@@ -17,6 +17,7 @@
 from typing import Any
 
 from robo_orchard_sim.policy.dummy.policy import DummyPolicyCfg
+from robo_orchard_sim.policy.groot.policy import GrootArmMapCfg, GrootPolicyCfg
 from robo_orchard_sim.policy.holobrain.policy import HolobrainPolicyCfg
 from robo_orchard_sim.policy.openpi.policy import OpenPiPolicyCfg
 from robo_orchard_sim.policy.server import ServerPolicyCfg
@@ -70,4 +71,24 @@ def create_policy_from_model_cfg(model_cfg: Any):
             logging_tag=_cfg_get(model_cfg, "logging_tag"),
             remote_policy_type=remote_policy_type or "full",
         )
+    if policy_name == "groot":
+        groot_kwargs: dict[str, Any] = dict(
+            host=_cfg_get(model_cfg, "host", "127.0.0.1"),
+            port=_cfg_get(model_cfg, "port", 5555),
+            timeout_ms=_cfg_get(model_cfg, "timeout_ms", 15000),
+            open_loop_horizon=_cfg_get(model_cfg, "open_loop_horizon"),
+            instruction=_cfg_get(model_cfg, "instruction"),
+            logging_tag=_cfg_get(model_cfg, "logging_tag"),
+            api_token=_cfg_get(model_cfg, "api_token"),
+        )
+        language_key = _cfg_get(model_cfg, "language_key")
+        if language_key is not None:
+            groot_kwargs["language_key"] = language_key
+        video_map = _cfg_get(model_cfg, "video_map")
+        if video_map is not None:
+            groot_kwargs["video_map"] = video_map
+        arms = _cfg_get(model_cfg, "arms")
+        if arms is not None:
+            groot_kwargs["arms"] = [GrootArmMapCfg(**arm) for arm in arms]
+        return GrootPolicyCfg(**groot_kwargs)
     raise ValueError(f"Invalid policy: {policy_name}")
