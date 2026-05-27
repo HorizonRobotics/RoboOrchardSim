@@ -32,14 +32,21 @@ def build_franka_panda_policy_binding_schema(
         embodiment_type=embodiment_type,
         camera_slots={
             "wrist": CameraBinding(
-                obs_term="hand_camera_term",
+                obs_term="wrist_camera_term",
                 rgb=True,
                 depth=True,
                 intrinsic=True,
                 pose=True,
             ),
             "base": CameraBinding(
-                obs_term="static_camera_term",
+                obs_term="ext1_camera_term",
+                rgb=True,
+                depth=True,
+                intrinsic=True,
+                pose=True,
+            ),
+            "right_wrist": CameraBinding(
+                obs_term="ext2_camera_term",
                 rgb=True,
                 depth=True,
                 intrinsic=True,
@@ -56,7 +63,7 @@ def build_franka_panda_policy_binding_schema(
                 ),
                 gripper_policy_representation="first_joint",
                 gripper_decode_coupling="symmetric",
-                gripper_policy_scale=1.0,
+                gripper_policy_scale=2.0,
             )
         },
     )

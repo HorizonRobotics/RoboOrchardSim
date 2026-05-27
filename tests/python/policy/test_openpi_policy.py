@@ -86,8 +86,9 @@ def _build_franka_schema() -> PolicyBindingSchema:
         schema_version="1",
         embodiment_type="franka_panda",
         camera_slots={
-            "wrist": CameraBinding(obs_term="hand_camera_term"),
-            "base": CameraBinding(obs_term="static_camera_term"),
+            "wrist": CameraBinding(obs_term="wrist_camera_term"),
+            "base": CameraBinding(obs_term="ext1_camera_term"),
+            "right_wrist": CameraBinding(obs_term="ext2_camera_term"),
         },
         manipulator_slots={
             "single_arm": ManipulatorBinding(
@@ -184,6 +185,7 @@ def _build_single_arm_obs(batch_size: int = 1) -> CanonicalPolicyInput:
     return CanonicalPolicyInput(
         cameras={
             "wrist": camera_obs,
+            "right_wrist": camera_obs,
             "base": camera_obs,
         },
         manipulators={
@@ -605,21 +607,9 @@ def test_openpi_adapter_single_arm_obs_returns_model_input() -> None:
     assert model_input["prompt"] == "pick apple"
     assert model_input["image_mask"] == {
         "left_wrist_0_rgb": np.True_,
-        "right_wrist_0_rgb": np.False_,
+        "right_wrist_0_rgb": np.True_,
         "base_0_rgb": np.True_,
     }
-    assert (
-        model_input["image"]["right_wrist_0_rgb"].shape
-        == model_input["image"]["left_wrist_0_rgb"].shape
-    )
-    assert (
-        model_input["image"]["right_wrist_0_rgb"].dtype
-        == model_input["image"]["left_wrist_0_rgb"].dtype
-    )
-    np.testing.assert_array_equal(
-        model_input["image"]["right_wrist_0_rgb"],
-        np.zeros_like(model_input["image"]["left_wrist_0_rgb"]),
-    )
     np.testing.assert_allclose(
         model_input["state"],
         np.array([1, 2, 3, 3.14, 3.14, 3.14, 3.14, 0.2]),

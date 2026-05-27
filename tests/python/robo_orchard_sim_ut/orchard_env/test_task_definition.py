@@ -217,6 +217,21 @@ def test_resolve_embodiment_franka_panda_type_returns_franka_embodiment(
     assert isinstance(embodiment, FrankaPandaEmbodiment)
 
 
+def test_franka_panda_policy_binding_schema_camera_terms_match_observations():
+    embodiment = FrankaPandaEmbodiment(enable_cameras=True)
+
+    observation_cfg = embodiment.get_observation_cfg()
+    camera_terms = set(observation_cfg.groups["/camera"].terms)
+    schema_terms = {
+        binding.obs_term
+        for binding in (
+            embodiment.get_policy_binding_schema().camera_slots.values()
+        )
+    }
+
+    assert schema_terms <= camera_terms
+
+
 def test_resolve_embodiment_dualarm_piperx_type_returns_piperx_embodiment(
     tmp_path: Path,
 ) -> None:

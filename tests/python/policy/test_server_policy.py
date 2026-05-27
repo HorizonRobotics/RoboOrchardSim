@@ -76,8 +76,9 @@ def _build_franka_schema() -> PolicyBindingSchema:
         schema_version="1",
         embodiment_type="franka_panda",
         camera_slots={
-            "wrist": CameraBinding(obs_term="hand_camera_term"),
-            "base": CameraBinding(obs_term="static_camera_term"),
+            "wrist": CameraBinding(obs_term="wrist_camera_term"),
+            "base": CameraBinding(obs_term="ext1_camera_term"),
+            "right_wrist": CameraBinding(obs_term="ext2_camera_term"),
         },
         manipulator_slots={
             "single_arm": ManipulatorBinding(
@@ -203,6 +204,7 @@ def build_single_arm_canonical_observation() -> CanonicalPolicyInput:
     return CanonicalPolicyInput(
         cameras={
             "wrist": camera_obs,
+            "right_wrist": camera_obs,
             "base": camera_obs,
         },
         manipulators={

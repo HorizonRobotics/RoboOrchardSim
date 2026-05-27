@@ -81,9 +81,9 @@ _OPENPI_CAMERA_SPECS = (
     _OpenPiCameraSpec(
         position="right",
         model_image_key="right_wrist_0_rgb",
-        single_arm_slot=None,
+        single_arm_slot="right_wrist",
         dual_arm_slot="right_wrist",
-        required_for_single_arm=False,
+        required_for_single_arm=True,
         required_for_dual_arm=True,
     ),
     _OpenPiCameraSpec(
