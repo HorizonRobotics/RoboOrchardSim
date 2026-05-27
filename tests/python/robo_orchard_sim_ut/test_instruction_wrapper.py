@@ -73,6 +73,9 @@ class FakeRigidObjectCfg:
     uuid: str | None
     category: str | None
     caption_path: str | None
+    attributes: dict[str, tuple[str, ...]] = dataclasses.field(
+        default_factory=dict
+    )
 
 
 @dataclasses.dataclass(slots=True)
@@ -379,6 +382,136 @@ class TestInstructionActorFromRigidObject:
         assert actor.category == "unknown"
         assert actor.raw_description == "apple"
 
+    def test_from_rigid_object_with_attribute_color_sets_attribute_value(
+        self,
+        tmp_path,
+    ):
+        caption_path = tmp_path / "caption_candidates.json"
+        _write_json(
+            caption_path,
+            {
+                "uuid": "u-peach-color",
+                "raw": "peach",
+                "seen": ["yellow peach"],
+            },
+        )
+        rigid_object = FakeRigidObject(
+            cfg=FakeRigidObjectCfg(
+                uuid="u-peach-color",
+                category="peach",
+                caption_path=str(caption_path),
+                attributes={"color": ("yellow",)},
+            )
+        )
+
+        actor = InstructionActor.from_rigid_object_with_attribute(
+            rigid_object,
+            attribute_name="color",
+        )
+
+        assert actor.attribute_name == "color"
+        assert actor.attribute_value == "yellow"
+
+    def test_from_rigid_object_with_attribute_two_colors_joins_values(
+        self,
+        tmp_path,
+    ):
+        caption_path = tmp_path / "caption_candidates.json"
+        _write_json(
+            caption_path,
+            {
+                "uuid": "u-cup-color",
+                "raw": "cup",
+            },
+        )
+        rigid_object = FakeRigidObject(
+            cfg=FakeRigidObjectCfg(
+                uuid="u-cup-color",
+                category="cup",
+                caption_path=str(caption_path),
+                attributes={"color": ("black", "white")},
+            )
+        )
+
+        actor = InstructionActor.from_rigid_object_with_attribute(
+            rigid_object,
+            attribute_name="color",
+        )
+
+        assert actor.attribute_value == "black and white"
+
+    def test_from_rigid_object_with_attribute_three_colors_formats_phrase(
+        self,
+        tmp_path,
+    ):
+        caption_path = tmp_path / "caption_candidates.json"
+        _write_json(
+            caption_path,
+            {
+                "uuid": "u-peach-colorful",
+                "raw": "peach",
+            },
+        )
+        rigid_object = FakeRigidObject(
+            cfg=FakeRigidObjectCfg(
+                uuid="u-peach-colorful",
+                category="peach",
+                caption_path=str(caption_path),
+                attributes={"color": ("yellow", "green", "red")},
+            )
+        )
+
+        actor = InstructionActor.from_rigid_object_with_attribute(
+            rigid_object,
+            attribute_name="color",
+        )
+
+        assert actor.attribute_value == "green, red, and yellow"
+
+    def test_from_rigid_object_with_attribute_missing_value_raises(
+        self,
+        tmp_path,
+    ):
+        caption_path = tmp_path / "caption_candidates.json"
+        _write_json(caption_path, {"uuid": "u-plate-shape", "raw": "plate"})
+        rigid_object = FakeRigidObject(
+            cfg=FakeRigidObjectCfg(
+                uuid="u-plate-shape",
+                category="plate",
+                caption_path=str(caption_path),
+            )
+        )
+
+        with pytest.raises(InstructionRenderError, match="no 'shape' value"):
+            InstructionActor.from_rigid_object_with_attribute(
+                rigid_object,
+                attribute_name="shape",
+            )
+
+    def test_from_rigid_object_with_attribute_multi_shape_raises(
+        self,
+        tmp_path,
+    ):
+        caption_path = tmp_path / "caption_candidates.json"
+        _write_json(caption_path, {"uuid": "u-bowl-shape", "raw": "bowl"})
+        rigid_object = FakeRigidObject(
+            cfg=FakeRigidObjectCfg(
+                uuid="u-bowl-shape",
+                category="bowl",
+                caption_path=str(caption_path),
+                attributes={"shape": ("round", "deep")},
+            )
+        )
+
+        with pytest.raises(
+            InstructionRenderError,
+            match="multiple 'shape' values",
+        ):
+            InstructionActor.from_rigid_object_with_attribute(
+                rigid_object,
+                attribute_name="shape",
+            )
+
 
 class TestInstructionWrapper:
     def test_placeholders_from_fixed_mode_returns_declared_fields(self):
@@ -413,6 +546,34 @@ class TestInstructionWrapper:
             actors={"name": "alice", "arm": "left", "item": "apple"},
         )
         assert text == "Grab apple using left for alice."
+
+    def test_render_spatial_pick_default_relation_context_returns_instruction(
+        self,
+    ):
+        wrapper = InstructionWrapper(
+            "spatial_pick_default",
+            template_mode="fixed",
+        )
+
+        text = wrapper.render(
+            actors={
+                "obj": InstructionActor(
+                    uuid="u-tomato",
+                    category="tomato",
+                    description="tomato",
+                    raw_description="tomato",
+                ),
+                "ref_obj": InstructionActor(
+                    uuid="u-apple",
+                    category="apple",
+                    description="apple",
+                    raw_description="apple",
+                ),
+                "spatial_relation": "to the left of",
+            },
+        )
+
+        assert text == "Pick up the tomato to the left of the apple."
 
     def test_render_without_explicit_template_mode_prefers_variants(
         self,

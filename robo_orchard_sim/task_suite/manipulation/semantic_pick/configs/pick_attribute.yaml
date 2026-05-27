@@ -50,9 +50,10 @@ embodiment:
     right_joint8: -0.05
 
 instruction:
-  template: pick_default
+  template: pick_attribute
   template_mode: variants  # valid values: fixed | variants
   actor_description_mode: seen  # valid values: raw | seen | unseen
+  attribute_name: &attr color  # valid values: color | shape | material
 
 task:
   params:
@@ -83,7 +84,7 @@ asset_configs:
   distractors:
     anchor: pick
     match: [category]
-    differ: [color]
+    differ: [*attr]
     min_count: 1
     max_count: 2
     prim_name_prefix: distractor

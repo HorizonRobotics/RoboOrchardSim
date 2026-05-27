@@ -21,6 +21,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from robo_orchard_sim.orchard_env.layout.loader import LayoutValidationError
+from robo_orchard_sim.orchard_env.tasks.layout_task import LayoutTask
 from robo_orchard_sim.task_suite.base import TaskDefinition
 from robo_orchard_sim.task_suite.manipulation.spatial_pick import action_plan
 from robo_orchard_sim.task_suite.registration import register_task
@@ -29,13 +31,92 @@ if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
         AssetResolver,
     )
+    from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
+    from robo_orchard_sim.orchard_env.layout.loader import (
+        Layout,
+        LayoutSequence,
+    )
     from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+    from robo_orchard_sim.orchard_env.tasks.layout_task import LayoutContext
     from robo_orchard_sim.tasks.trajs_gen.base_executor import BaseExecutorCfg
 
 logger = logging.getLogger(__name__)
 
 _DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _DIR / "configs"
+
+_SPATIAL_RELATION_PHRASES = {
+    "left_of": "to the left of",
+    "right_of": "to the right of",
+    "front_of": "in front of",
+    "in_front_of": "in front of",
+    "behind": "behind",
+    "behind_of": "behind",
+    "near": "near",
+    "on": "on",
+}
+
+
+def _spatial_relation_phrase(relation: str) -> str:
+    return _SPATIAL_RELATION_PHRASES.get(
+        relation,
+        relation.strip().lower().replace("_", " "),
+    )
+
+
+def _extract_spatial_relation(layout: "Layout") -> str:
+    relation_payload = layout.raw.get("relation")
+    if not isinstance(relation_payload, dict):
+        raise LayoutValidationError(
+            "spatial pick layout missing relation mapping"
+        )
+    constraints = relation_payload.get("spatial_constraints")
+    if not isinstance(constraints, list) or not constraints:
+        raise LayoutValidationError(
+            "spatial pick layout relation.spatial_constraints must be a "
+            "non-empty list"
+        )
+    first_constraint = constraints[0]
+    if not isinstance(first_constraint, dict):
+        raise LayoutValidationError(
+            "spatial pick layout spatial constraint must be a mapping"
+        )
+    relation = first_constraint.get("relation")
+    if not isinstance(relation, str) or not relation.strip():
+        raise LayoutValidationError(
+            "spatial pick layout spatial constraint missing relation"
+        )
+    return _spatial_relation_phrase(relation)
+
+
+def _build_spatial_layout_context(
+    seq: "LayoutSequence",
+    layout_builder: "LayoutBuilder",
+) -> LayoutContext:
+    from robo_orchard_sim.orchard_env.tasks.layout_task import (
+        LayoutSceneRef,
+    )
+
+    layout = seq.entries[0]
+    if "ref" not in layout.objects:
+        raise LayoutValidationError(
+            "spatial pick layout requires a 'ref' role for instruction "
+            "rendering"
+        )
+    ref_category = layout.objects["ref"].category
+    try:
+        ref_scene_name = layout_builder.role_member_by_category["ref"][
+            ref_category
+        ]
+    except KeyError as exc:
+        raise LayoutValidationError(
+            "spatial pick layout ref role was not resolved to a scene actor"
+        ) from exc
+    return {
+        "ref_obj": LayoutSceneRef(ref_scene_name),
+        "actor2": LayoutSceneRef(ref_scene_name),
+        "spatial_relation": _extract_spatial_relation(layout),
+    }
 
 
 class SpatialPickTaskDefinitionBase(TaskDefinition):
@@ -55,7 +136,6 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
         from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
         from robo_orchard_sim.orchard_env.tasks.pick_task import (
             PickAssets,
-            PickTask,
             PickTaskParams,
         )
         from robo_orchard_sim.task_suite.manipulation.semantic_pick.pick_env import (  # noqa: E501
@@ -115,14 +195,21 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
         PickTaskDefinitionBase._apply_light_reset_scene_overrides(
             scene, task_params
         )
+        instruction = cls.resolve_instruction(config_path=path)
+        layout_context = (
+            _build_spatial_layout_context(seq, layout_builder)
+            if instruction is not None
+            else None
+        )
 
         return OrchardEnv(
             scene=scene,
             embodiment=cls.resolve_embodiment(config_path=path),
-            task=PickTask(
+            task=LayoutTask(
                 assets=pick_assets,
                 params=task_params,
-                instruction=cls.resolve_instruction(config_path=path),
+                instruction=instruction,
+                layout_context=layout_context,
             ),
             layout_builder=layout_builder,
         )

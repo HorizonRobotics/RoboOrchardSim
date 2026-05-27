@@ -16,10 +16,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "InstructionActor",
+    "InstructionAttributeName",
     "InstructionWrapper",
     "InstructionRenderError",
     "render_instruction_from_registry",
 ]
+
+InstructionAttributeName = Literal["color", "shape", "material"]
 
 
 def _load_caption_payload(caption_path: Path) -> Mapping[str, Any]:
@@ -169,34 +172,52 @@ def _build_instruction_actor(
 def _resolve_single_asset_attribute(
     *,
     uuid: str,
-    color: frozenset[str] | None,
-    shape: frozenset[str] | None,
-    material: frozenset[str] | None,
+    attributes: Mapping[
+        str,
+        tuple[str, ...] | list[str] | frozenset[str] | None,
+    ],
     attribute_name: str,
 ) -> str:
-    values_by_attribute = {
-        "color": color,
-        "shape": shape,
-        "material": material,
-    }
-    try:
-        values = values_by_attribute[attribute_name]
-    except KeyError as exc:
+    if attribute_name not in {"color", "shape", "material"}:
         raise InstructionRenderError(
             f"Unsupported asset attribute: {attribute_name!r}"
-        ) from exc
+        )
+    values = _normalize_runtime_attribute_values(
+        attributes.get(attribute_name)
+    )
     if not values:
         raise InstructionRenderError(
             f"Asset {uuid!r} has no {attribute_name!r} value"
         )
-    if attribute_name == "color" and len(values) <= 2:
-        return " and ".join(sorted(values))
+    if attribute_name == "color":
+        return _format_attribute_values(values)
     if len(values) != 1:
         raise InstructionRenderError(
             f"Asset {uuid!r} has multiple {attribute_name!r} values: "
             f"{sorted(values)}"
         )
     return next(iter(values))
+
+
+def _normalize_runtime_attribute_values(
+    values: tuple[str, ...] | list[str] | frozenset[str] | None,
+) -> frozenset[str] | None:
+    if values is None:
+        return None
+    normalized = frozenset(str(value).strip().lower() for value in values)
+    normalized = frozenset(value for value in normalized if value)
+    if not normalized:
+        return None
+    return normalized
+
+
+def _format_attribute_values(values: frozenset[str]) -> str:
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    if len(ordered) == 2:
+        return f"{ordered[0]} and {ordered[1]}"
+    return ", ".join(ordered[:-1]) + f", and {ordered[-1]}"
 
 
 @dataclasses.dataclass(slots=True)
@@ -261,6 +282,33 @@ class InstructionActor:
             fallback_description=category,
             actor_description_mode=actor_description_mode,
             actor_description_seed=actor_description_seed,
+        )
+
+    @classmethod
+    def from_rigid_object_with_attribute(
+        cls,
+        rigid_object: "RigidObject",
+        *,
+        attribute_name: InstructionAttributeName,
+        actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
+        actor_description_seed: int | None = None,
+    ) -> "InstructionActor":
+        """Build an instruction actor with one runtime object attribute."""
+        actor = cls.from_rigid_object(
+            rigid_object,
+            actor_description_mode=actor_description_mode,
+            actor_description_seed=actor_description_seed,
+        )
+        cfg = rigid_object.cfg
+        attribute_value = _resolve_single_asset_attribute(
+            uuid=actor.uuid,
+            attributes=cfg.attributes,
+            attribute_name=attribute_name,
+        )
+        return dataclasses.replace(
+            actor,
+            attribute_name=attribute_name,
+            attribute_value=attribute_value,
         )
 
     @classmethod
@@ -338,9 +386,11 @@ class InstructionActor:
         )
         attribute_value = _resolve_single_asset_attribute(
             uuid=str(meta.uuid),
-            color=meta.color,
-            shape=meta.shape,
-            material=meta.material,
+            attributes={
+                "color": meta.color,
+                "shape": meta.shape,
+                "material": meta.material,
+            },
             attribute_name=attribute_name,
         )
         return _build_instruction_actor(
@@ -433,10 +483,12 @@ class InstructionWrapper:
         *,
         template_mode: Literal["fixed", "variants"] | None = None,
         actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
+        attribute_name: InstructionAttributeName | None = None,
         strict: bool = True,
     ) -> None:
         self.template = template
         self.actor_description_mode = actor_description_mode
+        self.attribute_name = attribute_name
         self.strict = strict
         self._formatter = string.Formatter()
         self._template_payload = self._load_template_payload(template)

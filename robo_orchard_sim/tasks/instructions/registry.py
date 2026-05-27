@@ -22,7 +22,10 @@ from typing import Any
 
 from typing_extensions import Literal
 
-from robo_orchard_sim.tasks.instructions.base import InstructionWrapper
+from robo_orchard_sim.tasks.instructions.base import (
+    InstructionAttributeName,
+    InstructionWrapper,
+)
 
 InstructionTemplate = Mapping[str, Any]
 
@@ -61,6 +64,7 @@ def build_instruction_wrapper(
     template_name: str,
     template_mode: Literal["fixed", "variants"] = "fixed",
     actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
+    attribute_name: InstructionAttributeName | None = None,
 ) -> InstructionWrapper:
     """Build an instruction wrapper from the registered template name."""
     get_instruction_template(template_name)
@@ -68,6 +72,7 @@ def build_instruction_wrapper(
         template_name,
         template_mode=template_mode,
         actor_description_mode=actor_description_mode,
+        attribute_name=attribute_name,
     )
 
 
@@ -155,6 +160,42 @@ register_instruction_template(
             "Take {actor1.description}.",
             "Lift the {actor1.description}.",
             "Pick up the {actor1.description}.",
+        ],
+    },
+)
+
+register_instruction_template(
+    "spatial_pick_default",
+    {
+        "fixed": (
+            "Pick up the {obj.category} {spatial_relation} "
+            "the {ref_obj.category}."
+        ),
+        "variants": [
+            (
+                "Pick up the {obj.category} {spatial_relation} "
+                "the {ref_obj.category}."
+            ),
+            (
+                "Grab the {obj.category} {spatial_relation} "
+                "the {ref_obj.category}."
+            ),
+            (
+                "Lift the {obj.category} {spatial_relation} "
+                "the {ref_obj.category}."
+            ),
+            (
+                "Pick the {obj.category} {spatial_relation} "
+                "the {ref_obj.category} up."
+            ),
+            (
+                "Grasp the {obj.category} {spatial_relation} "
+                "the {ref_obj.category}."
+            ),
+            (
+                "Take the {obj.category} {spatial_relation} "
+                "the {ref_obj.category}."
+            ),
         ],
     },
 )

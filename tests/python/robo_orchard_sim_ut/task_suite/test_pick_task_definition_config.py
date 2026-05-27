@@ -35,25 +35,38 @@ class FakeResolver:
 
 
 @pytest.mark.parametrize(
-    ("task_definition", "yaml_name"),
+    (
+        "task_definition",
+        "yaml_name",
+        "expected_template",
+        "expected_attribute",
+    ),
     [
         (
             pick_env.PickCategoryTaskDefinition,
             "pick_category.yaml",
+            "pick_default",
+            None,
         ),
         (
             pick_env.PickAttributeTaskDefinition,
             "pick_attribute.yaml",
+            "pick_attribute",
+            "color",
         ),
         (
             pick_env.PickDisambiguationTaskDefinition,
             "pick_disambiguation.yaml",
+            "pick_default",
+            None,
         ),
     ],
 )
-def test_pick_task_definition_yaml_uses_pick_instruction_template(
+def test_pick_task_definition_yaml_uses_expected_instruction_template(
     task_definition,
     yaml_name: str,
+    expected_template: str,
+    expected_attribute: str | None,
 ) -> None:
     yaml_path = (
         Path(__file__).resolve().parents[4]
@@ -65,15 +78,15 @@ def test_pick_task_definition_yaml_uses_pick_instruction_template(
         / yaml_name
     )
     raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    instruction = task_definition.resolve_instruction()
 
-    assert raw["instruction"]["template"] == "pick_default"
-    assert task_definition.resolve_instruction() is not None
+    assert raw["instruction"]["template"] == expected_template
+    assert instruction is not None
+    assert instruction.template == expected_template
+    assert instruction.attribute_name == expected_attribute
+    assert instruction.template_mode == raw["instruction"]["template_mode"]
     assert (
-        task_definition.resolve_instruction().template_mode
-        == raw["instruction"]["template_mode"]
-    )
-    assert (
-        task_definition.resolve_instruction().actor_description_mode
+        instruction.actor_description_mode
         == raw["instruction"]["actor_description_mode"]
     )
 

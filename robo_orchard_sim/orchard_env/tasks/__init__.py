@@ -14,6 +14,10 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+from robo_orchard_sim.orchard_env.tasks.layout_task import (  # noqa: F401
+    LayoutSceneRef,
+    LayoutTask,
+)
 from robo_orchard_sim.orchard_env.tasks.pick_task import (  # noqa: F401
     PickAssets,
     PickTask,
@@ -27,6 +31,8 @@ from robo_orchard_sim.orchard_env.tasks.task_base import (  # noqa: F401
 )
 
 __all__ = [
+    "LayoutSceneRef",
+    "LayoutTask",
     "TaskBase",
     "PickAssets",
     "PickTask",

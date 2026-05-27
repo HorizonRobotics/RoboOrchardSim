@@ -25,6 +25,7 @@ from typing import Any, Literal
 import robo_orchard_core.utils.math as math_utils
 import torch
 from isaaclab.assets.rigid_object import RigidObject as _RigidObject
+from pydantic import Field
 
 import robo_orchard_sim.utils.env_utils as env_utils
 from robo_orchard_sim.cfg_wrappers.assets_cfg import (
@@ -341,5 +342,5 @@ class RigidObjectCfg(_RigidObjectCfg[SpawnerCfgType_co, RigidObject]):
     uuid: str | None = None
     category: str | None = None
     actor_type: str = "object"
-    attributes: tuple[str, ...] = ()
+    attributes: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     aabb_z_min: float | None = None

@@ -13,6 +13,11 @@ embodiment:
 
 layout: spatial_pick_easy.json
 
+instruction:
+  template: spatial_pick_default
+  template_mode: fixed
+  actor_description_mode: raw
+
 asset_configs:
   pick:
     filter:

@@ -76,6 +76,7 @@ class InstructionConfig(Config):
     template: str
     template_mode: Literal["fixed", "variants"] = "fixed"
     actor_description_mode: Literal["raw", "seen", "unseen"] = "raw"
+    attribute_name: Literal["color", "shape", "material"] | None = None
 
 
 class TaskConfig(Config):
@@ -307,6 +308,7 @@ class TaskDefinition(ABC):
                 cfg.instruction.template,
                 template_mode=cfg.instruction.template_mode,
                 actor_description_mode=cfg.instruction.actor_description_mode,
+                attribute_name=cfg.instruction.attribute_name,
             )
         if cls.instruction is None:
             return None

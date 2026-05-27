@@ -30,7 +30,11 @@ def test_rigid_object_spec_to_isaac_cfg_uses_object_spec_shared_fields() -> (
         uuid="pick-uuid",
         category="apple",
         actor_type="pick_target",
-        attributes=("ripe", "red"),
+        attributes={
+            "color": ("red",),
+            "shape": ("round",),
+            "material": ("organic",),
+        },
     )
 
     cfg = spec.to_isaac_cfg()
@@ -43,5 +47,9 @@ def test_rigid_object_spec_to_isaac_cfg_uses_object_spec_shared_fields() -> (
     assert cfg.uuid == "pick-uuid"
     assert cfg.category == "apple"
     assert cfg.actor_type == "pick_target"
-    assert cfg.attributes == ("ripe", "red")
+    assert cfg.attributes == {
+        "color": ("red",),
+        "shape": ("round",),
+        "material": ("organic",),
+    }
     assert spec.caption_path == "/tmp/pick_caption.json"

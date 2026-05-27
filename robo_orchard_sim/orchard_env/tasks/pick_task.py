@@ -212,10 +212,20 @@ class PickTask(TaskBase):
         if self.instruction is None:
             return {}
 
-        return {
-            "actor1": InstructionActor.from_rigid_object(
-                env.scene[self.pick_object.scene_name],
+        pick_object = env.scene[self.pick_object.scene_name]
+        attribute_name = self.instruction.attribute_name
+        if attribute_name is not None:
+            actor = InstructionActor.from_rigid_object_with_attribute(
+                pick_object,
+                attribute_name=attribute_name,
                 actor_description_mode=self.instruction.actor_description_mode,
                 actor_description_seed=actor_description_seed,
             )
-        }
+        else:
+            actor = InstructionActor.from_rigid_object(
+                pick_object,
+                actor_description_mode=self.instruction.actor_description_mode,
+                actor_description_seed=actor_description_seed,
+            )
+
+        return {"actor1": actor}

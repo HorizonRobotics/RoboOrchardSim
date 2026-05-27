@@ -367,6 +367,11 @@ class AssetRegistry:
             uuid=meta.uuid,
             category=meta.category,
             actor_type=role,
+            attributes={
+                "color": tuple(sorted(meta.color or ())),
+                "shape": tuple(sorted(meta.shape or ())),
+                "material": tuple(sorted(meta.material or ())),
+            },
             aabb_z_min=meta.aabb_z_min,
         )
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,8 +26,21 @@ from robo_orchard_sim.task_suite.manipulation.spatial_pick.spatial_pick_env impo
 )
 
 
-def _entry(pick_cat: str, ref_cat: str) -> dict:
+def _entry(
+    pick_cat: str,
+    ref_cat: str,
+    relation: str = "left_of",
+) -> dict:
     return {
+        "relation": {
+            "spatial_constraints": [
+                {
+                    "relation": relation,
+                    "subject": "src",
+                    "anchor": "ref",
+                }
+            ]
+        },
         "position": {
             "src": {
                 "category": pick_cat,
@@ -38,7 +52,7 @@ def _entry(pick_cat: str, ref_cat: str) -> dict:
                 "position": [0.3, 0.1, 0.05],
                 "rotation": [1, 0, 0, 0],
             },
-        }
+        },
     }
 
 
@@ -55,6 +69,37 @@ def _make_resolver(by_role_cat: dict[str, dict[str, RigidObjectSpec]]):
 
     resolver.resolve.side_effect = resolve
     return resolver
+
+
+def _write_caption(path: Path, *, uuid: str, raw: str) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "uuid": uuid,
+                "raw": raw,
+                "seen": [raw],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _spec_with_caption(
+    tmp_path: Path,
+    *,
+    name: str,
+    category: str,
+    uuid: str,
+) -> RigidObjectSpec:
+    caption_path = tmp_path / f"{uuid}_caption_candidates.json"
+    _write_caption(caption_path, uuid=uuid, raw=category)
+    return RigidObjectSpec(
+        name=name,
+        usd_path=f"/d/{name}.usd",
+        caption_path=str(caption_path),
+        uuid=uuid,
+        category=category,
+    )
 
 
 def _write_yaml(tmp_path: Path, **kwargs) -> Path:
@@ -92,6 +137,24 @@ def _patched_build():
             SpatialPickTaskDefinitionBase,
             "resolve_instruction",
             return_value=None,
+        ),
+        patch("robo_orchard_sim.orchard_env.orchard_env.OrchardEnv") as orch,
+    ):
+        yield orch
+
+
+@contextmanager
+def _patched_build_with_instruction():
+    with (
+        patch.object(
+            SpatialPickTaskDefinitionBase,
+            "resolve_scene",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            SpatialPickTaskDefinitionBase,
+            "resolve_embodiment",
+            return_value=MagicMock(),
         ),
         patch("robo_orchard_sim.orchard_env.orchard_env.OrchardEnv") as orch,
     ):
@@ -244,3 +307,61 @@ def test_build_asset_configs_overlay_forwards_tags(tmp_path):
     assert asset_configs["pick"]["filter"]["tags"] == ["is_graspable"]
     assert asset_configs["pick"]["filter"]["category"] == "garlic"
     assert asset_configs["distractor_0"]["filter"] == {"category": "thermos"}
+
+
+def test_build_instruction_context_spatial_relation_renders_instruction(
+    tmp_path,
+):
+    _write_json(tmp_path, [_entry("tomato", "apple", relation="left_of")])
+    tomato = _spec_with_caption(
+        tmp_path,
+        name="tomato_object",
+        category="tomato",
+        uuid="u-tomato-spatial",
+    )
+    apple = _spec_with_caption(
+        tmp_path,
+        name="apple_object",
+        category="apple",
+        uuid="u-apple-spatial",
+    )
+    resolver = _make_resolver(
+        {
+            "pick": {"tomato": tomato},
+            "distractor_0": {"apple": apple},
+        }
+    )
+    yaml_path = _write_yaml(
+        tmp_path,
+        extra=(
+            "instruction:\n"
+            "  template: spatial_pick_default\n"
+            "  template_mode: fixed\n"
+            "  actor_description_mode: raw\n"
+        ),
+    )
+    with _patched_build_with_instruction() as orch:
+        SpatialPickTaskDefinitionBase.build(
+            resolver=resolver,
+            config_path=str(yaml_path),
+        )
+    task = orch.call_args.kwargs["task"]
+    env = SimpleNamespace(
+        scene={
+            task.pick_object.scene_name: SimpleNamespace(
+                cfg=task.pick_object.to_isaac_cfg()
+            ),
+            task.distractors[0].scene_name: SimpleNamespace(
+                cfg=task.distractors[0].to_isaac_cfg()
+            ),
+        }
+    )
+
+    instruction = task.instruction.render(
+        actors=task.build_instruction_context(
+            env,
+            actor_description_seed=0,
+        )
+    )
+
+    assert instruction == "Pick up the tomato to the left of the apple."

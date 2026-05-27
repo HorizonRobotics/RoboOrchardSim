@@ -263,6 +263,37 @@ def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
     assert instruction.template_mode == "variants"
 
 
+def test_resolve_instruction_yaml_attribute_name_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        instruction_registry.INSTRUCTION_TEMPLATE_REGISTRY,
+        "attribute_template",
+        {
+            "fixed": "Pick {actor1.attribute_value} {actor1.category}",
+            "variants": [],
+        },
+    )
+
+    class YamlAttributeInstructionTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {
+                "instruction": {
+                    "template": "attribute_template",
+                    "template_mode": "fixed",
+                    "attribute_name": "color",
+                }
+            },
+        )
+
+    instruction = YamlAttributeInstructionTaskDefinition.resolve_instruction()
+
+    assert isinstance(instruction, InstructionWrapper)
+    assert instruction.attribute_name == "color"
+
+
 @pytest.mark.parametrize(
     ("task_class_name", "expected_namespace", "expected_config_suffix"),
     [
