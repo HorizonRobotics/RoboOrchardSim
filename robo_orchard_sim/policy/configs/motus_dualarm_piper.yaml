@@ -1,0 +1,9 @@
+policy: motus
+host: 127.0.0.1
+port: 8000
+logging_tag: motus-dualarm-piper
+valid_action_step: null
+camera_mapping:
+  static_camera: base
+  left_hand_camera: left_wrist
+  right_hand_camera: right_wrist

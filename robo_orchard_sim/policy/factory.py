@@ -19,6 +19,7 @@ from typing import Any
 from robo_orchard_sim.policy.dummy.policy import DummyPolicyCfg
 from robo_orchard_sim.policy.groot.policy import GrootArmMapCfg, GrootPolicyCfg
 from robo_orchard_sim.policy.holobrain.policy import HolobrainPolicyCfg
+from robo_orchard_sim.policy.motus.policy import MotusPolicyCfg
 from robo_orchard_sim.policy.openpi.policy import OpenPiPolicyCfg
 from robo_orchard_sim.policy.server import ServerPolicyCfg
 
@@ -63,6 +64,17 @@ def create_policy_from_model_cfg(model_cfg: Any):
         if cameras is not None:
             openpi_kwargs["cameras"] = cameras
         return OpenPiPolicyCfg(**openpi_kwargs)
+    if policy_name == "motus":
+        motus_kwargs = dict(
+            host=_cfg_get(model_cfg, "host", "127.0.0.1"),
+            port=_cfg_get(model_cfg, "port", 8000),
+            logging_tag=_cfg_get(model_cfg, "logging_tag"),
+            valid_action_step=_cfg_get(model_cfg, "valid_action_step"),
+        )
+        camera_mapping = _cfg_get(model_cfg, "camera_mapping")
+        if camera_mapping is not None:
+            motus_kwargs["camera_mapping"] = camera_mapping
+        return MotusPolicyCfg(**motus_kwargs)
     if policy_name == "server":
         remote_policy_type = _cfg_get(model_cfg, "remote_policy_type")
         return ServerPolicyCfg(
