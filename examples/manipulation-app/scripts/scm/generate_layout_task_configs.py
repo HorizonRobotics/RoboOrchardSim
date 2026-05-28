@@ -32,13 +32,7 @@ _LAYOUT_FILE_RE = re.compile(r"layout_[0-9]{4}\.json")
 _TASK_DIR_RE = re.compile(r"task_.*")
 
 
-def _discover_layout_paths(
-    *,
-    layout_root: str | Path,
-    num_layouts: int,
-) -> list[Path]:
-    if num_layouts < 0:
-        raise ValueError("num_layouts must be non-negative")
+def _discover_all_layout_paths(*, layout_root: str | Path) -> list[Path]:
     root_path = Path(layout_root)
     layout_paths: list[Path] = []
 
@@ -50,8 +44,6 @@ def _discover_layout_paths(
         )
 
     for _, task_path in task_paths:
-        if len(layout_paths) >= num_layouts:
-            break
         try:
             with os.scandir(task_path) as layout_entries:
                 layout_candidates = sorted(
@@ -62,9 +54,60 @@ def _discover_layout_paths(
                 )
         except NotADirectoryError:
             continue
-        remaining = num_layouts - len(layout_paths)
-        layout_paths.extend(layout_candidates[:remaining])
+        layout_paths.extend(layout_candidates)
     return layout_paths
+
+
+def _select_layout_paths(
+    *,
+    layout_paths: list[Path],
+    num_layouts: int | None,
+    layout_range: tuple[int, int] | None,
+    last_layouts: int | None,
+) -> list[Path]:
+    selection_count = sum(
+        option is not None
+        for option in (num_layouts, layout_range, last_layouts)
+    )
+    if selection_count != 1:
+        raise ValueError(
+            "exactly one of num_layouts, layout_range, or last_layouts "
+            "must be provided"
+        )
+
+    if num_layouts is not None:
+        if num_layouts < 0:
+            raise ValueError("num_layouts must be non-negative")
+        return layout_paths[:num_layouts]
+
+    if layout_range is not None:
+        start, end = layout_range
+        if start < 0 or end < 0:
+            raise ValueError("layout_range indexes must be non-negative")
+        if end < start:
+            raise ValueError("layout_range end must be >= start")
+        return layout_paths[start : end + 1]
+
+    assert last_layouts is not None
+    if last_layouts < 0:
+        raise ValueError("last_layouts must be non-negative")
+    if last_layouts == 0:
+        return []
+    return layout_paths[-last_layouts:]
+
+
+def _parse_layout_range(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"([0-9]+)-([0-9]+)", value)
+    if match is None:
+        raise argparse.ArgumentTypeError(
+            "layout range must use inclusive START-END syntax"
+        )
+    start, end = (int(part) for part in match.groups())
+    if end < start:
+        raise argparse.ArgumentTypeError(
+            "layout range end must be greater than or equal to start"
+        )
+    return start, end
 
 
 def _config_filename(layout_path: Path) -> str:
@@ -85,7 +128,9 @@ def write_layout_task_configs(
     *,
     base_config_path: str | Path,
     layout_root: str | Path,
-    num_layouts: int,
+    num_layouts: int | None = None,
+    layout_range: tuple[int, int] | None = None,
+    last_layouts: int | None = None,
     output_dir: str | Path,
     config_list_path: str | Path | None = None,
 ) -> list[str]:
@@ -100,10 +145,13 @@ def write_layout_task_configs(
 
     generated_paths: list[str] = []
     seen_paths: set[str] = set()
-    for layout_path in _discover_layout_paths(
-        layout_root=layout_root,
+    layout_paths = _select_layout_paths(
+        layout_paths=_discover_all_layout_paths(layout_root=layout_root),
         num_layouts=num_layouts,
-    ):
+        layout_range=layout_range,
+        last_layouts=last_layouts,
+    )
+    for layout_path in layout_paths:
         config_path = output_path / _config_filename(layout_path)
         if str(config_path) in seen_paths:
             raise ValueError(f"duplicate generated config path: {config_path}")
@@ -133,7 +181,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-config", required=True)
     parser.add_argument("--layout-root", required=True)
-    parser.add_argument("--num-layouts", type=int, required=True)
+    selection_group = parser.add_mutually_exclusive_group(required=True)
+    selection_group.add_argument(
+        "--num-layouts",
+        type=int,
+        help="select the first N discovered layouts",
+    )
+    selection_group.add_argument(
+        "--layout-range",
+        type=_parse_layout_range,
+        help="select an inclusive global layout index range, e.g. 500-600",
+    )
+    selection_group.add_argument(
+        "--last-layouts",
+        type=int,
+        help="select the last N discovered layouts",
+    )
     parser.add_argument("--output-dir", required=True)
     return parser
 
@@ -146,6 +209,8 @@ def main() -> None:
         base_config_path=args.base_config,
         layout_root=args.layout_root,
         num_layouts=args.num_layouts,
+        layout_range=args.layout_range,
+        last_layouts=args.last_layouts,
         output_dir=args.output_dir,
         config_list_path=config_list_path,
     )

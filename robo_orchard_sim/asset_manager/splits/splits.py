@@ -137,7 +137,7 @@ def load_asset_splits(
 def _read_yaml(yaml_path: Path) -> dict:
     """Read and parse the YAML file, returning the top-level dict."""
     try:
-        text = yaml_path.read_text()
+        text = yaml_path.read_text(encoding="utf-8")
     except (OSError, FileNotFoundError) as exc:
         raise InvalidSplitsYamlError(
             f"Cannot read splits file: {yaml_path}"

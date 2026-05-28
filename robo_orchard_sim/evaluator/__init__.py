@@ -16,17 +16,34 @@
 
 """Evaluation interfaces for orchard Isaac tasks and policies."""
 
-from robo_orchard_sim.evaluator.base import EpisodeResult, EvaluationResult
+from robo_orchard_sim.evaluator.base import (
+    EpisodeResult,
+    EvaluationResult,
+    MultiEvaluationResult,
+    TaskEvaluationResult,
+)
 from robo_orchard_sim.evaluator.evaluator import (
+    EvaluationRuntime,
     Evaluator,
     EvaluatorCfg,
     LaunchConfig,
+)
+from robo_orchard_sim.evaluator.multi_evaluator import (
+    EvaluationRunEntry,
+    MultiEvaluator,
+    MultiEvaluatorCfg,
 )
 
 __all__ = [
     "Evaluator",
     "EvaluatorCfg",
+    "EvaluationRuntime",
+    "EvaluationRunEntry",
     "LaunchConfig",
+    "MultiEvaluationResult",
+    "MultiEvaluator",
+    "MultiEvaluatorCfg",
     "EpisodeResult",
     "EvaluationResult",
+    "TaskEvaluationResult",
 ]

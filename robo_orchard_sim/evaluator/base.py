@@ -17,12 +17,14 @@
 """Shared evaluator result and configuration models."""
 
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
     "EpisodeResult",
     "EvaluationResult",
+    "TaskEvaluationResult",
+    "MultiEvaluationResult",
 ]
 
 
@@ -43,3 +45,30 @@ class EvaluationResult:
     success_rate: float
     average_progress: float
     episode_results: list[EpisodeResult]
+
+
+@dataclass
+class TaskEvaluationResult:
+    """Observable result for one task-config evaluation run."""
+
+    task_name: str
+    config_path: str | None
+    result_json_path: str | None = None
+    result: EvaluationResult | None = None
+    error: str | None = None
+    user_data: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class MultiEvaluationResult:
+    """Aggregated result for multiple task-config evaluation runs."""
+
+    task_results: list[TaskEvaluationResult]
+    total_tasks: int
+    success_tasks: int
+    total_episodes: int
+    success_episodes: int
+    success_rate: float
+    average_progress: float
+    error: str | None = None
+    user_data: dict[str, Any] = field(default_factory=dict)

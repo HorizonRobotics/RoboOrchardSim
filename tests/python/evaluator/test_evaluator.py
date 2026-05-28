@@ -31,7 +31,12 @@ import torch
 from robo_orchard_core.envs.env_base import EnvStepReturn
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 
-from robo_orchard_sim.evaluator import Evaluator, EvaluatorCfg, LaunchConfig
+from robo_orchard_sim.evaluator import (
+    EvaluationRuntime,
+    Evaluator,
+    EvaluatorCfg,
+    LaunchConfig,
+)
 from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
 from robo_orchard_sim.policy.schema import (
@@ -723,6 +728,28 @@ class TestEvaluator:
         }
         assert len(_StubLauncher.created) == 1
         assert len(_StubEnvContextManager.created) == 1
+
+    def test_run_with_runtime_uses_external_sim_app_without_launcher(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        evaluator, _, _ = self.build_evaluator(
+            monkeypatch,
+            episodes=[[_StepState()]],
+            success_steps=[1],
+            episode_num=1,
+            max_steps=1,
+        )
+
+        result = evaluator.run_with_runtime(
+            _StubPolicy(),
+            runtime=EvaluationRuntime(sim_app="external-sim-app"),
+        )
+
+        assert result.success_rate == 1.0
+        assert _StubLauncher.created == []
+        assert len(_StubEnvContextManager.created) == 1
+        assert _StubEnvContextManager.created[0].exit_calls == 1
 
     def test_task_suite_runtime_helpers_import_successfully(self) -> None:
         from robo_orchard_sim import task_suite

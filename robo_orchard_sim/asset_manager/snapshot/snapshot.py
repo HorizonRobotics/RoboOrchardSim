@@ -125,7 +125,7 @@ def load_snapshot(
 def _read_yaml(path: Path) -> dict:
     """Read and parse the YAML file, returning the top-level dict."""
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except (OSError, FileNotFoundError) as exc:
         raise InvalidSnapshotYamlError(
             f"Cannot read snapshot: {path}"

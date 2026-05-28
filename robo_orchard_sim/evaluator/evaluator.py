@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Evaluator",
     "EvaluatorCfg",
+    "EvaluationRuntime",
     "LaunchConfig",
 ]
 
@@ -129,6 +131,13 @@ class LaunchConfig(Config):
     virtual_display: bool = False
 
 
+@dataclass(frozen=True)
+class EvaluationRuntime:
+    """Externally owned runtime objects for policy evaluation."""
+
+    sim_app: Any
+
+
 class Evaluator:
     """Evaluator that runs fixed-number episodes with explicit step loops."""
 
@@ -139,6 +148,7 @@ class Evaluator:
     def __init__(self, cfg: "EvaluatorCfg") -> None:
         self.cfg = cfg
         self._launcher: SimpleIsaacAppLauncher | None = None
+        self._runtime: EvaluationRuntime | None = None
         self._env_cm: IsaacEnvContextManager | None = None
         self._env: IsaacManagerBasedEnv | None = None
         self._task: OrchardEnv | None = None
@@ -187,7 +197,6 @@ class Evaluator:
             )
 
     def __enter__(self) -> "Evaluator":
-        self._ensure_env()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -216,24 +225,38 @@ class Evaluator:
             EvaluationResult: Aggregated episode evaluation statistics.
         """
         policy = self._normalize_policy(policy_or_cfg)
+        self._ensure_launcher()
 
         episode_results = []
         for episode_idx in range(self.cfg.episode_num):
             seed = self.cfg.seed + episode_idx
-            if self.cfg.enable_recording:
-                env = self._prepare_episode_env(
-                    episode_idx=episode_idx,
+            try:
+                if self.cfg.enable_recording:
+                    env = self._prepare_episode_env(
+                        episode_idx=episode_idx,
+                        seed=seed,
+                    )
+                else:
+                    env = self._reload_env(
+                        task=self._build_task_from_cfg(seed=seed),
+                    )
+                result = self._run_episode(
+                    env=env,
+                    policy=policy,
                     seed=seed,
                 )
-            else:
-                env = self._reload_env(
-                    task=self._build_task_from_cfg(seed=seed),
+            except Exception as exc:
+                print(
+                    f"Episode {episode_idx + 1}/"
+                    f"{self.cfg.episode_num} failed with "
+                    f"{type(exc).__name__}: {exc}"
                 )
-            result = self._run_episode(
-                env=env,
-                policy=policy,
-                seed=seed,
-            )
+                self._close_env()
+                result = self._build_episode_error_result(
+                    episode_idx=episode_idx,
+                    seed=seed,
+                    exc=exc,
+                )
             episode_results.append(result)
 
         success_count = sum(1 for x in episode_results if x.success)
@@ -253,15 +276,69 @@ class Evaluator:
             episode_results=episode_results,
         )
 
-    def _ensure_launcher(self) -> SimpleIsaacAppLauncher:
-        if self._launcher is not None:
-            return self._launcher
+    def _build_episode_error_result(
+        self,
+        *,
+        episode_idx: int,
+        seed: int,
+        exc: Exception,
+    ) -> EpisodeResult:
+        """Build a complete failed episode result for per-seed errors."""
+        error_type = type(exc).__name__
+        metrics = {}
+        if self.cfg.enable_recording:
+            metrics["record_dir"] = self._episode_record_dir(
+                episode_idx=episode_idx,
+                seed=seed,
+            )
 
-        self._launcher = _create_launcher(
+        return EpisodeResult(
+            seed=seed,
+            success=False,
+            progress=0.0,
+            steps=0,
+            stop_reason=f"episode_error:{error_type}",
+            metrics=metrics,
+        )
+
+    def create_launcher(self) -> SimpleIsaacAppLauncher:
+        """Create the Isaac application launcher for this evaluator."""
+        return _create_launcher(
             headless=self.cfg.launch.headless,
             enable_cameras=self.cfg.launch.enable_cameras,
             virtual_display=self.cfg.launch.virtual_display,
         )
+
+    def run_with_runtime(
+        self,
+        policy_or_cfg: PolicyMixin | PolicyConfig,
+        runtime: EvaluationRuntime | None = None,
+        *,
+        sim_app: Any | None = None,
+    ) -> EvaluationResult:
+        """Evaluate using an externally owned Isaac runtime."""
+        if runtime is None:
+            if sim_app is None:
+                raise ValueError(
+                    "sim_app is required when runtime is not provided"
+                )
+            runtime = EvaluationRuntime(sim_app=sim_app)
+
+        previous_runtime = self._runtime
+        self._runtime = runtime
+        try:
+            return self.evaluate(policy_or_cfg)
+        finally:
+            self.close()
+            self._runtime = previous_runtime
+
+    def _ensure_launcher(self) -> SimpleIsaacAppLauncher | Any:
+        if self._runtime is not None:
+            return self._runtime.sim_app
+        if self._launcher is not None:
+            return self._launcher
+
+        self._launcher = self.create_launcher()
         return self._launcher
 
     def _ensure_env(self) -> IsaacManagerBasedEnv:
