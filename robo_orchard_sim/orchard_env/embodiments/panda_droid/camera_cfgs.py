@@ -33,7 +33,7 @@ __all__ = [
 
 PANDA_DROID_EXT1_CAMERA_CFG = ZED_DROID_EXT1_CFG.copy()
 PANDA_DROID_EXT1_CAMERA_CFG.prim_path = (
-    "{ENV_REGEX_NS}/franka_panda/panda_link0/droid_ext1_camera"
+    "{ENV_REGEX_NS}/panda_droid/panda_link0/droid_ext1_camera"
 )
 PANDA_DROID_EXT1_CAMERA_CFG.offset = CameraOffset(
     xyz=(
@@ -51,7 +51,7 @@ PANDA_DROID_EXT1_CAMERA_CFG.offset = CameraOffset(
 
 PANDA_DROID_EXT2_CAMERA_CFG = ZED_DROID_EXT2_CFG.copy()
 PANDA_DROID_EXT2_CAMERA_CFG.prim_path = (
-    "{ENV_REGEX_NS}/franka_panda/panda_link0/droid_ext2_camera"
+    "{ENV_REGEX_NS}/panda_droid/panda_link0/droid_ext2_camera"
 )
 PANDA_DROID_EXT2_CAMERA_CFG.offset = CameraOffset(
     xyz=(
@@ -69,14 +69,15 @@ PANDA_DROID_EXT2_CAMERA_CFG.offset = CameraOffset(
 
 PANDA_DROID_WRIST_CAMERA_CFG = ZED_DROID_WRIST_CFG.copy()
 PANDA_DROID_WRIST_CAMERA_CFG.prim_path = (
-    "{ENV_REGEX_NS}/franka_panda/panda_hand/droid_wrist_camera"
+    "{ENV_REGEX_NS}/panda_droid/base_link/droid_wrist_camera"
 )
 PANDA_DROID_WRIST_CAMERA_CFG.offset = CameraOffset(
-    xyz=(0.0723751, 0.02661379, 0.01563972),
+    xyz=(0.0723751, -0.02661379, 0.01563972),
     quat=(
-        0.6989368818183482,
-        0.11220394077741205,
-        0.13050039885300427,
-        0.6941665195090226,
+        0.10438,
+        0.700,
+        0.69959,
+        0.11683,
     ),
+    convention="opengl",
 )

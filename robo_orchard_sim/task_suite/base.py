@@ -158,6 +158,12 @@ def _bootstrap_embodiment_registry() -> None:
         )
 
         register_embodiment("franka_panda", FrankaPandaEmbodiment)
+    if "panda_droid" not in EMBODIMENT_REGISTRY:
+        from robo_orchard_sim.orchard_env.embodiments.panda_droid import (
+            PandaDroidEmbodiment,
+        )
+
+        register_embodiment("panda_droid", PandaDroidEmbodiment)
 
 
 def build_scene(cfg: SceneConfig) -> "SceneBase":

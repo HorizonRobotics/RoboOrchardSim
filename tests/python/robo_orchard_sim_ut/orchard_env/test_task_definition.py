@@ -36,6 +36,9 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
 from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
     FrankaPandaEmbodiment,
 )
+from robo_orchard_sim.orchard_env.embodiments.panda_droid import (
+    PandaDroidEmbodiment,
+)
 from robo_orchard_sim.orchard_env.scene.room_table_scene import (
     RoomTableScene,
 )
@@ -230,6 +233,20 @@ def test_franka_panda_policy_binding_schema_camera_terms_match_observations():
     }
 
     assert schema_terms <= camera_terms
+
+
+def test_resolve_embodiment_panda_droid_type_returns_droid_embodiment(
+    tmp_path: Path,
+) -> None:
+    class YamlEmbodimentTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {"embodiment": {"type": "panda_droid"}},
+        )
+
+    embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
+
+    assert isinstance(embodiment, PandaDroidEmbodiment)
 
 
 def test_resolve_embodiment_dualarm_piperx_type_returns_piperx_embodiment(

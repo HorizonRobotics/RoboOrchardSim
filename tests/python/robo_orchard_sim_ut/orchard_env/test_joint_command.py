@@ -40,6 +40,9 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
 from robo_orchard_sim.orchard_env.embodiments.franka_panda.embodiment import (
     FrankaPandaEmbodiment,
 )
+from robo_orchard_sim.orchard_env.embodiments.panda_droid.embodiment import (
+    PandaDroidEmbodiment,
+)
 from robo_orchard_sim.orchard_env.joint_command import (
     UnifiedJointCommand,
 )
@@ -265,4 +268,14 @@ def test_franka_panda_gripper_action_cfg_uses_explicit_joint_names():
     assert action_cfg.terms["robot_gripper_control"].asset_cfg.joint_names == [
         "panda_finger_joint1",
         "panda_finger_joint2",
+    ]
+
+
+def test_panda_droid_gripper_action_cfg_uses_finger_joint():
+    embodiment = PandaDroidEmbodiment(enable_cameras=False)
+
+    action_cfg = embodiment.get_action_cfg()
+
+    assert action_cfg.terms["robot_gripper_control"].asset_cfg.joint_names == [
+        "finger_joint",
     ]
