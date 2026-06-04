@@ -80,6 +80,45 @@ def _normalize_filter(entry: dict, role: str) -> dict:
     return dict(raw)
 
 
+def _synth_meta_from_path(usd_path: str, entry: dict) -> AssetMeta:
+    """Build a minimal in-memory AssetMeta for a path-pinned target.
+
+    Only fields consumed by a no-distractor, no-instruction showcase scene
+    are meaningful; the rest are deterministic placeholders.
+    """
+    import hashlib
+    import os
+
+    stem = os.path.splitext(os.path.basename(usd_path))[0] or "asset"
+    uuid = hashlib.sha1(usd_path.encode("utf-8")).hexdigest()
+    mass = float(entry.get("mass", 0.05))
+    category = str(entry.get("category", stem))
+    interaction_path = str(entry.get("interaction_path", ""))
+    return AssetMeta(
+        uuid=uuid,
+        asset_id=stem,
+        relative_path=usd_path,
+        domain="showcase",
+        super_category="showcase",
+        category=category,
+        name=stem,
+        description=category,
+        color=None,
+        shape=None,
+        material=None,
+        real_height=0.0,
+        real_mass=mass,
+        min_height=0.0,
+        max_height=0.0,
+        min_mass=mass,
+        max_mass=mass,
+        usd_path=usd_path,
+        urdf_path="",
+        interaction_path=interaction_path,
+        caption_path="",
+    )
+
+
 # -----------------------------------------------------------------------
 # Split name -> AssetSplits field mapping
 # -----------------------------------------------------------------------
@@ -90,7 +129,17 @@ _SPLIT_FIELDS = frozenset({"seen", "unseen_category", "unseen_instance"})
 # would otherwise silently no-op — validate up-front so authoring errors
 # surface on the first resolve call.
 _TARGET_ENTRY_KEYS = frozenset(
-    {"filter", "prim_name", "split", "pool_size", "uuid"}
+    {
+        "filter",
+        "prim_name",
+        "split",
+        "pool_size",
+        "uuid",
+        "usd_path",
+        "interaction_path",
+        "mass",
+        "category",
+    }
 )
 _DISTRACTOR_ENTRY_KEYS = frozenset(
     {
@@ -225,6 +274,10 @@ class AssetResolver:
         list of specs when pool_size > 1. metas is always a list (length 1
         for classic) so the caller can update committed_uuids uniformly.
         """
+        if "usd_path" in entry:
+            meta, spec = self._resolve_target_by_path(role, entry)
+            return [meta], spec
+
         if "uuid" in entry:
             meta, spec = self._resolve_target_by_uuid(role, entry)
             return [meta], spec
@@ -361,6 +414,35 @@ class AssetResolver:
             )
 
         return meta, self._registry.build_spec(meta, name=prim_name, role=role)
+
+    def _resolve_target_by_path(
+        self, role: str, entry: dict
+    ) -> tuple[AssetMeta, "RigidObjectSpec"]:
+        """Resolve a target pinned by a direct USD path (no registry lookup).
+
+        For showcase scenes whose assets live as loose directories outside
+        any registered library. ``usd_path`` is authoritative and may not be
+        combined with registry-driven keys.
+        """
+        conflicting = sorted({"uuid", "filter", "split"} & set(entry))
+        if conflicting:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=ValueError(
+                    f"usd_path is mutually exclusive with {conflicting}."
+                ),
+            )
+        try:
+            prim_name = entry["prim_name"]
+        except KeyError as exc:
+            raise AssetResolutionError(
+                role=role, filter_repr=str(entry), cause=exc
+            ) from exc
+
+        meta = _synth_meta_from_path(str(entry["usd_path"]), entry)
+        spec = self._registry.build_spec(meta, name=prim_name, role=role)
+        return meta, spec
 
     def _resolve_split_only_in(
         self,

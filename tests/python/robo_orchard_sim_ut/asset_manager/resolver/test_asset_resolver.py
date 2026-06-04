@@ -660,6 +660,40 @@ class TestResolveByUuid:
         assert isinstance(exc_info.value.cause, KeyError)
 
 
+class TestResolveByUsdPath:
+    def test_usd_path_pins_target_and_keeps_prim_name(self, mini_resolver):
+        configs = {
+            "pick": {
+                "usd_path": "/assets/mug/variants/variants.usd",
+                "prim_name": "pick_object",
+            }
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].name == "pick_object"
+
+    def test_usd_path_conflicts_with_uuid_raises(self, mini_resolver):
+        configs = {
+            "pick": {
+                "usd_path": "/assets/mug/variants/variants.usd",
+                "uuid": "deadbeef",
+                "prim_name": "pick_object",
+            }
+        }
+        with pytest.raises(AssetResolutionError):
+            mini_resolver.resolve(configs)
+
+    def test_usd_path_conflicts_with_filter_raises(self, mini_resolver):
+        configs = {
+            "pick": {
+                "usd_path": "/assets/mug/variants/variants.usd",
+                "filter": {"tags": ["graspable"]},
+                "prim_name": "pick_object",
+            }
+        }
+        with pytest.raises(AssetResolutionError):
+            mini_resolver.resolve(configs)
+
+
 class TestActiveSnapshot:
     """active_snapshot restricts resolved assets to the snapshot uuid set."""
 
