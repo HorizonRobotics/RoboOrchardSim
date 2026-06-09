@@ -76,12 +76,13 @@ task:
 
 asset_configs:
   pick:
+    split: seen
     filter:
-      category: peach
       tags: [is_graspable]
     prim_name: pick_object
 
   distractors:
+    split: seen
     anchor: pick
     match: [category]
     differ: [*attr]

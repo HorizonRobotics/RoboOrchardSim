@@ -57,9 +57,7 @@ def discover_graspable_assets(
         ).uuids
     if split_path is not None:
         splits = load_asset_splits(Path(split_path), registry)
-        split_uuids = (
-            splits.seen | splits.unseen_category | splits.unseen_instance
-        )
+        split_uuids = splits.seen
         if only_in_uuids is None:
             only_in_uuids = split_uuids
         else:
@@ -348,8 +346,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Optional benchmark split YAML; restricts generated asset "
-            "configs to uuids listed in the split file before applying "
-            "success-rate filtering."
+            "configs to uuids listed under the split's `seen` section "
+            "before applying success-rate filtering. Assets in "
+            "`unseen_category` or `unseen_instance` are excluded."
         ),
     )
     parser.add_argument(

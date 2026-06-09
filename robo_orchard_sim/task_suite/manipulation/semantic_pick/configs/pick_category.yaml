@@ -88,3 +88,5 @@ asset_configs:
     min_count: 1
     max_count: 5
     prim_name_prefix: distractor
+    filter:
+      tags: [is_graspable]
