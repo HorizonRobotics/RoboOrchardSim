@@ -1874,3 +1874,157 @@ class TestEvaluator:
                 ]
             }
         ]
+
+    def _patch_build_task(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        build_task,
+    ) -> None:
+        import robo_orchard_sim.evaluator.evaluator as evaluator_module
+
+        self.patch_runtime(monkeypatch, tasks=[])
+        monkeypatch.setattr(
+            evaluator_module, "_get_task_builder", lambda: build_task
+        )
+
+    @staticmethod
+    def _asset_resolution_error():
+        from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
+            AssetResolutionError,
+        )
+
+        return AssetResolutionError(
+            role="distractors",
+            filter_repr="{}",
+            cause=ValueError("only 0 asset(s) match"),
+        )
+
+    def test_evaluate_unresolvable_seed_excluded_from_results(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = {"n": 0}
+
+        def build_task(task_name, *, resolver=None, config_path=None):
+            del task_name, resolver, config_path
+            i = calls["n"]
+            calls["n"] += 1
+            if i == 0:
+                raise self._asset_resolution_error()
+            return _StubOrchardEnv(
+                env=_StubStepEnv(episodes=[[_StepState()]]),
+                success_steps=[1],
+            )
+
+        self._patch_build_task(monkeypatch, build_task)
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            seed=100,
+            episode_num=2,
+            max_steps=1,
+            resample_on_skip=False,
+        )()
+
+        result = evaluator.evaluate(_StubPolicy())
+
+        assert [e.seed for e in result.episode_results] == [101]
+
+    def test_evaluate_unresolvable_seed_recorded_in_skipped_episodes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = {"n": 0}
+
+        def build_task(task_name, *, resolver=None, config_path=None):
+            del task_name, resolver, config_path
+            i = calls["n"]
+            calls["n"] += 1
+            if i == 0:
+                raise self._asset_resolution_error()
+            return _StubOrchardEnv(
+                env=_StubStepEnv(episodes=[[_StepState()]]),
+                success_steps=[1],
+            )
+
+        self._patch_build_task(monkeypatch, build_task)
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            seed=100,
+            episode_num=2,
+            max_steps=1,
+            resample_on_skip=False,
+        )()
+
+        result = evaluator.evaluate(_StubPolicy())
+
+        assert [s.seed for s in result.skipped_episodes] == [100]
+        assert "0 asset(s) match" in result.skipped_episodes[0].reason
+
+    def test_evaluate_non_resolution_error_recorded_as_failed_episode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = {"n": 0}
+
+        def build_task(task_name, *, resolver=None, config_path=None):
+            del task_name, resolver, config_path
+            i = calls["n"]
+            calls["n"] += 1
+            if i == 0:
+                raise RuntimeError("boom")
+            return _StubOrchardEnv(
+                env=_StubStepEnv(episodes=[[_StepState()]]),
+                success_steps=[1],
+            )
+
+        self._patch_build_task(monkeypatch, build_task)
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            seed=100,
+            episode_num=2,
+            max_steps=1,
+            resample_on_skip=False,
+        )()
+
+        result = evaluator.evaluate(_StubPolicy())
+
+        assert result.skipped_episodes == []
+        assert any(
+            e.seed == 100 and e.stop_reason.startswith("episode_error")
+            for e in result.episode_results
+        )
+
+    def test_evaluate_resamples_skipped_seed_to_reach_episode_num(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = {"n": 0}
+
+        def build_task(task_name, *, resolver=None, config_path=None):
+            del task_name, resolver, config_path
+            i = calls["n"]
+            calls["n"] += 1
+            if i == 0:
+                raise self._asset_resolution_error()
+            return _StubOrchardEnv(
+                env=_StubStepEnv(episodes=[[_StepState()]]),
+                success_steps=[1],
+            )
+
+        self._patch_build_task(monkeypatch, build_task)
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            seed=100,
+            episode_num=2,
+            max_steps=1,
+            resample_on_skip=True,
+        )()
+
+        result = evaluator.evaluate(_StubPolicy())
+
+        assert len(result.episode_results) == 2
+        assert [s.seed for s in result.skipped_episodes] == [100]

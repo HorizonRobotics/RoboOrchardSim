@@ -33,7 +33,11 @@ from robo_orchard_core.utils.config import (
     Config,
 )
 
-from robo_orchard_sim.evaluator.base import EpisodeResult, EvaluationResult
+from robo_orchard_sim.evaluator.base import (
+    EpisodeResult,
+    EvaluationResult,
+    SkippedEpisode,
+)
 from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
 from robo_orchard_sim.policy.canonicalizer import (
     canonicalize_observations,
@@ -68,6 +72,14 @@ def _get_task_builder():
     from robo_orchard_sim.task_suite import build_task
 
     return build_task
+
+
+def _get_asset_resolution_error_cls():
+    from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
+        AssetResolutionError,
+    )
+
+    return AssetResolutionError
 
 
 def _create_asset_registry(asset_root: str):
@@ -226,10 +238,23 @@ class Evaluator:
         """
         policy = self._normalize_policy(policy_or_cfg)
         self._ensure_launcher()
+        resolution_error_cls = _get_asset_resolution_error_cls()
 
-        episode_results = []
-        for episode_idx in range(self.cfg.episode_num):
-            seed = self.cfg.seed + episode_idx
+        max_attempts = (
+            self.cfg.episode_num * 3
+            if self.cfg.resample_on_skip
+            else self.cfg.episode_num
+        )
+        episode_results: list[EpisodeResult] = []
+        skipped_episodes: list[SkippedEpisode] = []
+        attempt = 0
+        while (
+            len(episode_results) < self.cfg.episode_num
+            and attempt < max_attempts
+        ):
+            seed = self.cfg.seed + attempt
+            episode_idx = len(episode_results)
+            attempt += 1
             try:
                 if self.cfg.enable_recording:
                     env = self._prepare_episode_env(
@@ -245,6 +270,13 @@ class Evaluator:
                     policy=policy,
                     seed=seed,
                 )
+            except resolution_error_cls as exc:
+                print(f"[skip seed={seed}] asset resolution failed: {exc}")
+                self._close_env()
+                skipped_episodes.append(
+                    SkippedEpisode(seed=seed, reason=str(exc))
+                )
+                continue
             except Exception as exc:
                 print(
                     f"Episode {episode_idx + 1}/"
@@ -274,6 +306,7 @@ class Evaluator:
             success_rate=success_rate,
             average_progress=average_progress,
             episode_results=episode_results,
+            skipped_episodes=skipped_episodes,
         )
 
     def _build_episode_error_result(
@@ -892,6 +925,7 @@ class EvaluatorCfg(ClassConfig):
     launch: LaunchConfig = LaunchConfig()
     seed: int = 0
     episode_num: int = 1
+    resample_on_skip: bool = True
     max_steps: int = 1000
     max_settle_steps: int = 50
     snapshot_path: Path | None = None

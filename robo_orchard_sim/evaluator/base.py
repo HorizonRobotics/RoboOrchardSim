@@ -22,6 +22,7 @@ from typing import Any
 
 __all__ = [
     "EpisodeResult",
+    "SkippedEpisode",
     "EvaluationResult",
     "TaskEvaluationResult",
     "MultiEvaluationResult",
@@ -39,12 +40,19 @@ class EpisodeResult:
 
 
 @dataclass
+class SkippedEpisode:
+    seed: int
+    reason: str
+
+
+@dataclass
 class EvaluationResult:
     episode_num: int
     seed_start: int
     success_rate: float
     average_progress: float
     episode_results: list[EpisodeResult]
+    skipped_episodes: list[SkippedEpisode] = field(default_factory=list)
 
 
 @dataclass
