@@ -485,6 +485,8 @@ class TaskDataSynthesisRunner:
             ),
             controller=StationaryEpisodeRecordControllerCfg(
                 max_wait_step=self.cfg.settle_steps,
+                min_wait_step=min(50, self.cfg.settle_steps),
+                streak=self.cfg.settle_streak,
             ),
         )
 
@@ -495,73 +497,39 @@ class TaskDataSynthesisRunner:
         ang_vel: float = 0.1,
     ) -> bool:
         """Return whether all scene assets with root state are stationary."""
-        if not hasattr(env.scene, "keys"):
-            return True
+        from robo_orchard_sim.utils.env_utils import (
+            scene_is_stationary as _check,
+        )
 
-        checked_assets = 0
-        moving_assets: list[tuple[str, str, float, float]] = []
-        for name in env.scene.keys():
-            asset = env.scene[name]
-            if asset is None:
-                continue
-            data = getattr(asset, "data", None)
-            root_state_w = getattr(data, "root_state_w", None)
-            if not isinstance(root_state_w, torch.Tensor):
-                continue
-            if root_state_w.shape[-1] != 13:
-                continue
-
-            lin_norm = torch.linalg.vector_norm(
-                root_state_w[..., 7:10],
-                dim=-1,
-            )
-            ang_norm = torch.linalg.vector_norm(
-                root_state_w[..., 10:13],
-                dim=-1,
-            )
-            checked_assets += 1
-            if not torch.all(lin_norm < lin_vel) or not torch.all(
-                ang_norm < ang_vel
-            ):
-                moving_assets.append(
-                    (
-                        name,
-                        self._asset_usd_path(asset),
-                        float(torch.max(lin_norm).detach().cpu()),
-                        float(torch.max(ang_norm).detach().cpu()),
-                    )
-                )
-
-        for name, usd_path, max_lin_vel, max_ang_vel in moving_assets:
+        stationary, movers = _check(
+            env.scene, lin_vel, ang_vel, return_movers=True
+        )
+        for name, usd_path, max_lin, max_ang in movers:
             print(
-                f"[Scene asset is not stationary]: "
-                f"name={name}, usd_path={usd_path}, "
-                f"lin_vel={max_lin_vel:.6f}, ang_vel={max_ang_vel:.6f}",
+                f"[Scene asset is not stationary]: name={name}, "
+                f"usd_path={usd_path}, lin_vel={max_lin:.6f}, "
+                f"ang_vel={max_ang:.6f}",
             )
-
-        return checked_assets > 0 and not moving_assets
-
-    def _asset_usd_path(self, asset: Any) -> str:
-        cfg = getattr(asset, "cfg", None)
-        spawn = getattr(cfg, "spawn", None)
-        usd_path = getattr(spawn, "usd_path", None)
-        if isinstance(usd_path, str):
-            return usd_path
-        return "<unknown>"
+        return stationary
 
     def settle_until_recording_starts(self, env: Any) -> bool:
-        """Step until stationary recording starts and report scene settling."""
-        record_manager = env.record_manager
-        if record_manager is None:
-            for _ in range(self.cfg.settle_steps):
-                _ = env.step()
-            return True
+        """Step until recording starts; report scene-settled verdict.
 
-        for _i in range(self.cfg.settle_steps):
+        Reports whether the scene truly settled (reached a stationary streak)
+        within the settle window. Assumes ``settle_streak <= settle_steps``;
+        otherwise the streak can never complete within the window and every
+        episode reports unsettled.
+        """
+        from robo_orchard_sim.utils.env_utils import SettleTracker
+
+        tracker = SettleTracker(streak=self.cfg.settle_streak)
+        record_manager = env.record_manager
+        for _ in range(self.cfg.settle_steps):
             _ = env.step()
-            if record_manager.running:
-                return self.scene_is_stationary(env)
-        return self.scene_is_stationary(env)
+            tracker.update(env.scene)
+            if record_manager is not None and record_manager.running:
+                break
+        return tracker.settled
 
     def build_validator_actors(
         self,
@@ -843,7 +811,8 @@ class TaskDataSynthesisCfg(ClassConfig[TaskDataSynthesisRunner]):
     seed: int = 0
     episode_num: int = 1
     max_steps: int = 1000
-    settle_steps: int = 100
+    settle_steps: int = 150
+    settle_streak: int = 50
     enable_recording: bool = True
     record_dir: str = "logs/data_synthesis"
     output_config_dir: str | None = "configs/data_synthesis"

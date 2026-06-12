@@ -17,9 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import torch
-
 from robo_orchard_sim.utils.config import ClassConfig, ClassType_co
+from robo_orchard_sim.utils.env_utils import SettleTracker
 
 
 @dataclass
@@ -101,11 +100,17 @@ class StationaryEpisodeRecordController(RecordController):
     ):
         super().__init__(cfg, env)
         self._started = False
+        self._tracker = SettleTracker(
+            lin_thr=cfg.linear_velocity_threshold,
+            ang_thr=cfg.angular_velocity_threshold,
+            streak=cfg.streak,
+        )
 
     def on_post_reset(
         self, obs: dict[str, Any] | None
     ) -> RecordControlDecision:
         self._started = False
+        self._tracker.reset()
         return RecordControlDecision()
 
     def on_post_step(
@@ -113,11 +118,10 @@ class StationaryEpisodeRecordController(RecordController):
     ) -> RecordControlDecision:
         if self._started:
             return RecordControlDecision()
+        settled = self._tracker.update(self.env.scene)
         if self.env.step_count < self.cfg.min_wait_step:
             return RecordControlDecision()
-        if self._scene_is_stationary() or (
-            self.env.step_count >= self.cfg.max_wait_step
-        ):
+        if settled or self.env.step_count >= self.cfg.max_wait_step:
             self._started = True
             return RecordControlDecision(start=True)
         return RecordControlDecision()
@@ -127,34 +131,6 @@ class StationaryEpisodeRecordController(RecordController):
     ) -> RecordControlDecision:
         return RecordControlDecision(stop=True)
 
-    def _scene_is_stationary(self) -> bool:
-        checked_assets = 0
-        for asset in self._iter_scene_assets():
-            root_state_w = getattr(asset.data, "root_state_w", None)
-            if not isinstance(root_state_w, torch.Tensor):
-                continue
-            if root_state_w.shape[-1] != 13:
-                continue
-
-            lin_vel = root_state_w[..., 7:10]
-            ang_vel = root_state_w[..., 10:13]
-            lin_norm = torch.linalg.vector_norm(lin_vel, dim=-1)
-            ang_norm = torch.linalg.vector_norm(ang_vel, dim=-1)
-            checked_assets += 1
-            if not torch.all(
-                lin_norm < self.cfg.linear_velocity_threshold
-            ) or not torch.all(ang_norm < self.cfg.angular_velocity_threshold):
-                return False
-
-        return checked_assets > 0
-
-    def _iter_scene_assets(self) -> list[Any]:
-        return [
-            asset
-            for key in self.env.scene.keys()
-            if (asset := self.env.scene[key]) is not None
-        ]
-
 
 class StationaryEpisodeRecordControllerCfg(RecordControllerCfg):
     class_type: ClassType_co[StationaryEpisodeRecordController] = (
@@ -162,5 +138,6 @@ class StationaryEpisodeRecordControllerCfg(RecordControllerCfg):
     )
     linear_velocity_threshold: float = 0.02
     angular_velocity_threshold: float = 0.1
-    min_wait_step: int = 10
-    max_wait_step: int = 100
+    min_wait_step: int = 50
+    max_wait_step: int = 150
+    streak: int = 50

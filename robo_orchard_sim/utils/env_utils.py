@@ -17,7 +17,7 @@
 import math
 import random
 import warnings
-from typing import Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Tuple, Union, overload
 
 import robo_orchard_core.utils.math as math_utils
 import torch
@@ -522,3 +522,164 @@ class PoseAugmentor:
         combined = math_utils.quaternion_multiply(temp, qx)
 
         return combined
+
+
+def _asset_usd_path(asset: Any) -> str:
+    """Best-effort extract the USD path string from a scene asset.
+
+    The scene/s are duck-typed because this helper supports both
+    real Isaac asset instances and lightweight fakes used in tests; explicit
+    attribute access would require importing isaac.
+
+    Args:
+        asset (Any): A scene entity exposing ``cfg.spawn.usd_path``.
+
+    Returns:
+        str: The USD path string when available, otherwise ``"<unknown>"``.
+    """
+    spawn = getattr(getattr(asset, "cfg", None), "spawn", None)
+    usd_path = getattr(spawn, "usd_path", None)
+    return usd_path if isinstance(usd_path, str) else "<unknown>"
+
+
+@overload
+def scene_is_stationary(
+    scene: Any,
+    lin_thr: float = ...,
+    ang_thr: float = ...,
+    return_movers: Literal[False] = ...,
+) -> bool: ...
+
+
+@overload
+def scene_is_stationary(
+    scene: Any,
+    lin_thr: float = ...,
+    ang_thr: float = ...,
+    return_movers: Literal[True] = ...,
+) -> Tuple[bool, List[Tuple[str, str, float, float]]]: ...
+
+
+def scene_is_stationary(
+    scene: Any,
+    lin_thr: float = 0.02,
+    ang_thr: float = 0.1,
+    return_movers: bool = False,
+) -> Union[bool, Tuple[bool, List[Tuple[str, str, float, float]]]]:
+    """Single-frame stationarity check over all rigid scene objects.
+
+    Reads each scene entity's ``root_state_w`` tensor (must be ``>=13`` wide):
+    linear velocity at ``[..., 7:10]`` and angular velocity at
+    ``[..., 10:13]``. Considered stationary when at least one such asset was
+    checked and every checked asset is below the thresholds in every env dim.
+
+        scene (Any): A scene-like object exposing ``keys()`` and
+            ``__getitem__``; each entity should expose ``data.root_state_w``.
+        lin_thr (float, optional): Linear-velocity threshold (m/s).
+            Default is ``0.02``.
+        ang_thr (float, optional): Angular-velocity threshold (rad/s).
+            Default is ``0.1``.
+        return_movers (bool, optional): When ``True``, also returns the list
+            of assets that exceeded the thresholds this frame. Default is
+            ``False``.
+
+    Returns:
+        bool | tuple[bool, list[tuple[str, str, float, float]]]: When
+            ``return_movers`` is ``False``, returns the stationary verdict
+            (``True`` only when at least one asset was checked and none
+            exceeded the thresholds). When ``True``, returns a tuple
+            ``(stationary, movers)`` where ``movers`` is a list of
+            ``(name, usd_path, max_lin, max_ang)`` for each asset above the
+            thresholds.
+    """
+    movers: List[Tuple[str, str, float, float]] = []
+    checked = 0
+    if hasattr(scene, "keys"):
+        for name in scene.keys():
+            asset = scene[name]
+            if asset is None:
+                continue
+            data = getattr(asset, "data", None)
+            rs = getattr(data, "root_state_w", None)
+            if not isinstance(rs, torch.Tensor) or rs.shape[-1] < 13:
+                continue
+            checked += 1
+            lin = torch.linalg.vector_norm(rs[..., 7:10], dim=-1)
+            ang = torch.linalg.vector_norm(rs[..., 10:13], dim=-1)
+            if not torch.all(lin < lin_thr) or not torch.all(ang < ang_thr):
+                movers.append(
+                    (
+                        name,
+                        _asset_usd_path(asset),
+                        float(lin.max()),
+                        float(ang.max()),
+                    )
+                )
+    stationary = checked > 0 and not movers
+    return (stationary, movers) if return_movers else stationary
+
+
+class SettleTracker:
+    """Streak-based scene-settle detector.
+
+    Feed the scene to ``update`` once per simulation step; the tracker
+    reports settled only after ``streak`` consecutive stationary frames,
+    rejecting transient single-frame velocity dips at oscillation turning
+    points.
+
+    Attributes:
+        lin_thr (float): Linear-velocity threshold (m/s).
+        ang_thr (float): Angular-velocity threshold (rad/s).
+        streak (int): Required number of consecutive stationary frames.
+    """
+
+    def __init__(
+        self,
+        lin_thr: float = 0.02,
+        ang_thr: float = 0.1,
+        streak: int = 50,
+    ) -> None:
+        """Initialise the tracker.
+
+        Args:
+            lin_thr (float, optional): Linear-velocity threshold (m/s).
+                Default is ``0.02``.
+            ang_thr (float, optional): Angular-velocity threshold (rad/s).
+                Default is ``0.1``.
+            streak (int, optional): Consecutive stationary frames required
+                to report settled. Default is ``50``.
+        """
+        self.lin_thr = lin_thr
+        self.ang_thr = ang_thr
+        self.streak = streak
+        self._consecutive = 0
+
+    def reset(self) -> None:
+        """Reset the consecutive-stationary counter to zero."""
+        self._consecutive = 0
+
+    def update(self, scene: Any) -> bool:
+        """Ingest one simulation frame and return the current settled state.
+
+        Args:
+            scene (Any): Same shape as accepted by ``scene_is_stationary``.
+
+        Returns:
+            bool: ``True`` once the streak threshold has been reached and the
+            current frame is stationary; ``False`` otherwise.
+        """
+        if scene_is_stationary(scene, self.lin_thr, self.ang_thr):
+            self._consecutive += 1
+        else:
+            self._consecutive = 0
+        return self.settled
+
+    @property
+    def settled(self) -> bool:
+        """Whether the consecutive-stationary streak has reached ``streak``."""
+        return self._consecutive >= self.streak
+
+    @property
+    def consecutive(self) -> int:
+        """Current number of consecutive stationary frames observed."""
+        return self._consecutive

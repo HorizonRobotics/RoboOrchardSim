@@ -563,70 +563,33 @@ class Evaluator:
         print_report: bool = True,
     ) -> bool:
         """Return whether all scene assets with root state are stationary."""
-        if not hasattr(env.scene, "keys"):
-            return True
+        from robo_orchard_sim.utils.env_utils import (
+            scene_is_stationary as _check,
+        )
 
-        moving_assets: list[tuple[str, str, float, float]] = []
-        for name in env.scene.keys():
-            asset = env.scene[name]
-            if asset is None:
-                continue
-            data = getattr(asset, "data", None)
-            root_state_w = getattr(data, "root_state_w", None)
-            if not isinstance(root_state_w, torch.Tensor):
-                continue
-            if root_state_w.shape[-1] < 13:
-                continue
-
-            lin_norm = torch.linalg.vector_norm(
-                root_state_w[..., 7:10],
-                dim=-1,
-            )
-            ang_norm = torch.linalg.vector_norm(
-                root_state_w[..., 10:13],
-                dim=-1,
-            )
-            if not torch.all(lin_norm < lin_vel) or not torch.all(
-                ang_norm < ang_vel
-            ):
-                moving_assets.append(
-                    (
-                        name,
-                        self._asset_usd_path(asset),
-                        float(torch.max(lin_norm).detach().cpu()),
-                        float(torch.max(ang_norm).detach().cpu()),
-                    )
-                )
-
-        for name, usd_path, max_lin_vel, max_ang_vel in moving_assets:
-            if print_report:
+        stationary, movers = _check(
+            env.scene, lin_vel, ang_vel, return_movers=True
+        )
+        if print_report:
+            for name, usd_path, max_lin, max_ang in movers:
                 print(
-                    f"[Scene asset is not stationary]: "
-                    f"name={name}, usd_path={usd_path}, "
-                    f"lin_vel={max_lin_vel:.6f}, "
-                    f"ang_vel={max_ang_vel:.6f}",
+                    f"[Scene asset is not stationary]: name={name}, "
+                    f"usd_path={usd_path}, lin_vel={max_lin:.6f}, "
+                    f"ang_vel={max_ang:.6f}",
                 )
-
-        return not moving_assets
-
-    def _asset_usd_path(self, asset: Any) -> str:
-        cfg = getattr(asset, "cfg", None)
-        spawn = getattr(cfg, "spawn", None)
-        usd_path = getattr(spawn, "usd_path", None)
-        if isinstance(usd_path, str):
-            return usd_path
-        return "<unknown>"
+        return stationary
 
     def _settle_scene(self, env: IsaacManagerBasedEnv) -> EnvStepReturn:
+        from robo_orchard_sim.utils.env_utils import SettleTracker
+
         max_settle_steps = max(self.cfg.max_settle_steps, 1)
-
+        tracker = SettleTracker(streak=self.cfg.settle_streak)
+        latest_step_return = env.step()
         for _ in range(max_settle_steps):
-            latest_step_return = env.step()
-            if self.scene_is_stationary(env, print_report=False):
+            if tracker.update(env.scene):
                 return latest_step_return
-
-        self.scene_is_stationary(env)
-
+            latest_step_return = env.step()
+        self.scene_is_stationary(env)  # log movers if still not settled
         return latest_step_return
 
     def _start_manual_recording(self, env: IsaacManagerBasedEnv) -> None:
@@ -927,6 +890,7 @@ class EvaluatorCfg(ClassConfig):
     episode_num: int = 1
     resample_on_skip: bool = True
     max_steps: int = 1000
-    max_settle_steps: int = 50
+    max_settle_steps: int = 150
+    settle_streak: int = 50
     snapshot_path: Path | None = None
     splits_path: Path | None = None
