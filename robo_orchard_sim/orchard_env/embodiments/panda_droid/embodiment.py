@@ -158,7 +158,7 @@ class PandaDroidEmbodiment(EmbodimentBase):
         camera_parent_body_names = {
             "ext1_camera": "panda_link0",
             "ext2_camera": "panda_link0",
-            "wrist_camera": "base_link",
+            "wrist_camera": "panda_link0",
         }
         return {
             f"{camera_name}_tf": FrameTransformTermCfg(

@@ -60,14 +60,14 @@ asset_configs:
   pick:
     filter:
       tags: [is_graspable]        # AND-match; requires URDF <tags>
-      super_category: fruits          # ware / tableware / ornaments / ...
-      category: peach                 # mug / bowl / toothbrush / ...
+      # super_category: fruits          # ware / tableware / ornaments / ...
+      # category: peach                 # mug / bowl / toothbrush / ...
       # color: white
       # shape: cylinder
       # material: ceramic
       # size_bucket: medium         # small / medium / large
     prim_name: pick_object          # runtime scene/prim name
-    # split: seen                   # seen / unseen_category / unseen_instance
+    split: seen                   # seen / unseen_category / unseen_instance
 
   place:
     filter:
