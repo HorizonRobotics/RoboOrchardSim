@@ -101,6 +101,73 @@ def _load_config_payload(
     return payload
 
 
+def _layout_path_from_config(
+    *,
+    summary_dir: Path,
+    asset: dict[str, Any],
+) -> str | None:
+    payload = _load_config_payload(summary_dir=summary_dir, asset=asset)
+    if payload is None:
+        return None
+    layout_value = payload.get("layout")
+    if not isinstance(layout_value, str) or not layout_value:
+        return None
+    return layout_value
+
+
+def _load_layout_payload(layout_path: str) -> dict[str, Any] | None:
+    path = Path(layout_path)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _layout_relation_info(
+    layout_payload: dict[str, Any],
+) -> dict[str, str]:
+    relation_section = layout_payload.get("relation")
+    if not isinstance(relation_section, dict):
+        return {}
+    for key in ("initial_constraints", "spatial_constraints"):
+        constraints = relation_section.get(key)
+        if not isinstance(constraints, list) or not constraints:
+            continue
+        first = constraints[0]
+        if not isinstance(first, dict):
+            continue
+        info: dict[str, str] = {}
+        for field in ("anchor", "relation", "subject"):
+            value = first.get(field)
+            if isinstance(value, str):
+                info[field] = value
+        if info:
+            return info
+    return {}
+
+
+def _layout_entry_extras(
+    *,
+    summary_dir: Path,
+    asset: dict[str, Any],
+) -> dict[str, str]:
+    layout_path = _layout_path_from_config(
+        summary_dir=summary_dir, asset=asset
+    )
+    if layout_path is None:
+        return {}
+    extras: dict[str, str] = {"layout_path": layout_path}
+    layout_payload = _load_layout_payload(layout_path)
+    if layout_payload is not None:
+        extras.update(_layout_relation_info(layout_payload))
+    return extras
+
+
 def _load_asset_uuid_from_config(
     *,
     summary_dir: Path,
@@ -329,6 +396,10 @@ def _select_from_summary(
             summary_dir=summary_dir,
             asset=asset,
         )
+        layout_extras = _layout_entry_extras(
+            summary_dir=summary_dir,
+            asset=asset,
+        )
         rate = _success_rate(asset)
         if min_success_rate <= rate <= max_success_rate:
             successful_paths = _read_successful_paths(
@@ -337,14 +408,14 @@ def _select_from_summary(
             )
             sampled_paths = successful_paths[:sample_num]
             selected_paths.extend(sampled_paths)
-            selected_assets.append(
-                {
-                    "asset_id": asset_name,
-                    "uuid": asset_uuid,
-                    "mcap_paths": sampled_paths,
-                    "attribute": asset_attribute,
-                }
-            )
+            entry: dict[str, Any] = {
+                "asset_id": asset_name,
+                "uuid": asset_uuid,
+                "mcap_paths": sampled_paths,
+                "attribute": asset_attribute,
+            }
+            entry.update(layout_extras)
+            selected_assets.append(entry)
             kept_assets += 1
             _log_keep(
                 group_name=group_name,
