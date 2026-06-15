@@ -21,15 +21,19 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from robo_orchard_sim.asset_manager.registry.registry import AssetRegistry
+
 LOGGER_NAME = "select_successful_records"
 LOGGER = logging.getLogger(LOGGER_NAME)
 DEFAULT_INPUT_PATH = "logs/multi_data_synthesis/v3"
+_ASSET_ROOT_ENV = "ORCHARD_ASSET_LIBRARY"
 _DEFAULT_TARGET_ROLE = "pick"
 
 
@@ -234,12 +238,23 @@ def _asset_name_from_config_path(
     return "_".join(parts) or stem
 
 
+def _strip_task_prefix(
+    *,
+    asset_name: str,
+    task: str | None,
+) -> str:
+    if task and asset_name.startswith(f"{task}_"):
+        return asset_name[len(task) + 1 :]
+    return asset_name
+
+
 def _asset_identity(
     *,
     summary_dir: Path,
     asset: dict[str, Any],
     task: str | None,
     target_role: str,
+    asset_registry: Any | None = None,
 ) -> tuple[str, str]:
     asset_name = (
         asset.get("asset_id")
@@ -256,6 +271,8 @@ def _asset_identity(
             )
         else:
             asset_name = "unknown"
+    else:
+        asset_name = _strip_task_prefix(asset_name=asset_name, task=task)
 
     asset_uuid = asset.get("asset_uuid") or asset.get("uuid")
     if not isinstance(asset_uuid, str) or not asset_uuid:
@@ -266,6 +283,14 @@ def _asset_identity(
         )
     if not isinstance(asset_uuid, str) or not asset_uuid:
         asset_uuid = "unknown"
+
+    if asset_registry is not None and asset_uuid != "unknown":
+        registry_asset_id = asset_registry.get_meta(asset_uuid).asset_id
+        if not isinstance(registry_asset_id, str) or not registry_asset_id:
+            raise ValueError(
+                f"asset registry returned invalid asset_id for {asset_uuid}"
+            )
+        asset_name = registry_asset_id
 
     return asset_name, asset_uuid
 
@@ -362,6 +387,8 @@ def _select_from_summary(
     sample_num: int,
     target_role: str = _DEFAULT_TARGET_ROLE,
     group_name: str | None = None,
+    asset_root: str | None = None,
+    asset_registry: Any | None = None,
 ) -> SelectionResult:
     """Return sampled successful records from one summary."""
     if sample_num < 0:
@@ -382,6 +409,8 @@ def _select_from_summary(
     selected_assets: list[dict[str, Any]] = []
     kept_assets = 0
     removed_assets = 0
+    if asset_registry is None and asset_root:
+        asset_registry = AssetRegistry(asset_root)
 
     for asset in assets:
         if not isinstance(asset, dict):
@@ -391,6 +420,7 @@ def _select_from_summary(
             asset=asset,
             task=task_name,
             target_role=target_role,
+            asset_registry=asset_registry,
         )
         asset_attribute = _asset_attribute_from_config(
             summary_dir=summary_dir,
@@ -459,6 +489,45 @@ def _write_selection_json(
     )
 
 
+def _default_split_output_path(output_path: str) -> str:
+    return str(Path(output_path).with_suffix(".yaml"))
+
+
+def _split_seen_assets(result: SelectionResult) -> list[dict[str, str]]:
+    seen_assets: list[dict[str, str]] = []
+    for asset in result.selected_assets:
+        asset_uuid = asset.get("uuid")
+        asset_id = asset.get("asset_id")
+        if not isinstance(asset_uuid, str) or not asset_uuid:
+            raise ValueError("selected asset missing uuid for split output")
+        if not isinstance(asset_id, str) or not asset_id:
+            raise ValueError(
+                "selected asset missing asset_id for split output"
+            )
+        seen_assets.append({"uuid": asset_uuid, "asset_id": asset_id})
+    return seen_assets
+
+
+def _write_selection_split_yaml(
+    *,
+    output_path: str,
+    result: SelectionResult,
+) -> None:
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "name": output.stem,
+        "seen": _split_seen_assets(result),
+        "unseen_category": [],
+        "unseen_instance": [],
+    }
+    output.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
 def _log_summary(result: SelectionResult) -> None:
     LOGGER.info(
         "SUMMARY selected_assets=%d/%d",
@@ -475,16 +544,24 @@ def select_successful_records(
     max_success_rate: float,
     sample_num: int,
     target_role: str = _DEFAULT_TARGET_ROLE,
+    split_output_path: str | None = None,
+    asset_root: str | None = None,
 ) -> SelectionResult:
-    """Write sampled successful records from one summary."""
+    """Write sampled successful records and split YAML from one summary."""
     result = _select_from_summary(
         summary_json_path=summary_json_path,
         min_success_rate=min_success_rate,
         max_success_rate=max_success_rate,
         sample_num=sample_num,
         target_role=target_role,
+        asset_root=asset_root,
     )
     _write_selection_json(output_path=output_path, result=result)
+    _write_selection_split_yaml(
+        output_path=split_output_path
+        or _default_split_output_path(output_path),
+        result=result,
+    )
     _log_summary(result)
     return result
 
@@ -514,14 +591,17 @@ def select_successful_records_from_input(
     max_success_rate: float,
     sample_num: int,
     target_role: str = _DEFAULT_TARGET_ROLE,
+    split_output_path: str | None = None,
+    asset_root: str | None = None,
 ) -> SelectionResult:
-    """Write sampled successful records from one file or run root."""
+    """Write sampled successful records and split YAML from input."""
     summary_paths = discover_summary_paths(input_path)
     single_file_input = Path(input_path).is_file()
     selected_paths: list[str] = []
     selected_assets: list[dict[str, Any]] = []
     kept_assets = 0
     removed_assets = 0
+    asset_registry = AssetRegistry(asset_root) if asset_root else None
 
     for summary_path in summary_paths:
         group_name = None if single_file_input else summary_path.parent.name
@@ -532,6 +612,7 @@ def select_successful_records_from_input(
             sample_num=sample_num,
             target_role=target_role,
             group_name=group_name,
+            asset_registry=asset_registry,
         )
         selected_paths.extend(result.selected_paths)
         selected_assets.extend(result.selected_assets)
@@ -545,12 +626,18 @@ def select_successful_records_from_input(
         removed_assets=removed_assets,
     )
     _write_selection_json(output_path=output_path, result=result)
+    _write_selection_split_yaml(
+        output_path=split_output_path
+        or _default_split_output_path(output_path),
+        result=result,
+    )
     _log_summary(result)
     return result
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the CLI parser."""
+    env_asset_root = os.environ.get(_ASSET_ROOT_ENV)
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "input_path",
@@ -562,6 +649,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--output", required=True, help="Output JSON path.")
+    parser.add_argument(
+        "--asset-root",
+        default=env_asset_root,
+        help=(
+            "Asset library root used to resolve original asset_id by uuid. "
+            f"Defaults to ${_ASSET_ROOT_ENV} when set."
+        ),
+    )
+    parser.add_argument(
+        "--split-output",
+        help=(
+            "Output split YAML path. Defaults to the JSON output path "
+            "with a .yaml suffix."
+        ),
+    )
     parser.add_argument("--sample-num", required=True, type=int)
     parser.add_argument("--min-success-rate", default=0.0, type=float)
     parser.add_argument("--max-success-rate", default=1.0, type=float)
@@ -580,6 +682,8 @@ def main() -> None:
         max_success_rate=args.max_success_rate,
         sample_num=args.sample_num,
         target_role=args.target_role,
+        split_output_path=args.split_output,
+        asset_root=args.asset_root,
     )
 
 
