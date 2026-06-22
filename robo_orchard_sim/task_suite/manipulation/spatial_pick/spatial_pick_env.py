@@ -53,6 +53,7 @@ _SPATIAL_RELATION_PHRASES = {
     "behind": "behind",
     "behind_of": "behind",
     "near": "near",
+    "far": "far from",
     "on": "on",
 }
 

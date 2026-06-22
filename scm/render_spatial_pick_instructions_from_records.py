@@ -51,6 +51,7 @@ RELATION_PHRASES = {
     "front_of": "in front of",
     "behind": "behind",
     "near": "near",
+    "far": "far from",
 }
 
 logger = logging.getLogger(__name__)
