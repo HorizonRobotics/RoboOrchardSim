@@ -51,7 +51,12 @@ class HolobrainPolicy(PolicyMixin[CanonicalPolicyInput, HolobrainAction]):
             observation_space=observation_space,
             action_space=action_space,
         )
-        self._adapter = self._build_adapter(cfg)
+        self._adapter: HolobrainAdapter | None = None
+        self._embodiment_type: str | None = cfg.embodiment_type
+        if self._embodiment_type is not None:
+            self._adapter = self._build_adapter(
+                embodiment_type=self._embodiment_type
+            )
         self._pipeline = self._load_pipeline(cfg)
         self._pipeline.model.eval()
         self._cached_actions: list[HolobrainAction] = []
@@ -97,10 +102,11 @@ class HolobrainPolicy(PolicyMixin[CanonicalPolicyInput, HolobrainAction]):
         self,
         obs: CanonicalPolicyInput,
     ) -> list[HolobrainAction]:
-        model_input = self._adapter.build_model_input(obs)
+        adapter = self._ensure_adapter(obs)
+        model_input = adapter.build_model_input(obs)
         model_output = self._pipeline(model_input)
         _, device = self._observation_batch_info(obs)
-        return self._adapter.build_action_sequence(
+        return adapter.build_action_sequence(
             model_output,
             obs,
             device=device,
@@ -138,8 +144,34 @@ class HolobrainPolicy(PolicyMixin[CanonicalPolicyInput, HolobrainAction]):
         )
 
     @staticmethod
-    def _build_adapter(cfg: "HolobrainPolicyCfg") -> HolobrainAdapter:
-        return HolobrainAdapter(joint_num=cfg.joint_num)
+    def _build_adapter(*, embodiment_type: str) -> HolobrainAdapter:
+        return HolobrainAdapter(embodiment_type=embodiment_type)
+
+    def _ensure_adapter(self, obs: CanonicalPolicyInput) -> HolobrainAdapter:
+        layout = obs.action_layout
+        runtime_embodiment_type = getattr(layout, "embodiment_type", None)
+        if not isinstance(runtime_embodiment_type, str):
+            raise ValueError(
+                "Holobrain observation requires action_layout with "
+                "embodiment_type"
+            )
+        if self._embodiment_type is None:
+            self._embodiment_type = runtime_embodiment_type
+            self._adapter = self._build_adapter(
+                embodiment_type=runtime_embodiment_type
+            )
+            return self._adapter
+        if runtime_embodiment_type != self._embodiment_type:
+            raise ValueError(
+                "HolobrainPolicy is already bound to embodiment_type "
+                f"{self._embodiment_type!r}, got "
+                f"{runtime_embodiment_type!r}."
+            )
+        if self._adapter is None:
+            self._adapter = self._build_adapter(
+                embodiment_type=self._embodiment_type
+            )
+        return self._adapter
 
     @staticmethod
     def _load_pipeline(cfg: "HolobrainPolicyCfg") -> Any:
@@ -173,7 +205,7 @@ class HolobrainPolicyCfg(PolicyConfig[HolobrainPolicy]):
     model_dir: str | None = None
     logging_tag: str | None = None
     inference_prefix: str
-    joint_num: int = 7
+    embodiment_type: str | None = None
     device: str | None = None
     valid_action_step: int | None = None
 

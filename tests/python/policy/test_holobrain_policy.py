@@ -364,6 +364,30 @@ def test_holobrain_policy_act_given_single_arm_obs_returns_single_arm_command(
     )
 
 
+def test_holobrain_policy_act_binds_runtime_embodiment_expected_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = _FakePipeline()
+    policy = _build_policy(monkeypatch, pipeline)
+
+    action = policy.act(_build_obs())
+
+    assert action.select("left_joint1")[0, 0].item() == 11.0
+
+
+def test_holobrain_policy_act_given_changed_embodiment_raises_value_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline = _FakePipeline()
+    policy = _build_policy(monkeypatch, pipeline)
+
+    policy.act(_build_obs())
+    policy.reset()
+
+    with pytest.raises(ValueError, match="already bound to embodiment_type"):
+        policy.act(_build_single_arm_obs())
+
+
 def test_holobrain_policy_init_uses_env_model_dir_expected_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

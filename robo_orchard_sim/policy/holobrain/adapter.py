@@ -96,10 +96,29 @@ _HOLOBRAIN_CAMERA_SPECS = (
 class HolobrainAdapter:
     """Transforms sim observations to Holobrain inputs and back."""
 
-    _T_SIM_WORLD_TO_WORLD = np.array(
-        [[1, 0, 0, 0.3], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
-        dtype=np.float64,
-    )
+    _T_SIM_WORLD_TO_ROBOT_BASE_BY_EMBODIMENT = {
+        "dualarm_piperx": np.array(
+            [[1, 0, 0, 0.3], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+            dtype=np.float64,
+        ),
+        "dualarm_piper": np.array(
+            [[1, 0, 0, 0.3], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+            dtype=np.float64,
+        ),
+        "franka_panda": np.eye(4, dtype=np.float64),
+    }
+
+    def __init__(self, *, embodiment_type: str) -> None:
+        try:
+            self._t_sim_world_to_robot_base = (
+                self._T_SIM_WORLD_TO_ROBOT_BASE_BY_EMBODIMENT[embodiment_type]
+            )
+        except KeyError as exc:
+            supported = tuple(self._T_SIM_WORLD_TO_ROBOT_BASE_BY_EMBODIMENT)
+            raise ValueError(
+                "Unsupported Holobrain embodiment_type "
+                f"{embodiment_type!r}. Expected one of {supported}."
+            ) from exc
 
     @classmethod
     def required_observation_fields(cls) -> dict[str, Any]:
@@ -114,9 +133,6 @@ class HolobrainAdapter:
                 "right_joint_position",
             ],
         }
-
-    def __init__(self, joint_num: int) -> None:
-        del joint_num
 
     def build_model_input(
         self,
@@ -302,8 +318,12 @@ class HolobrainAdapter:
             np.float64, copy=False
         )
         t_cam_to_sim_world[:3, 3] = pos.astype(np.float64, copy=False)
-        t_cam_to_world = t_cam_to_sim_world @ self._T_SIM_WORLD_TO_WORLD
-        return np.linalg.inv(t_cam_to_world).astype(np.float64, copy=False)
+        t_cam_to_robot_base = (
+            t_cam_to_sim_world @ self._t_sim_world_to_robot_base
+        )
+        return np.linalg.inv(t_cam_to_robot_base).astype(
+            np.float64, copy=False
+        )
 
     def build_action_sequence(
         self,

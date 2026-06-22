@@ -242,7 +242,7 @@ def _install_fake_holobrain_processor(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_build_model_input_valid_observation_returns_expected_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    adapter = HolobrainAdapter(joint_num=7)
+    adapter = HolobrainAdapter(embodiment_type="dualarm_piper")
     _install_fake_holobrain_processor(monkeypatch)
 
     model_input = adapter.build_model_input(_build_obs())
@@ -268,7 +268,7 @@ def test_required_observation_fields_camera_terms_returns_adapter_order() -> (
 def test_build_model_input_reordered_schema_uses_adapter_camera_slots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    adapter = HolobrainAdapter(joint_num=7)
+    adapter = HolobrainAdapter(embodiment_type="dualarm_piper")
     _install_fake_holobrain_processor(monkeypatch)
 
     model_input = adapter.build_model_input(_build_reordered_camera_obs())
@@ -280,7 +280,7 @@ def test_build_model_input_reordered_schema_uses_adapter_camera_slots(
 
 
 def test_build_model_input_missing_instruction_raises_value_error() -> None:
-    adapter = HolobrainAdapter(joint_num=7)
+    adapter = HolobrainAdapter(embodiment_type="dualarm_piper")
     obs = _build_obs()
     obs = obs.model_copy(update={"instruction": None})
 
@@ -291,7 +291,7 @@ def test_build_model_input_missing_instruction_raises_value_error() -> None:
 def test_build_model_input_single_arm_observation_returns_expected_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    adapter = HolobrainAdapter(joint_num=8)
+    adapter = HolobrainAdapter(embodiment_type="franka_panda")
     _install_fake_holobrain_processor(monkeypatch)
 
     model_input = adapter.build_model_input(_build_single_arm_obs())
@@ -306,7 +306,7 @@ def test_build_model_input_single_arm_observation_returns_expected_result(
 
 
 def test_build_model_input_missing_depth_or_pose_raises_value_error() -> None:
-    adapter = HolobrainAdapter(joint_num=7)
+    adapter = HolobrainAdapter(embodiment_type="dualarm_piper")
     obs = _build_obs()
     obs.cameras["left_wrist"] = {
         "rgb": obs.cameras["left_wrist"]["rgb"],
@@ -317,7 +317,7 @@ def test_build_model_input_missing_depth_or_pose_raises_value_error() -> None:
 
 
 def test_build_model_input_missing_camera_slot_raises_value_error() -> None:
-    adapter = HolobrainAdapter(joint_num=7)
+    adapter = HolobrainAdapter(embodiment_type="dualarm_piper")
     obs = _build_obs()
     del obs.cameras["base"]
 
@@ -331,7 +331,7 @@ class _FakePipelineOutput:
 
 
 def test_build_action_sequence_valid_action_step_truncates_result() -> None:
-    adapter = HolobrainAdapter(joint_num=7)
+    adapter = HolobrainAdapter(embodiment_type="dualarm_piper")
     output = _FakePipelineOutput(
         action=torch.tensor(
             [
@@ -386,7 +386,7 @@ def test_build_action_sequence_valid_action_step_truncates_result() -> None:
 def test_build_action_sequence_gripper_controls_match_expected_result() -> (
     None
 ):
-    adapter = HolobrainAdapter(joint_num=7)
+    adapter = HolobrainAdapter(embodiment_type="dualarm_piper")
     output = _FakePipelineOutput(
         action=torch.tensor(
             [

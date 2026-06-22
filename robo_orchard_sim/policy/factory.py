@@ -30,7 +30,18 @@ def _cfg_get(model_cfg: Any, name: str, default=None):
     return getattr(model_cfg, name, default)
 
 
-def create_policy_from_model_cfg(model_cfg: Any):
+def _cfg_get_non_null(model_cfg: Any, name: str, default=None):
+    value = _cfg_get(model_cfg, name, default)
+    if value is None:
+        return default
+    return value
+
+
+def create_policy_from_model_cfg(
+    model_cfg: Any,
+    *,
+    embodiment_type: str | None = None,
+):
     """Create a simulator policy from a minimal config object or dict."""
     policy_name = _cfg_get(model_cfg, "policy")
     if policy_name == "dummy":
@@ -40,7 +51,9 @@ def create_policy_from_model_cfg(model_cfg: Any):
             model_dir=_cfg_get(model_cfg, "model_dir"),
             logging_tag=_cfg_get(model_cfg, "logging_tag"),
             inference_prefix=_cfg_get(model_cfg, "inference_prefix"),
-            joint_num=_cfg_get(model_cfg, "joint_num", 7),
+            embodiment_type=_cfg_get_non_null(
+                model_cfg, "embodiment_type", embodiment_type
+            ),
             device=_cfg_get(model_cfg, "device"),
             valid_action_step=_cfg_get(model_cfg, "valid_action_step"),
         )
