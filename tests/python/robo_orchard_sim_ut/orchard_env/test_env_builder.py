@@ -81,6 +81,7 @@ from robo_orchard_sim.task_suite.manipulation.place_a2b import (
     PlaceA2BEasyTaskDefinition,
 )
 from robo_orchard_sim.tasks.validators.base import (
+    GripperRange,
     Validator,
     ValidatorActor,
 )
@@ -441,7 +442,14 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
             robot=ValidatorRobotContext(
                 robot_name="robots/dualarm_piper",
                 ee_links=("left_link6", "right_link6"),
-                gripper_links=("left_joint7", "right_joint7"),
+                gripper_joints=(
+                    GripperRange(
+                        name="left_joint7", open_val=0.05, close_val=0.0
+                    ),
+                    GripperRange(
+                        name="right_joint7", open_val=0.05, close_val=0.0
+                    ),
+                ),
             )
         ),
     )

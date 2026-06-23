@@ -273,9 +273,9 @@ class PlaceA2BTask(TaskBase):
                     is_within_xy(
                         pick_actor.name,
                         place_actor.name,
-                        open_gripper_threshold=0.04,
+                        require_gripper_open=True,
                         robot_name=context.robot.robot_name,
-                        gripper_links=context.robot.gripper_links,
+                        gripper_joints=context.robot.gripper_joints,
                     ),
                     [2],
                 ),

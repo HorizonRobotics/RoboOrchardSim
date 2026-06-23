@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from robo_orchard_sim.tasks.validators.base import GripperRange
+
 if TYPE_CHECKING:
     from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
         EmbodimentBase,
@@ -32,8 +34,7 @@ class ValidatorRobotContext:
 
     robot_name: str
     ee_links: tuple[str, ...] = ()
-    gripper_links: tuple[str, ...] = ()
-    open_gripper_threshold: float | None = None
+    gripper_joints: tuple[GripperRange, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,9 +53,9 @@ def build_validator_context(
         return ValidatorContext()
 
     ee_links: list[str] = []
-    gripper_links: list[str] = []
+    gripper_joints: list[GripperRange] = []
     seen_ee_links: set[str] = set()
-    seen_gripper_links: set[str] = set()
+    seen_gripper_joints: set[str] = set()
     for robot_info in robot_info_cfgs.values():
         manipulator_profile = robot_info.manipulator_profile
         if manipulator_profile is None:
@@ -63,30 +64,28 @@ def build_validator_context(
         if ee_body_name and ee_body_name not in seen_ee_links:
             ee_links.append(ee_body_name)
             seen_ee_links.add(ee_body_name)
-        positive_open_joints = set()
-        for joint_name, joint_open_val in zip(
+
+        for joint_name, open_val, close_val in zip(
             manipulator_profile.gripper_joint_names,
             robot_info.gripper_open_val,
+            robot_info.gripper_close_val,
             strict=True,
         ):
-            if joint_open_val > 0:
-                positive_open_joints.add(joint_name)
-
-        for gripper_joint_name in manipulator_profile.gripper_joint_names:
-            if (
-                positive_open_joints
-                and gripper_joint_name not in positive_open_joints
-            ):
+            if joint_name in seen_gripper_joints:
                 continue
-            if gripper_joint_name in seen_gripper_links:
-                continue
-            gripper_links.append(gripper_joint_name)
-            seen_gripper_links.add(gripper_joint_name)
+            gripper_joints.append(
+                GripperRange(
+                    name=joint_name,
+                    open_val=open_val,
+                    close_val=close_val,
+                )
+            )
+            seen_gripper_joints.add(joint_name)
 
     return ValidatorContext(
         robot=ValidatorRobotContext(
             robot_name=embodiment.scene_name,
             ee_links=tuple(ee_links),
-            gripper_links=tuple(gripper_links),
+            gripper_joints=tuple(gripper_joints),
         )
     )

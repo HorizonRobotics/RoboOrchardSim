@@ -15,12 +15,33 @@
 # permissions and limitations under the License.
 
 import re
-from typing import Literal, Sequence
+from typing import Sequence
 
 import numpy as np
 import torch
 
-from robo_orchard_sim.tasks.validators.base import ValidatorActor
+from robo_orchard_sim.tasks.validators.base import GripperRange, ValidatorActor
+
+# Fraction of the close->open joint travel required to count as "open".
+DEFAULT_GRIPPER_OPEN_RATIO = 0.8
+
+# Keeps the boundary inclusive despite float rounding (0.04/0.05 < 0.8).
+_OPEN_RATIO_TOL = 1e-6
+
+
+def _gripper_joint_is_open(
+    value: float, gripper_range: GripperRange, open_ratio: float
+) -> bool:
+    """Return whether a joint position is open enough.
+
+    Direction-agnostic: open_val may be greater or less than close_val. A
+    degenerate range (open == close) cannot gate and counts as open.
+    """
+    span = gripper_range.open_val - gripper_range.close_val
+    if span == 0:
+        return True
+    ratio = (value - gripper_range.close_val) / span
+    return ratio >= open_ratio - _OPEN_RATIO_TOL
 
 
 class CheckerBase:
@@ -132,25 +153,26 @@ class WithinXYChecker(CheckerBase):
         actor1: str,
         actor2: str,
         robot_name: str = "",
-        gripper_links: Sequence[str] = (),
-        open_gripper_threshold: float | None = None,
+        gripper_joints: Sequence[GripperRange] = (),
+        require_gripper_open: bool = False,
+        open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
     ):
         self.actor1 = actor1
         self.actor2 = actor2
-        if open_gripper_threshold is not None and not robot_name:
+        if require_gripper_open and not robot_name:
             raise ValueError("robot_name is required for within XY checker.")
-        if open_gripper_threshold is not None and not gripper_links:
+        if require_gripper_open and not gripper_joints:
             raise ValueError(
-                "gripper_links is required for within XY checker."
+                "gripper_joints is required for within XY checker."
             )
 
         self.gripper_checker = (
             BothGripperOpenChecker(
                 robot_name=robot_name,
-                gripper_links=gripper_links,
-                open_gripper_threshold=open_gripper_threshold,
+                gripper_joints=gripper_joints,
+                open_ratio=open_ratio,
             )
-            if open_gripper_threshold is not None
+            if require_gripper_open
             else None
         )
 
@@ -191,28 +213,29 @@ class AlignmentXYChecker(CheckerBase):
         actor1: str,
         actor2: str,
         robot_name: str = "",
-        gripper_links: Sequence[str] = (),
+        gripper_joints: Sequence[GripperRange] = (),
         eps: tuple[float, float] = (0.02, 0.02),
-        open_gripper_threshold: float | None = None,
+        require_gripper_open: bool = False,
+        open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
     ):
         self.actor1 = actor1
         self.actor2 = actor2
         self.eps = np.array(eps)
-        if open_gripper_threshold is not None and not robot_name:
+        if require_gripper_open and not robot_name:
             raise ValueError(
                 "robot_name is required for alignment XY checker."
             )
-        if open_gripper_threshold is not None and not gripper_links:
+        if require_gripper_open and not gripper_joints:
             raise ValueError(
-                "gripper_links is required for alignment XY checker."
+                "gripper_joints is required for alignment XY checker."
             )
         self.gripper_checker = (
             BothGripperOpenChecker(
                 robot_name=robot_name,
-                gripper_links=gripper_links,
-                open_gripper_threshold=open_gripper_threshold,
+                gripper_joints=gripper_joints,
+                open_ratio=open_ratio,
             )
-            if open_gripper_threshold is not None
+            if require_gripper_open
             else None
         )
 
@@ -244,30 +267,31 @@ class AlignmentXYZChecker(CheckerBase):
         actor1: str,
         actor2: str,
         robot_name: str = "",
-        gripper_links: Sequence[str] = (),
+        gripper_joints: Sequence[GripperRange] = (),
         eps: tuple[float, float, float] = (0.025, 0.025, 0.0120),
         target_height_offset: float = 0.04,
-        open_gripper_threshold: float | None = None,
+        require_gripper_open: bool = False,
+        open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
     ):
         self.actor1 = actor1
         self.actor2 = actor2
         self.eps = np.array(eps)
         self.target_height_offset = target_height_offset
-        if open_gripper_threshold is not None and not robot_name:
+        if require_gripper_open and not robot_name:
             raise ValueError(
                 "robot_name is required for alignment XYZ checker."
             )
-        if open_gripper_threshold is not None and not gripper_links:
+        if require_gripper_open and not gripper_joints:
             raise ValueError(
-                "gripper_links is required for alignment XYZ checker."
+                "gripper_joints is required for alignment XYZ checker."
             )
         self.gripper_checker = (
             BothGripperOpenChecker(
                 robot_name=robot_name,
-                gripper_links=gripper_links,
-                open_gripper_threshold=open_gripper_threshold,
+                gripper_joints=gripper_joints,
+                open_ratio=open_ratio,
             )
-            if open_gripper_threshold is not None
+            if require_gripper_open
             else None
         )
 
@@ -297,28 +321,30 @@ class GripperOpenChecker(CheckerBase):
     def __init__(
         self,
         robot_name: str = "",
-        gripper_link: str = "",
-        open_gripper_threshold: float = 0.04,
+        gripper_joint: GripperRange | None = None,
+        open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
     ):
         if not robot_name:
             raise ValueError("robot_name is required for gripper checker.")
-        if not gripper_link:
-            raise ValueError("gripper_link is required for gripper checker.")
+        if gripper_joint is None:
+            raise ValueError("gripper_joint is required for gripper checker.")
         self.robot_name = robot_name
-        self.gripper_link = gripper_link
-        self.open_gripper_threshold = open_gripper_threshold
+        self.gripper_joint = gripper_joint
+        self.open_ratio = open_ratio
 
     def check(self, env, env_idx: int = 0) -> bool:
-        """Return True when gripper joint position reaches threshold."""
+        """Return True when the gripper joint has opened past the ratio."""
         robot = env.scene[self.robot_name]
-        joint_ids, _ = robot.find_joints(self.gripper_link)
+        joint_ids, _ = robot.find_joints(self.gripper_joint.name)
         if len(joint_ids) == 0:
             raise ValueError(
-                f"Gripper link '{self.gripper_link}' "
+                f"Gripper joint '{self.gripper_joint.name}' "
                 f"not found in robot '{self.robot_name}'."
             )
-        gripper_value = robot.data.joint_pos[env_idx][joint_ids[0]].item()
-        return bool(gripper_value >= self.open_gripper_threshold)
+        value = robot.data.joint_pos[env_idx][joint_ids[0]].item()
+        return _gripper_joint_is_open(
+            value, self.gripper_joint, self.open_ratio
+        )
 
 
 class BothGripperOpenChecker(CheckerBase):
@@ -327,33 +353,35 @@ class BothGripperOpenChecker(CheckerBase):
     def __init__(
         self,
         robot_name: str = "",
-        gripper_links: Sequence[str] = (),
-        open_gripper_threshold: float = 0.04,
+        gripper_joints: Sequence[GripperRange] = (),
+        open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
     ):
         if not robot_name:
             raise ValueError(
                 "robot_name is required for both gripper checker."
             )
-        if len(gripper_links) == 0:
+        if len(gripper_joints) == 0:
             raise ValueError(
-                "gripper_links is required for both gripper checker."
+                "gripper_joints is required for both gripper checker."
             )
         self.robot_name = robot_name
-        self.gripper_links = tuple(gripper_links)
-        self.open_gripper_threshold = open_gripper_threshold
+        self.gripper_joints = tuple(gripper_joints)
+        self.open_ratio = open_ratio
 
     def check(self, env, env_idx: int = 0) -> bool:
         """Return True only if every configured gripper joint is open."""
         robot = env.scene[self.robot_name]
-        for gripper_link in self.gripper_links:
-            joint_ids, _ = robot.find_joints(gripper_link)
+        for gripper_range in self.gripper_joints:
+            joint_ids, _ = robot.find_joints(gripper_range.name)
             if len(joint_ids) == 0:
                 raise ValueError(
-                    f"Gripper link '{gripper_link}' "
+                    f"Gripper joint '{gripper_range.name}' "
                     f"not found in robot '{self.robot_name}'."
                 )
-            gripper_value = robot.data.joint_pos[env_idx][joint_ids[0]].item()
-            if gripper_value < self.open_gripper_threshold:
+            value = robot.data.joint_pos[env_idx][joint_ids[0]].item()
+            if not _gripper_joint_is_open(
+                value, gripper_range, self.open_ratio
+            ):
                 return False
         return True
 
@@ -387,17 +415,19 @@ def lift(
 def is_within_xy(
     actor1,
     actor2,
-    open_gripper_threshold=None,
+    require_gripper_open: bool = False,
     robot_name: str = "",
-    gripper_links: Sequence[str] = (),
+    gripper_joints: Sequence[GripperRange] = (),
+    open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
 ):
     """Create an XY containment checker for object identifiers."""
     return WithinXYChecker(
         actor1=actor1,
         actor2=actor2,
         robot_name=robot_name,
-        gripper_links=gripper_links,
-        open_gripper_threshold=open_gripper_threshold,
+        gripper_joints=gripper_joints,
+        require_gripper_open=require_gripper_open,
+        open_ratio=open_ratio,
     )
 
 
@@ -405,18 +435,20 @@ def is_alignment_xy(
     actor1,
     actor2,
     eps=(0.02, 0.02),
-    open_gripper_threshold=None,
+    require_gripper_open: bool = False,
     robot_name: str = "",
-    gripper_links: Sequence[str] = (),
+    gripper_joints: Sequence[GripperRange] = (),
+    open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
 ):
     """Create an XY alignment checker for object identifiers."""
     return AlignmentXYChecker(
         actor1=actor1,
         actor2=actor2,
         robot_name=robot_name,
-        gripper_links=gripper_links,
+        gripper_joints=gripper_joints,
         eps=eps,
-        open_gripper_threshold=open_gripper_threshold,
+        require_gripper_open=require_gripper_open,
+        open_ratio=open_ratio,
     )
 
 
@@ -425,9 +457,10 @@ def is_alignment_xyz(
     actor2,
     eps=(0.025, 0.025, 0.0120),
     target_height_offset: float = 0.04,
-    open_gripper_threshold=None,
+    require_gripper_open: bool = False,
     robot_name: str = "",
-    gripper_links: Sequence[str] = (),
+    gripper_joints: Sequence[GripperRange] = (),
+    open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
 ):
     """Create an XYZ alignment checker with actor identifiers.
 
@@ -438,41 +471,35 @@ def is_alignment_xyz(
         actor1=actor1,
         actor2=actor2,
         robot_name=robot_name,
-        gripper_links=gripper_links,
+        gripper_joints=gripper_joints,
         eps=eps,
         target_height_offset=target_height_offset,
-        open_gripper_threshold=open_gripper_threshold,
+        require_gripper_open=require_gripper_open,
+        open_ratio=open_ratio,
     )
 
 
 def is_gripper_open(
-    arm: Literal["left", "right"],
-    open_gripper_threshold: float,
+    gripper_joint: GripperRange,
     robot_name: str = "",
-    gripper_link: str | None = None,
+    open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
 ):
-    """Create a single-arm gripper-open checker.
-
-    The gripper joint name is inferred from `arm` if not provided.
-    """
-    resolved_gripper_link = gripper_link or (
-        "left_joint7" if arm == "left" else "right_joint7"
-    )
+    """Create a single-joint gripper-open checker."""
     return GripperOpenChecker(
         robot_name=robot_name,
-        gripper_link=resolved_gripper_link,
-        open_gripper_threshold=open_gripper_threshold,
+        gripper_joint=gripper_joint,
+        open_ratio=open_ratio,
     )
 
 
 def is_both_gripper_open(
-    open_gripper_threshold: float,
+    gripper_joints: Sequence[GripperRange] = (),
     robot_name: str = "",
-    gripper_links: Sequence[str] = (),
+    open_ratio: float = DEFAULT_GRIPPER_OPEN_RATIO,
 ):
-    """Create a checker for opening both grippers on one robot identifier."""
+    """Create a checker for opening all gripper joints on one robot."""
     return BothGripperOpenChecker(
         robot_name=robot_name,
-        gripper_links=gripper_links,
-        open_gripper_threshold=open_gripper_threshold,
+        gripper_joints=gripper_joints,
+        open_ratio=open_ratio,
     )

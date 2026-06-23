@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from robo_orchard_sim.tasks.validators.base import (
+    GripperRange,
     Validator,
     ValidatorActor,
 )
@@ -84,9 +85,12 @@ class _DummyManipulatorProfile:
 
 
 class _DummyRobotInfo:
-    def __init__(self, manipulator_profile, gripper_open_val):
+    def __init__(
+        self, manipulator_profile, gripper_open_val, gripper_close_val
+    ):
         self.manipulator_profile = manipulator_profile
         self.gripper_open_val = list(gripper_open_val)
+        self.gripper_close_val = list(gripper_close_val)
 
 
 class _DummyEmbodiment:
@@ -100,6 +104,7 @@ class _DummyEmbodiment:
                     gripper_joint_names=("left_joint7", "left_joint8"),
                 ),
                 gripper_open_val=[0.05, -0.05],
+                gripper_close_val=[0.0, 0.0],
             ),
             "right_arm": _DummyRobotInfo(
                 _DummyManipulatorProfile(
@@ -107,6 +112,7 @@ class _DummyEmbodiment:
                     gripper_joint_names=("right_joint7", "right_joint8"),
                 ),
                 gripper_open_val=[0.05, -0.05],
+                gripper_close_val=[0.0, 0.0],
             ),
         }
 
@@ -124,10 +130,12 @@ def test_build_validator_context_uses_runtime_embodiment_robot_metadata():
     assert context.robot is not None
     assert context.robot.robot_name == "robots/dualarm_piperx"
     assert context.robot.ee_links == ("left_link6", "right_link6")
-    assert context.robot.gripper_links == (
+    assert [spec.name for spec in context.robot.gripper_joints] == [
         "left_joint7",
+        "left_joint8",
         "right_joint7",
-    )
+        "right_joint8",
+    ]
 
 
 def test_validator_forwards_env_idx_to_criteria():
@@ -364,15 +372,17 @@ def test_gripper_checkers_read_requested_env_index():
         }
     )
 
+    left_spec = GripperRange(name="left_joint7", open_val=0.05, close_val=0.0)
+    right_spec = GripperRange(
+        name="right_joint7", open_val=0.05, close_val=0.0
+    )
     left_checker = checkers.is_gripper_open(
-        "left",
-        open_gripper_threshold=0.04,
+        left_spec,
         robot_name="robots/robot",
     )
     both_checker = checkers.is_both_gripper_open(
-        open_gripper_threshold=0.04,
+        gripper_joints=(left_spec, right_spec),
         robot_name="robots/robot",
-        gripper_links=("left_joint7", "right_joint7"),
     )
 
     assert left_checker(env, env_idx=0) is False
@@ -495,8 +505,7 @@ def test_gripper_checker_accepts_plain_robot_identifier():
         "robo_orchard_sim.tasks.validators.checkers"
     )
     checker = checkers.is_gripper_open(
-        "left",
-        open_gripper_threshold=0.04,
+        GripperRange(name="left_joint7", open_val=0.05, close_val=0.0),
         robot_name="robot",
     )
 

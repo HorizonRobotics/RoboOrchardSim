@@ -492,6 +492,7 @@ class _StubManipulatorProfile:
 class _StubRobotInfo:
     manipulator_profile: _StubManipulatorProfile
     gripper_open_val: list[float]
+    gripper_close_val: list[float]
 
 
 class _StubEmbodiment:
@@ -505,6 +506,7 @@ class _StubEmbodiment:
                     gripper_joint_names=("left_joint7", "left_joint8"),
                 ),
                 gripper_open_val=[0.05, -0.05],
+                gripper_close_val=[0.0, 0.0],
             ),
             "right_arm": _StubRobotInfo(
                 manipulator_profile=_StubManipulatorProfile(
@@ -512,6 +514,7 @@ class _StubEmbodiment:
                     gripper_joint_names=("right_joint7", "right_joint8"),
                 ),
                 gripper_open_val=[0.05, -0.05],
+                gripper_close_val=[0.0, 0.0],
             ),
         }
 
@@ -879,10 +882,12 @@ class TestEvaluator:
         assert context.robot is not None
         assert context.robot.robot_name == "robots/dualarm_piperx"
         assert context.robot.ee_links == ("left_link6", "right_link6")
-        assert context.robot.gripper_links == (
+        assert [spec.name for spec in context.robot.gripper_joints] == [
             "left_joint7",
+            "left_joint8",
             "right_joint7",
-        )
+            "right_joint8",
+        ]
 
     def test_policy_is_reset_between_episodes(
         self,

@@ -34,6 +34,15 @@ class ValidatorOutput:
     metrics: dict[str, Any]  # Additional metrics for logging
 
 
+@dataclass(frozen=True, slots=True)
+class GripperRange:
+    """A gripper joint's open/close positions, for the open/close check."""
+
+    name: str
+    open_val: float
+    close_val: float
+
+
 @dataclass(slots=True)
 class ValidatorActor:
     """Validator-side actor snapshot for metadata and boundary state."""
