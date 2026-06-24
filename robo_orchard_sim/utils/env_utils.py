@@ -619,59 +619,130 @@ def scene_is_stationary(
     return (stationary, movers) if return_movers else stationary
 
 
-class SettleTracker:
-    """Streak-based scene-settle detector.
+def _quat_angle_deg(q_a: torch.Tensor, q_b: torch.Tensor) -> float:
+    """Compute the max rotation angle between two quaternion batches.
 
-    Feed the scene to ``update`` once per simulation step; the tracker
-    reports settled only after ``streak`` consecutive stationary frames,
-    rejecting transient single-frame velocity dips at oscillation turning
-    points.
+    Quaternions are wxyz, batched over any leading env dims; the angle is
+    ``2*acos(min(1, |<q_a, q_b>|))`` per env, reduced with max over envs.
+
+    Args:
+        q_a (torch.Tensor): Quaternions of shape ``(..., 4)``.
+        q_b (torch.Tensor): Quaternions of shape ``(..., 4)``.
+
+    Returns:
+        float: Largest rotation angle between the batches, in degrees.
+    """
+    dot = (q_a * q_b).sum(dim=-1).abs().clamp(max=1.0)
+    return float(torch.rad2deg(2.0 * torch.acos(dot)).max())
+
+
+class SettleTracker:
+    """Pose-anchor scene-settle detector.
+
+    Feed the scene to ``update`` once per simulation step. An asset is
+    still iff its pose has stayed within (``rot_eps_deg``, ``pos_eps_m``)
+    of an anchor pose for ``streak`` consecutive frames; the anchor is
+    re-captured whenever the current pose breaches the epsilon. The scene
+    is settled when every tracked asset is simultaneously still.
 
     Attributes:
-        lin_thr (float): Linear-velocity threshold (m/s).
-        ang_thr (float): Angular-velocity threshold (rad/s).
-        streak (int): Required number of consecutive stationary frames.
+        streak (int): Required number of consecutive still frames.
+        rot_eps_deg (float): Rotation epsilon vs the anchor (degrees).
+        pos_eps_m (float): Position epsilon vs the anchor (meters).
     """
 
     def __init__(
         self,
-        lin_thr: float = 0.02,
-        ang_thr: float = 0.1,
         streak: int = 50,
+        rot_eps_deg: float = 0.5,
+        pos_eps_m: float = 0.001,
     ) -> None:
         """Initialise the tracker.
 
         Args:
-            lin_thr (float, optional): Linear-velocity threshold (m/s).
-                Default is ``0.02``.
-            ang_thr (float, optional): Angular-velocity threshold (rad/s).
-                Default is ``0.1``.
-            streak (int, optional): Consecutive stationary frames required
-                to report settled. Default is ``50``.
+            streak (int, optional): Consecutive still frames required to
+                report settled. Default is ``50``.
+            rot_eps_deg (float, optional): Max rotation distance to the
+                anchor pose for a frame to count as still (degrees).
+                Default is ``0.5``.
+            pos_eps_m (float, optional): Max position distance to the
+                anchor pose for a frame to count as still (meters).
+                Default is ``0.001``.
         """
-        self.lin_thr = lin_thr
-        self.ang_thr = ang_thr
         self.streak = streak
+        self.rot_eps_deg = rot_eps_deg
+        self.pos_eps_m = pos_eps_m
         self._consecutive = 0
+        self._anchors: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
+        self._last_breaches: List[Tuple[str, float, float]] = []
 
     def reset(self) -> None:
-        """Reset the consecutive-stationary counter to zero."""
+        """Clear anchor poses, the still counter and breach diagnostics."""
         self._consecutive = 0
+        self._anchors.clear()
+        self._last_breaches.clear()
 
     def update(self, scene: Any) -> bool:
         """Ingest one simulation frame and return the current settled state.
 
+        Snapshots every scene asset exposing a ``>=13``-wide
+        ``root_state_w`` (position ``[..., 0:3]``, wxyz quaternion
+        ``[..., 3:7]``) and compares each pose against the asset's anchor
+        with max-over-envs distances. Any breach, new/missing asset, or
+        empty snapshot marks the frame dirty (counter reset); breached
+        assets are re-anchored at their current pose and recorded in
+        ``last_breaches``.
+
         Args:
-            scene (Any): Same shape as accepted by ``scene_is_stationary``.
+            scene (Any): A scene-like object exposing ``keys()`` and
+                ``__getitem__``; each entity should expose
+                ``data.root_state_w``.
 
         Returns:
-            bool: ``True`` once the streak threshold has been reached and the
-            current frame is stationary; ``False`` otherwise.
+            bool: ``True`` once the streak threshold has been reached;
+            ``False`` otherwise.
         """
-        if scene_is_stationary(scene, self.lin_thr, self.ang_thr):
-            self._consecutive += 1
-        else:
+        poses: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
+        if hasattr(scene, "keys"):
+            for name in scene.keys():
+                asset = scene[name]
+                if asset is None:
+                    continue
+                data = getattr(asset, "data", None)
+                rs = getattr(data, "root_state_w", None)
+                if not isinstance(rs, torch.Tensor) or rs.shape[-1] < 13:
+                    continue
+                pos = rs[..., 0:3].detach().cpu().clone()
+                quat = rs[..., 3:7].detach().cpu().clone()
+                poses[name] = (pos, quat)
+
+        dirty = not poses or set(poses) != set(self._anchors)
+        breaches: List[Tuple[str, float, float]] = []
+        for stale in sorted(set(self._anchors) - set(poses)):
+            del self._anchors[stale]
+            breaches.append((stale, -1.0, -1.0))
+        for name, (pos, quat) in poses.items():
+            anchor = self._anchors.get(name)
+            if anchor is None:
+                self._anchors[name] = (pos, quat)
+                breaches.append((name, 0.0, 0.0))
+                dirty = True
+                continue
+            a_pos, a_quat = anchor
+            pos_dist = float(
+                torch.linalg.vector_norm(pos - a_pos, dim=-1).max()
+            )
+            rot_dist = _quat_angle_deg(a_quat, quat)
+            if rot_dist >= self.rot_eps_deg or pos_dist >= self.pos_eps_m:
+                self._anchors[name] = (pos, quat)
+                breaches.append((name, rot_dist, pos_dist * 1000.0))
+                dirty = True
+        self._last_breaches = breaches
+
+        if dirty:
             self._consecutive = 0
+        else:
+            self._consecutive += 1
         return self.settled
 
     @property
@@ -683,3 +754,18 @@ class SettleTracker:
     def consecutive(self) -> int:
         """Current number of consecutive stationary frames observed."""
         return self._consecutive
+
+    @property
+    def last_breaches(self) -> List[Tuple[str, float, float]]:
+        """Assets that made the most recent ``update`` frame dirty.
+
+        Returns:
+            List[Tuple[str, float, float]]: One
+            ``(name, rot_offset_deg, pos_offset_mm)`` entry per offender:
+            measured offsets vs the previous anchor for an epsilon breach,
+            ``(name, 0.0, 0.0)`` for a first-sight anchor capture, and
+            ``(name, -1.0, -1.0)`` for an asset that vanished from the
+            scene. Empty when the last frame was clean (or after
+            ``reset``).
+        """
+        return list(self._last_breaches)

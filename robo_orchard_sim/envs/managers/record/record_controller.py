@@ -101,9 +101,9 @@ class StationaryEpisodeRecordController(RecordController):
         super().__init__(cfg, env)
         self._started = False
         self._tracker = SettleTracker(
-            lin_thr=cfg.linear_velocity_threshold,
-            ang_thr=cfg.angular_velocity_threshold,
             streak=cfg.streak,
+            rot_eps_deg=cfg.rot_eps_deg,
+            pos_eps_m=cfg.pos_eps_m,
         )
 
     def on_post_reset(
@@ -136,8 +136,8 @@ class StationaryEpisodeRecordControllerCfg(RecordControllerCfg):
     class_type: ClassType_co[StationaryEpisodeRecordController] = (
         StationaryEpisodeRecordController
     )
-    linear_velocity_threshold: float = 0.02
-    angular_velocity_threshold: float = 0.1
+    rot_eps_deg: float = 0.5
+    pos_eps_m: float = 0.001
     min_wait_step: int = 50
-    max_wait_step: int = 150
+    max_wait_step: int = 250
     streak: int = 50

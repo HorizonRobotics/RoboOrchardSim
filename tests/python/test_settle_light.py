@@ -14,6 +14,8 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+import math
+
 import torch
 
 from robo_orchard_sim.utils.env_utils import (
@@ -81,55 +83,169 @@ def test_scene_is_stationary_multi_env_one_moving_returns_false():
     assert scene_is_stationary(scene) is False
 
 
-def test_settle_tracker_consecutive_stationary_returns_settled():
+def _pose_state(
+    qw=1.0,
+    qx=0.0,
+    qy=0.0,
+    qz=0.0,
+    px=0.0,
+    py=0.0,
+    pz=0.0,
+    lin=0.0,
+    ang=0.0,
+    num_envs=1,
+):
+    rs = torch.zeros(num_envs, 13)
+    rs[:, 0], rs[:, 1], rs[:, 2] = px, py, pz
+    rs[:, 3], rs[:, 4], rs[:, 5], rs[:, 6] = qw, qx, qy, qz
+    rs[:, 7] = lin
+    rs[:, 10] = ang
+    return rs
+
+
+def _z_rot_state(theta_deg, **kwargs):
+    half = math.radians(theta_deg) / 2.0
+    return _pose_state(qw=math.cos(half), qz=math.sin(half), **kwargs)
+
+
+def test_settle_tracker_frozen_pose_with_ghost_velocity_returns_settled():
     t = SettleTracker(streak=3)
-    still = FakeScene(obj=_Asset(_state(0.0, 0.0)))
-    assert t.update(still) is False  # 1
-    assert t.update(still) is False  # 2
-    assert t.update(still) is True  # 3 -> settled
-    assert t.consecutive == 3
+    buzzing = FakeScene(obj=_Asset(_pose_state(ang=5.0)))
+    assert t.update(buzzing) is False
+    assert t.update(buzzing) is False
+    assert t.update(buzzing) is False
+    assert t.update(buzzing) is True
     assert t.settled is True
 
 
-def test_settle_tracker_motion_resets_consecutive():
+def test_settle_tracker_rocking_quat_oscillation_never_returns_settled():
     t = SettleTracker(streak=3)
-    still = FakeScene(obj=_Asset(_state(0.0, 0.0)))
-    moving = FakeScene(obj=_Asset(_state(0.0, 0.5)))
+    settled_ever = False
+    for _ in range(12):
+        settled_ever = settled_ever or t.update(
+            FakeScene(obj=_Asset(_z_rot_state(1.0)))
+        )
+        settled_ever = settled_ever or t.update(
+            FakeScene(obj=_Asset(_z_rot_state(-1.0)))
+        )
+    assert settled_ever is False
+
+
+def test_settle_tracker_slow_quat_creep_never_returns_settled():
+    t = SettleTracker(streak=5, rot_eps_deg=0.2)
+    settled_ever = False
+    for i in range(30):
+        scene = FakeScene(obj=_Asset(_z_rot_state(0.06 * i)))
+        settled_ever = settled_ever or t.update(scene)
+    assert settled_ever is False
+
+
+def test_settle_tracker_zero_mean_quat_noise_returns_settled():
+    t = SettleTracker(streak=3)
+    settled_ever = False
+    for i in range(10):
+        theta = 0.08 if i % 2 == 0 else -0.08
+        scene = FakeScene(obj=_Asset(_z_rot_state(theta)))
+        settled_ever = settled_ever or t.update(scene)
+    assert settled_ever is True
+
+
+def test_settle_tracker_position_step_resets_then_returns_settled():
+    t = SettleTracker(streak=3)
+    still = FakeScene(obj=_Asset(_pose_state()))
     t.update(still)
     t.update(still)
-    assert t.consecutive == 2
-    t.update(moving)
+    t.update(still)
+    t.update(still)
+    assert t.settled is True
+    stepped = FakeScene(obj=_Asset(_pose_state(pz=0.002)))
+    assert t.update(stepped) is False
+    assert t.consecutive == 0
+    assert t.update(stepped) is False
+    assert t.update(stepped) is False
+    assert t.update(stepped) is True
+
+
+def test_settle_tracker_motion_then_frozen_returns_settled_at_n_plus_streak():
+    n, streak = 5, 3
+    t = SettleTracker(streak=streak)
+    settled_at = None
+    for i in range(1, 20):
+        theta = 10.0 * min(i, n)
+        scene = FakeScene(obj=_Asset(_z_rot_state(theta)))
+        if t.update(scene) and settled_at is None:
+            settled_at = i
+    assert settled_at == n + streak
+
+
+def test_settle_tracker_reset_clears_anchors_and_counter():
+    t = SettleTracker(streak=2)
+    still = FakeScene(obj=_Asset(_pose_state()))
+    t.update(still)
+    t.update(still)
+    t.update(still)
+    assert t.settled is True
+    t.reset()
+    assert t.consecutive == 0
+    assert t.settled is False
+    assert t.update(still) is False
+    assert t.update(still) is False
+    assert t.update(still) is True
+
+
+def test_settle_tracker_empty_scene_never_returns_settled():
+    t = SettleTracker(streak=2)
+    for _ in range(10):
+        assert t.update(FakeScene()) is False
     assert t.consecutive == 0
     assert t.settled is False
 
 
-def test_settle_tracker_alternating_frames_never_returns_settled():
-    # one still frame then a moving frame, repeatedly: the bug regression.
+def test_settle_tracker_breach_reports_offending_asset_and_offsets():
     t = SettleTracker(streak=3)
-    still = FakeScene(obj=_Asset(_state(0.0, 0.0)))
-    moving = FakeScene(obj=_Asset(_state(0.0, 0.5)))
-    settled_ever = False
-    for _ in range(20):
-        settled_ever = settled_ever or t.update(still)
-        settled_ever = settled_ever or t.update(moving)
-    assert settled_ever is False
+    t.update(
+        FakeScene(
+            rock=_Asset(_z_rot_state(0.0)),
+            still=_Asset(_pose_state()),
+        )
+    )
+    t.update(
+        FakeScene(
+            rock=_Asset(_z_rot_state(1.0)),
+            still=_Asset(_pose_state()),
+        )
+    )
+    breaches = t.last_breaches
+    assert [b[0] for b in breaches] == ["rock"]
+    name, rot_deg, pos_mm = breaches[0]
+    assert 0.8 <= rot_deg < 1.2
+    assert abs(pos_mm) < 1e-6
 
 
-def test_settle_tracker_late_settle_returns_settled_at_n_plus_streak():
+def test_settle_tracker_clean_frame_reports_no_breaches():
     t = SettleTracker(streak=3)
-    moving = FakeScene(obj=_Asset(_state(0.0, 0.5)))
-    still = FakeScene(obj=_Asset(_state(0.0, 0.0)))
-    for _ in range(5):
-        assert t.update(moving) is False
-    assert t.update(still) is False  # 1
-    assert t.update(still) is False  # 2
-    assert t.update(still) is True  # 3 -> settled
-
-
-def test_settle_tracker_reset_clears_consecutive():
-    t = SettleTracker(streak=2)
-    still = FakeScene(obj=_Asset(_state(0.0, 0.0)))
+    still = FakeScene(obj=_Asset(_pose_state()))
     t.update(still)
+    t.update(still)
+    assert t.last_breaches == []
+
+
+def test_settle_tracker_reset_clears_breaches():
+    t = SettleTracker(streak=3)
+    t.update(FakeScene(obj=_Asset(_z_rot_state(0.0))))
+    t.update(FakeScene(obj=_Asset(_z_rot_state(1.0))))
+    assert t.last_breaches != []
     t.reset()
-    assert t.consecutive == 0
-    assert t.update(still) is False  # only 1 after reset
+    assert t.last_breaches == []
+
+
+def test_settle_tracker_multi_env_one_rocking_never_returns_settled():
+    t = SettleTracker(streak=3)
+    settled_ever = False
+    for i in range(20):
+        rs = _pose_state(num_envs=2)
+        half = math.radians(1.0 if i % 2 == 0 else -1.0) / 2.0
+        rs[1, 3] = math.cos(half)
+        rs[1, 6] = math.sin(half)
+        settled_ever = settled_ever or t.update(FakeScene(obj=_Asset(rs)))
+    assert settled_ever is False

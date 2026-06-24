@@ -490,46 +490,25 @@ class TaskDataSynthesisRunner:
             ),
         )
 
-    def scene_is_stationary(
-        self,
-        env: Any,
-        lin_vel: float = 0.02,
-        ang_vel: float = 0.1,
-    ) -> bool:
-        """Return whether all scene assets with root state are stationary."""
-        from robo_orchard_sim.utils.env_utils import (
-            scene_is_stationary as _check,
-        )
-
-        stationary, movers = _check(
-            env.scene, lin_vel, ang_vel, return_movers=True
-        )
-        for name, usd_path, max_lin, max_ang in movers:
-            print(
-                f"[Scene asset is not stationary]: name={name}, "
-                f"usd_path={usd_path}, lin_vel={max_lin:.6f}, "
-                f"ang_vel={max_ang:.6f}",
-            )
-        return stationary
-
     def settle_until_recording_starts(self, env: Any) -> bool:
-        """Step until recording starts; report scene-settled verdict.
+        """Step the scene and report whether it settled within the window.
 
-        Reports whether the scene truly settled (reached a stationary streak)
-        within the settle window. Assumes ``settle_streak <= settle_steps``;
-        otherwise the streak can never complete within the window and every
-        episode reports unsettled.
+        Steps up to ``settle_steps`` times and returns whether the scene
+        reached a stationary streak (``settle_streak`` consecutive still
+        frames). The verdict comes from a local tracker, not from
+        ``record_manager.running``: the recording controller's own tracker
+        leads this one by the reset-time hold step, so gating on it would
+        report unsettled one frame early. Assumes
+        ``settle_streak <= settle_steps``.
         """
         from robo_orchard_sim.utils.env_utils import SettleTracker
 
         tracker = SettleTracker(streak=self.cfg.settle_streak)
-        record_manager = env.record_manager
         for _ in range(self.cfg.settle_steps):
             _ = env.step()
-            tracker.update(env.scene)
-            if record_manager is not None and record_manager.running:
-                break
-        return tracker.settled
+            if tracker.update(env.scene):
+                return True
+        return False
 
     def build_validator_actors(
         self,
@@ -811,7 +790,7 @@ class TaskDataSynthesisCfg(ClassConfig[TaskDataSynthesisRunner]):
     seed: int = 0
     episode_num: int = 1
     max_steps: int = 1000
-    settle_steps: int = 150
+    settle_steps: int = 250
     settle_streak: int = 50
     enable_recording: bool = True
     record_dir: str = "logs/data_synthesis"

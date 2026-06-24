@@ -15,6 +15,7 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
+import math
 import sys
 import types
 import warnings
@@ -1295,19 +1296,25 @@ class TestEvaluator:
         )
         assert env.step_calls[0]["joint_names"] == ("joint1", "joint2")
 
-    def test_episode_settle_timeout_prints_moving_asset_report(
+    def test_episode_settle_timeout_prints_unsettled_asset_report(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        moving = torch.tensor(
-            [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.3, 0.0]]
-        )
+        def _rot(theta_deg: float) -> torch.Tensor:
+            half = math.radians(theta_deg) / 2.0
+            state = torch.zeros((1, 13))
+            state[:, 3] = math.cos(half)
+            state[:, 6] = math.sin(half)
+            return state
+
+        # Pose keeps changing across settle frames, so the assets never reach
+        # a stationary streak and are reported as unsettled at timeout.
         env = _StubSettlingEnv(
             episodes=[[_StepState()]],
             settle_states=[
-                {"objects/cube": moving, "robots/arm": moving},
-                {"objects/cube": moving, "robots/arm": moving},
+                {"objects/cube": _rot(0.0), "robots/arm": _rot(0.0)},
+                {"objects/cube": _rot(10.0), "robots/arm": _rot(10.0)},
             ],
         )
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
@@ -1323,8 +1330,8 @@ class TestEvaluator:
         evaluator.evaluate(_StubPolicy())
 
         captured = capsys.readouterr()
-        assert "name=objects/cube, usd_path=<unknown>" in captured.out
-        assert "name=robots/arm, usd_path=<unknown>" in captured.out
+        assert "name=objects/cube, rot_offset=" in captured.out
+        assert "name=robots/arm, rot_offset=" in captured.out
 
     def test_episode_passes_instruction_wrapped_with_observations_to_policy(
         self,

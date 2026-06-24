@@ -555,30 +555,6 @@ class Evaluator:
     def _extract_truncated(self, step_return: EnvStepReturn) -> bool:
         return self._extract_done_flag(step_return.truncated)
 
-    def scene_is_stationary(
-        self,
-        env: IsaacManagerBasedEnv,
-        lin_vel: float = 0.02,
-        ang_vel: float = 0.1,
-        print_report: bool = True,
-    ) -> bool:
-        """Return whether all scene assets with root state are stationary."""
-        from robo_orchard_sim.utils.env_utils import (
-            scene_is_stationary as _check,
-        )
-
-        stationary, movers = _check(
-            env.scene, lin_vel, ang_vel, return_movers=True
-        )
-        if print_report:
-            for name, usd_path, max_lin, max_ang in movers:
-                print(
-                    f"[Scene asset is not stationary]: name={name}, "
-                    f"usd_path={usd_path}, lin_vel={max_lin:.6f}, "
-                    f"ang_vel={max_ang:.6f}",
-                )
-        return stationary
-
     def _settle_scene(self, env: IsaacManagerBasedEnv) -> EnvStepReturn:
         from robo_orchard_sim.utils.env_utils import SettleTracker
 
@@ -589,7 +565,11 @@ class Evaluator:
             if tracker.update(env.scene):
                 return latest_step_return
             latest_step_return = env.step()
-        self.scene_is_stationary(env)  # log movers if still not settled
+        for name, rot_deg, pos_mm in tracker.last_breaches:
+            print(
+                f"[Scene asset not settled]: name={name}, "
+                f"rot_offset={rot_deg:.3f}deg, pos_offset={pos_mm:.3f}mm",
+            )
         return latest_step_return
 
     def _start_manual_recording(self, env: IsaacManagerBasedEnv) -> None:
@@ -890,7 +870,7 @@ class EvaluatorCfg(ClassConfig):
     episode_num: int = 1
     resample_on_skip: bool = True
     max_steps: int = 1000
-    max_settle_steps: int = 150
+    max_settle_steps: int = 250
     settle_streak: int = 50
     snapshot_path: Path | None = None
     splits_path: Path | None = None
