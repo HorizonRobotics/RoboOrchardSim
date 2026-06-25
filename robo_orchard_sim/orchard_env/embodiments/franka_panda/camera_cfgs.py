@@ -22,11 +22,11 @@ import isaacsim.core.utils.numpy.rotations as rot_utils
 import numpy as np
 import torch
 
-from robo_orchard_sim.models.sensors.realsense import (
+from robo_orchard_sim.ext.models.sensors.realsense import (
     D435I_CFG,
     CameraOffset,
 )
-from robo_orchard_sim.models.sensors.zed import (
+from robo_orchard_sim.ext.models.sensors.zed import (
     ZED_DROID_EXT1_CFG,
     ZED_DROID_EXT2_CFG,
     ZED_DROID_WRIST_CFG,

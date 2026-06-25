@@ -16,7 +16,7 @@
 
 import pytest
 
-from robo_orchard_sim.models.sensors.zed import (
+from robo_orchard_sim.ext.models.sensors.zed import (
     ZED_DROID_EXT1_CFG,
     ZED_DROID_EXT2_CFG,
     ZED_DROID_WRIST_CFG,
@@ -76,6 +76,22 @@ def test_zed_droid_camera_cfg_original_resolution_uses_centered_intrinsics(
     assert camera_cfg.width == 1280
     assert camera_cfg.height == 720
     assert camera_cfg.spawn is not None
-    assert camera_cfg.spawn.width == 1280
-    assert camera_cfg.spawn.height == 720
-    assert camera_cfg.spawn.intrinsic_matrix == expected_intrinsic_matrix
+
+    f_x = expected_intrinsic_matrix[0]
+    f_y = expected_intrinsic_matrix[4]
+    c_x = expected_intrinsic_matrix[2]
+    c_y = expected_intrinsic_matrix[5]
+    focal_length = camera_cfg.spawn.focal_length
+
+    assert camera_cfg.spawn.horizontal_aperture == pytest.approx(
+        camera_cfg.width * focal_length / f_x
+    )
+    assert camera_cfg.spawn.vertical_aperture == pytest.approx(
+        camera_cfg.height * focal_length / f_y
+    )
+    assert camera_cfg.spawn.horizontal_aperture_offset == pytest.approx(
+        (c_x - camera_cfg.width / 2) / f_x
+    )
+    assert camera_cfg.spawn.vertical_aperture_offset == pytest.approx(
+        (c_y - camera_cfg.height / 2) / f_y
+    )

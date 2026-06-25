@@ -27,7 +27,7 @@ from robo_orchard_sim.controllers.curobo_planner.curobo import (
     RobotCfg,
     RobotKinematicsCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import (
+from robo_orchard_sim.ext.models.assets.asset_cfg import (
     NV_ISAACLAB_DIR,
     ORCHARD_ASSET,
 )

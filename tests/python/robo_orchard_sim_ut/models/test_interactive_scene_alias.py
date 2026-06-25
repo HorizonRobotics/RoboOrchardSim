@@ -12,11 +12,11 @@
 from __future__ import annotations
 from unittest.mock import MagicMock
 
-from robo_orchard_sim.models.scenes.pool_alias_state import PoolAliasState
+from robo_orchard_sim.ext.models.scenes.pool_alias_state import PoolAliasState
 
 
 def _scene_with_state(monkeypatch, state):
-    from robo_orchard_sim.models.scenes.interactive_scene import (
+    from robo_orchard_sim.ext.models.scenes.interactive_scene import (
         InteractiveScene,
     )
 

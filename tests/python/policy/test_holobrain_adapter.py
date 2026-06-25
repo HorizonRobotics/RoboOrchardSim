@@ -22,14 +22,14 @@ import numpy as np
 import pytest
 import torch
 
-from robo_orchard_sim.policy.action_layout import compile_action_layout
-from robo_orchard_sim.policy.holobrain.adapter import HolobrainAdapter
-from robo_orchard_sim.policy.schema import (
+from robo_orchard_sim.contracts.policy_binding import (
     CameraBinding,
     CanonicalPolicyInput,
     ManipulatorBinding,
     PolicyBindingSchema,
 )
+from robo_orchard_sim.policy.action_layout import compile_action_layout
+from robo_orchard_sim.policy.holobrain.adapter import HolobrainAdapter
 
 
 def _build_dualarm_schema() -> PolicyBindingSchema:

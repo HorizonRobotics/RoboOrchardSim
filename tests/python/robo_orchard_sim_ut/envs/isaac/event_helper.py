@@ -23,10 +23,10 @@ from robo_orchard_core.envs.managers.events import (
 )
 from typing_extensions import Generic
 
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg as LabSceneEntityCfg,
 )
-from robo_orchard_sim.envs.env_base import IsaacEnvType_co
+from robo_orchard_sim.ext.envs.env_base import IsaacEnvType_co
 
 
 class ResetEventTermBase(

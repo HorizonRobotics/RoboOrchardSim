@@ -27,37 +27,38 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.contracts.policy_binding import PolicyBindingSchema
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.envs.managers.actions.articulation.joint_position import (  # noqa: E501
+from robo_orchard_sim.ext.envs.managers.actions.articulation.joint_position import (  # noqa: E501
     ArticulationJointPositionActionTermCfg,
 )
-from robo_orchard_sim.envs.managers.events.default_reset import (
+from robo_orchard_sim.ext.envs.managers.events.default_reset import (
     DefaultResetTermCfg,
 )
-from robo_orchard_sim.envs.managers.events.joint_state_reset import (
+from robo_orchard_sim.ext.envs.managers.events.joint_state_reset import (
     JointStateResetTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.asset_obs import (
+from robo_orchard_sim.ext.envs.managers.observations.asset_obs import (
     AssetObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.camera import (
+from robo_orchard_sim.ext.envs.managers.observations.camera import (
     CameraObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.last_action import (
+from robo_orchard_sim.ext.envs.managers.observations.last_action import (
     LastActionObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.transform_frame import (
+from robo_orchard_sim.ext.envs.managers.observations.transform_frame import (
     FrameTransformTermCfg,
 )
-from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
-from robo_orchard_sim.envs.managers.record.mcap import (
+from robo_orchard_sim.ext.envs.managers.record import RecordTermBaseCfg
+from robo_orchard_sim.ext.envs.managers.record.mcap import (
     McapImageTermCfg,
     McapJointsTermCfg,
     McapTFTermCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
@@ -74,7 +75,6 @@ from robo_orchard_sim.orchard_env.embodiments.franka_panda.profile import (
 from robo_orchard_sim.orchard_env.embodiments.franka_panda.schema import (
     build_franka_panda_policy_binding_schema,
 )
-from robo_orchard_sim.policy.schema import PolicyBindingSchema
 
 RENDER_FPS = 30
 ACTION_FPS = 30

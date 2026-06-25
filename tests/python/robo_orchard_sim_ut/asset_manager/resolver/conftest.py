@@ -14,7 +14,7 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""Shared fixtures for task_suite/resolvers tests.
+"""Shared fixtures for benchmark/resolvers tests.
 
 mini_asset_root is duplicated from asset_registry/conftest.py because
 the test directory layout prevents cross-directory imports.
@@ -186,7 +186,7 @@ def mini_asset_root(tmp_path: Path) -> Path:
     )
     _write_asset(
         root,
-        "containers/plate_001",
+        "containers/dishware/plate_001",
         _urdf(
             "plate_001",
             uuid="u-plate-001",
@@ -202,7 +202,7 @@ def mini_asset_root(tmp_path: Path) -> Path:
     )
     _write_asset(
         root,
-        "misc/box_001",
+        "misc/boxes/box_001",
         _urdf(
             "box_001",
             uuid="u-box-001",
@@ -217,7 +217,7 @@ def mini_asset_root(tmp_path: Path) -> Path:
     )
     _write_asset(
         root,
-        "misc/broken_001",
+        "misc/boxes/broken_001",
         _urdf(
             "broken_001",
             uuid="u-broken-001",

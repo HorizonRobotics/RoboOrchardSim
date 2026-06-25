@@ -24,7 +24,7 @@ import torch
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
-from robo_orchard_sim.policy.schema import CanonicalPolicyInput
+from robo_orchard_sim.contracts.policy_binding import CanonicalPolicyInput
 
 __all__ = ["DummyPolicy", "DummyPolicyCfg"]
 

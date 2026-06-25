@@ -18,7 +18,8 @@
 
 from __future__ import annotations
 
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.contracts.policy_binding import PolicyBindingSchema
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.embodiment import (
     DualArmPiperEmbodiment,
@@ -38,7 +39,6 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     RobotInfoCfg,
 )
-from robo_orchard_sim.policy.schema import PolicyBindingSchema
 
 
 class DualArmPiperXEmbodiment(DualArmPiperEmbodiment):

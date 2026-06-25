@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from robo_orchard_sim.runner.data_synthesis.batch_synthesis import (
+from robo_orchard_sim.pipeline.data_synthesis.batch_synthesis import (
     load_batch_plan,
     run_group_data_synthesis,
 )

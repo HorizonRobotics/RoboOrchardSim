@@ -26,16 +26,16 @@ from pydantic import Field
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
-from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
+from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
+from robo_orchard_sim.contracts.policy_binding import (
+    CanonicalPolicyInput,
+    PolicyRequirement,
+)
 from robo_orchard_sim.policy.motus.adapter import (
     DEFAULT_CAMERA_MAPPING,
     MotusAdapter,
 )
 from robo_orchard_sim.policy.motus.client import MotusClient
-from robo_orchard_sim.policy.schema import (
-    CanonicalPolicyInput,
-    PolicyRequirement,
-)
 
 
 class MotusPolicy(PolicyMixin[CanonicalPolicyInput, UnifiedJointCommand]):

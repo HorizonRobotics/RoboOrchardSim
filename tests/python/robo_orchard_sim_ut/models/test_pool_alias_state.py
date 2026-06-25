@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from robo_orchard_sim.models.scenes.pool_alias_state import PoolAliasState
+from robo_orchard_sim.ext.models.scenes.pool_alias_state import PoolAliasState
 
 
 def test_register_set_active_resolve_roundtrip():

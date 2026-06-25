@@ -22,12 +22,15 @@ from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import ArticulationCfg
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.contracts.joint_command import (
+    UnifiedJointCommand,
+)
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import ArticulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners import UsdFileCfg
-from robo_orchard_sim.envs.managers.actions.articulation.joint_position import (  # noqa: E501
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import UsdFileCfg
+from robo_orchard_sim.ext.envs.managers.actions.articulation.joint_position import (  # noqa: E501
     ArticulationJointPositionActionTermCfg,
 )
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
@@ -42,9 +45,6 @@ from robo_orchard_sim.orchard_env.embodiments.franka_panda.embodiment import (
 )
 from robo_orchard_sim.orchard_env.embodiments.panda_droid.embodiment import (
     PandaDroidEmbodiment,
-)
-from robo_orchard_sim.orchard_env.joint_command import (
-    UnifiedJointCommand,
 )
 
 
@@ -133,7 +133,7 @@ def test_unified_joint_command_missing_selected_joint_raises_value_error():
 
 
 def test_env_action_state_resolved_asset_cfg_returns_joint_positions():
-    from robo_orchard_sim.orchard_env import joint_command
+    from robo_orchard_sim.contracts import joint_command
 
     asset = SimpleNamespace(
         data=SimpleNamespace(
@@ -163,7 +163,7 @@ def test_env_action_state_resolved_asset_cfg_returns_joint_positions():
 
 
 def test_env_action_state_partial_action_preserves_unupdated_terms():
-    from robo_orchard_sim.orchard_env import joint_command
+    from robo_orchard_sim.contracts import joint_command
 
     env_action_state = joint_command.EnvActionState(
         {
@@ -186,7 +186,7 @@ def test_env_action_state_partial_action_preserves_unupdated_terms():
 
 
 def test_env_action_state_unknown_term_raises_key_error():
-    from robo_orchard_sim.orchard_env import joint_command
+    from robo_orchard_sim.contracts import joint_command
 
     env_action_state = joint_command.EnvActionState(
         {"left_robot_joint_position": torch.tensor([[1.0]])}

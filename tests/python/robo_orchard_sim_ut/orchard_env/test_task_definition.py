@@ -20,9 +20,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import ArticulationCfg
-from robo_orchard_sim.cfg_wrappers.sim.spawners import UsdFileCfg
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.benchmark import base as task_base
+from robo_orchard_sim.benchmark.base import TaskDefinition
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import ArticulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import UsdFileCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper import (
     DualArmPiperEmbodiment,
@@ -39,16 +41,16 @@ from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
 from robo_orchard_sim.orchard_env.embodiments.panda_droid import (
     PandaDroidEmbodiment,
 )
-from robo_orchard_sim.orchard_env.scene.room_table_scene import (
-    RoomTableScene,
+from robo_orchard_sim.orchard_env.scene.plane_table_scene import (
+    PlaneTableScene,
 )
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
-from robo_orchard_sim.task_suite import base as task_base
-from robo_orchard_sim.task_suite.base import TaskDefinition
-from robo_orchard_sim.tasks.instructions import (
+from robo_orchard_sim.task_components.instructions import (
     registry as instruction_registry,
 )
-from robo_orchard_sim.tasks.instructions.base import InstructionWrapper
+from robo_orchard_sim.task_components.instructions.base import (
+    InstructionWrapper,
+)
 
 
 class DummyScene(SceneBase):
@@ -144,10 +146,10 @@ def test_resolve_scene_rejects_unknown_registered_name() -> None:
         UnknownSceneTaskDefinition.resolve_scene()
 
 
-def test_resolve_scene_missing_yaml_scene_returns_room_table() -> None:
+def test_resolve_scene_missing_yaml_scene_returns_default_scene() -> None:
     scene = DummyTaskDefinition.resolve_scene()
 
-    assert isinstance(scene, RoomTableScene)
+    assert isinstance(scene, PlaneTableScene)
 
 
 def test_resolve_embodiment_prefers_yaml_over_class_default(
@@ -346,7 +348,7 @@ def test_place_a2b_task_definition_registers_namespace_and_config(
     expected_namespace: str,
     expected_config_suffix: str,
 ) -> None:
-    from robo_orchard_sim.task_suite.manipulation.place_a2b import (
+    from robo_orchard_sim.benchmark.manipulation.place_a2b import (
         place_a2b_env,
     )
 

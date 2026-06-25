@@ -23,8 +23,11 @@ from types import SimpleNamespace
 import pytest
 
 from robo_orchard_sim.orchard_env.assets import RigidObjectSpec
-from robo_orchard_sim.orchard_env.tasks.pick_task import PickAssets, PickTask
-from robo_orchard_sim.tasks.instructions.base import (
+from robo_orchard_sim.orchard_env.task_templates.pick_task import (
+    PickAssets,
+    PickTask,
+)
+from robo_orchard_sim.task_components.instructions.base import (
     InstructionRenderError,
     InstructionWrapper,
 )

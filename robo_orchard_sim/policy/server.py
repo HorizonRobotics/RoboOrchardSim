@@ -50,12 +50,12 @@ import yaml
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
-from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
-from robo_orchard_sim.policy.action_layout import CompiledActionLayout
-from robo_orchard_sim.policy.schema import (
+from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
+from robo_orchard_sim.contracts.policy_binding import (
     CanonicalPolicyInput,
     PolicyRequirement,
 )
+from robo_orchard_sim.policy.action_layout import CompiledActionLayout
 
 logger = logging.getLogger(__name__)
 

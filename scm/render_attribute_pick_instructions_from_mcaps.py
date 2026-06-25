@@ -29,7 +29,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from robo_orchard_sim.asset_manager.registry import AssetRegistry  # noqa: E402
-from robo_orchard_sim.tasks.instructions import (  # noqa: E402
+from robo_orchard_sim.task_components.instructions import (  # noqa: E402
     InstructionActor,
     InstructionRenderError,
     InstructionWrapper,

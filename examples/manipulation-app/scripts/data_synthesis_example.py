@@ -22,7 +22,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from robo_orchard_sim.runner.data_synthesis import single_task
+from robo_orchard_sim.pipeline.data_synthesis import single_task
 
 _ASSET_ROOT_ENV = "ORCHARD_ASSET_LIBRARY"
 

@@ -14,7 +14,7 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-from robo_orchard_sim.policy.schema import (
+from robo_orchard_sim.contracts.policy_binding import (
     CameraBinding,
     CanonicalPolicyInput,
     ManipulatorBinding,

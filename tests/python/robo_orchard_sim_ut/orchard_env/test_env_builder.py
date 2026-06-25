@@ -16,6 +16,7 @@
 
 """Tests for orchard env builder phase 1.5 refactor."""
 
+import numpy as np
 import pytest
 import torch
 from pydantic import ValidationError
@@ -24,32 +25,35 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import (
+from robo_orchard_sim.benchmark.manipulation.place_a2b import (
+    PlaceA2BEasyTaskDefinition,
+)
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import (
     ArticulationCfg,
     AssetBaseCfg,
 )
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
-from robo_orchard_sim.cfg_wrappers.sim.simulation_cfg import SimulationCfg
-from robo_orchard_sim.cfg_wrappers.sim.spawners import UsdFileCfg
-from robo_orchard_sim.cfg_wrappers.sim.spawners.lights_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import ViewerCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import SimulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import UsdFileCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.lights_cfg import (
     DomeLightCfg,
 )
-from robo_orchard_sim.envs.managers.actions.action_manager import (
+from robo_orchard_sim.ext.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
-from robo_orchard_sim.envs.managers.record import (
+from robo_orchard_sim.ext.envs.managers.record import (
     EpisodeRecordControllerCfg,
     NoOpRecordControllerCfg,
     RecordTermBaseCfg,
     StationaryEpisodeRecordControllerCfg,
 )
-from robo_orchard_sim.envs.managers.record.mcap import (
+from robo_orchard_sim.ext.envs.managers.record.mcap import (
     McapImageTermCfg,
     McapTFTermCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
-from robo_orchard_sim.models.assets.xform_asset import XFormPrimAsset
-from robo_orchard_sim.models.scenes.asset_scene import AssetSceneCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.ext.models.assets.xform_asset import XFormPrimAsset
+from robo_orchard_sim.ext.models.scenes.asset_scene import AssetSceneCfg
 from robo_orchard_sim.orchard_env import OrchardEnv
 from robo_orchard_sim.orchard_env.assets import (
     ArticulationSpec,
@@ -67,25 +71,22 @@ from robo_orchard_sim.orchard_env.scene.plane_table_scene import (
     PlaneTableScene,
 )
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
-from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
+from robo_orchard_sim.orchard_env.task_templates.place_a2b_task import (
     PlaceA2BTask,
     PlaceA2BTaskAssets,
     PlaceA2BTaskParams,
 )
-from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
-from robo_orchard_sim.orchard_env.tasks.task_params import (
+from robo_orchard_sim.orchard_env.task_templates.task_base import TaskBase
+from robo_orchard_sim.orchard_env.task_templates.task_params import (
     PoseRangeConfig,
     TaskPoseResetConfig,
 )
-from robo_orchard_sim.task_suite.manipulation.place_a2b import (
-    PlaceA2BEasyTaskDefinition,
-)
-from robo_orchard_sim.tasks.validators.base import (
+from robo_orchard_sim.task_components.validators.base import (
     GripperRange,
     Validator,
     ValidatorActor,
 )
-from robo_orchard_sim.tasks.validators.context import (
+from robo_orchard_sim.task_components.validators.context import (
     ValidatorContext,
     ValidatorRobotContext,
 )
@@ -420,7 +421,7 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        "robo_orchard_sim.tasks.validators.utils.is_object_center_in_obb",
+        "robo_orchard_sim.task_components.validators.utils.is_object_center_in_obb",
         lambda *_args, **_kwargs: env.allow_xy_match,
     )
     validator = _make_place_a2b_task().build_validator(
@@ -430,12 +431,14 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
                 uuid="pick-uuid",
                 category="pick",
                 actor_type="pick",
+                init_state=np.array([[0.6, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
             ),
             ValidatorActor(
                 name="objects/place_object",
                 uuid="place-uuid",
                 category="place",
                 actor_type="place",
+                init_state=np.array([[0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
             ),
         ],
         context=ValidatorContext(
@@ -1096,7 +1099,7 @@ def test_layout_builder_apply_to_drops_pose_reset_keeps_others():
     """Pose/pool-reset terms are shadowed by layout; other terms survive."""
     from unittest.mock import MagicMock
 
-    from robo_orchard_sim.envs.managers.events.pose_reset import (
+    from robo_orchard_sim.ext.envs.managers.events.pose_reset import (
         PoseResetTermCfg,
     )
 

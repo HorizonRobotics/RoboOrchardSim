@@ -71,10 +71,10 @@ from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
     AssetResolver,
     AssetResolverError,
 )
-from robo_orchard_sim.envs.env_base import IsaacEnvContextManager
-from robo_orchard_sim.task_suite.registry import (
+from robo_orchard_sim.benchmark.registry import (
     build_task,
 )
+from robo_orchard_sim.ext.envs.env_base import IsaacEnvContextManager
 
 _ASSET_ROOT_ENV = "ORCHARD_ASSET_LIBRARY"
 

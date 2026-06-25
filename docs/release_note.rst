@@ -30,12 +30,12 @@ New Features
 Data Synthesis
 ~~~~~~~~~~~~~~
 
-* Added the ``robo_orchard_sim/tasks/trajs_gen`` atomic action framework, which
+* Added the ``robo_orchard_sim/task_components/trajs_gen`` atomic action framework, which
   provides ``AtomicActionManager``, ``BaseExecutor``, and executors such as
   ``PickExecutor``, ``PlaceExecutor``, ``MoveExecutor``, ``GripperExecutor``,
   and ``BackToDefaultExecutor`` for generating pick-and-place trajectories.
 * Added a default atomic action plan in
-  ``robo_orchard_sim/task_suite/manipulation/place_a2b/action_plan.py`` that
+  ``robo_orchard_sim/benchmark/manipulation/place_a2b/action_plan.py`` that
   binds executors to the left and right arms according to task state.
 * Added
   ``examples/manipulation-app/scripts/collect_data_example.py``, which can

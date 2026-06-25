@@ -9,13 +9,13 @@ import pytest
 from google.protobuf.struct_pb2 import Struct
 from mcap_protobuf.writer import Writer
 
-from robo_orchard_sim.tasks.instructions import (
+from robo_orchard_sim.task_components.instructions import (
     extract_instruction_actor_uuids_from_mcap,
     registry as instruction_registry,
     render_instruction_from_mcap,
     render_instructions_from_mcaps,
 )
-from robo_orchard_sim.tasks.instructions.base import (
+from robo_orchard_sim.task_components.instructions.base import (
     InstructionActor,
     InstructionRenderError,
     InstructionWrapper,

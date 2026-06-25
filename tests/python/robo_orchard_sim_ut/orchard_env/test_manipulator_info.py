@@ -34,8 +34,10 @@ from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
 from robo_orchard_sim.orchard_env.embodiments.panda_droid import (
     PandaDroidEmbodiment,
 )
-from robo_orchard_sim.tasks.trajs_gen.base_executor import BaseExecutorCfg
-from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
+from robo_orchard_sim.task_components.trajs_gen.base_executor import (
+    BaseExecutorCfg,
+)
+from robo_orchard_sim.task_components.trajs_gen.manipulator_resolver import (
     ManipulatorBindingContext,
 )
 
@@ -189,10 +191,11 @@ def test_robot_info_cfg_panda_droid_planner_profile_uses_usd_links():
     kinematics = robot_info.planner.robot.kinematics
 
     assert kinematics.base_link == "panda_link0"
-    assert kinematics.ee_link == "base_link"
-    assert kinematics.usd_robot_root == "/panda"
-    assert kinematics.use_usd_kinematics is True
-    assert kinematics.lock_joints is None
+    assert kinematics.ee_link == "panda_hand"
+    assert kinematics.lock_joints == {
+        "panda_finger_joint1": 0.08,
+        "panda_finger_joint2": 0.08,
+    }
 
 
 def test_resolved_manipulator_profile_from_articulation_returns_ids():

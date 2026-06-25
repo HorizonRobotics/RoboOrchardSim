@@ -21,13 +21,13 @@ from abc import ABC
 
 from pydantic import Field
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import ArticulationCfg
-from robo_orchard_sim.cfg_wrappers.sim.schemas import (
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import ArticulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas import (
     MassPropertiesCfg,
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners import UsdFileCfg
-from robo_orchard_sim.models.assets.rigid_object import RigidObjectCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import UsdFileCfg
+from robo_orchard_sim.ext.models.assets.rigid_object import RigidObjectCfg
 from robo_orchard_sim.orchard_env.assets.asset_spec import AssetSpec
 
 

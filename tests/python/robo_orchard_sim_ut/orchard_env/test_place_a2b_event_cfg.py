@@ -11,19 +11,17 @@
 
 from __future__ import annotations
 
-import pytest
-from pydantic import ValidationError
-
 from robo_orchard_sim.orchard_env.assets.object_spec import RigidObjectSpec
 from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
-from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
+from robo_orchard_sim.orchard_env.task_templates.place_a2b_task import (
     PlaceA2BTask,
     PlaceA2BTaskAssets,
     PlaceA2BTaskParams,
 )
-from robo_orchard_sim.orchard_env.tasks.task_params import (
+from robo_orchard_sim.orchard_env.task_templates.task_params import (
     PoseRangeConfig,
     TaskLightResetConfig,
+    TaskPoseResetConfig,
     TaskTextureResetConfig,
 )
 
@@ -102,15 +100,17 @@ def test_get_event_cfg_enabled_light_and_texture_adds_terms():
     assert "texture_reset_event" in cfg.terms
 
 
-def test_place_a2b_task_params_legacy_pose_fields_raise_validation_error():
-    with pytest.raises(
-        ValidationError, match="Extra inputs are not permitted"
-    ):
-        PlaceA2BTaskParams(
-            mode="drop",
-            min_separation=0.07,
-            pose_range=PoseRangeConfig(
-                x=(0.1, 0.2),
-                y=(-0.2, 0.4),
-            ),
-        )
+def test_place_a2b_task_params_legacy_pose_fields_are_ignored():
+    params = PlaceA2BTaskParams(
+        mode="drop",
+        min_separation=0.07,
+        pose_range=PoseRangeConfig(
+            x=(0.1, 0.2),
+            y=(-0.2, 0.4),
+        ),
+    )
+
+    assert params.pose_reset == TaskPoseResetConfig()
+    assert not hasattr(params, "mode")
+    assert not hasattr(params, "min_separation")
+    assert not hasattr(params, "pose_range")

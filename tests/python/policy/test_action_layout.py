@@ -27,15 +27,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from robo_orchard_sim.contracts.policy_binding import (
+    CameraBinding,
+    ManipulatorBinding,
+    PolicyBindingSchema,
+)
 from robo_orchard_sim.policy.action_layout import (
     CompiledActionLayout,
     compile_action_layout,
     validate_action_layout_compatibility,
-)
-from robo_orchard_sim.policy.schema import (
-    CameraBinding,
-    ManipulatorBinding,
-    PolicyBindingSchema,
 )
 
 

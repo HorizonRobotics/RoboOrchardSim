@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from robo_orchard_sim.models.assets.asset_cfg import ORCHARD_ASSET
+from robo_orchard_sim.ext.models.assets.asset_cfg import ORCHARD_ASSET
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     ManipulatorProfile,
     RobotInfoCfg,

@@ -31,6 +31,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from robo_orchard_sim.contracts.policy_binding import (
+    CameraBinding,
+    CanonicalPolicyInput,
+    ManipulatorBinding,
+    PolicyBindingSchema,
+)
 from robo_orchard_sim.policy.action_layout import compile_action_layout
 from robo_orchard_sim.policy.factory import create_policy_from_model_cfg
 from robo_orchard_sim.policy.openpi import policy as openpi_policy_module
@@ -44,12 +50,6 @@ from robo_orchard_sim.policy.openpi.policy import (
     OpenPiModelConfig,
     OpenPiPolicy,
     OpenPiPolicyCfg,
-)
-from robo_orchard_sim.policy.schema import (
-    CameraBinding,
-    CanonicalPolicyInput,
-    ManipulatorBinding,
-    PolicyBindingSchema,
 )
 
 

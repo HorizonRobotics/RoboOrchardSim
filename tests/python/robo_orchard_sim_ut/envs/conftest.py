@@ -19,28 +19,30 @@ from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import RigidObjectCfg
-from robo_orchard_sim.cfg_wrappers.sim.schemas.schemas_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import RigidObjectCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.from_files_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.from_files import (
     UsdFileCfg,
 )
-from robo_orchard_sim.envs.managers.observations import (
+from robo_orchard_sim.ext.envs.managers.observations import (
     ObservationGroupCfg,
     ObservationManagerCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import (
+from robo_orchard_sim.ext.models.assets.asset_cfg import (
     NV_ISAAC_DIR,
     GroupAssetCfg,
 )
-from robo_orchard_sim.models.robots.franka import FRANKA_PANDA_CFG
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
-from robo_orchard_sim.models.sensors.camera import (
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.sensors.camera import (
     Camera,
     CameraCfg,
     CameraOffset,
     PinholeCameraCfg,
+)
+from robo_orchard_sim.orchard_env.embodiments.franka_panda.cfg import (
+    FRANKA_PANDA_CFG,
 )
 
 

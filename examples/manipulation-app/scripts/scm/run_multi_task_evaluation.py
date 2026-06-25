@@ -23,11 +23,13 @@ from pathlib import Path
 
 import yaml
 
-from robo_orchard_sim.evaluator.batch_evaluation import run_group_evaluation
-from robo_orchard_sim.policy.factory import create_policy_from_model_cfg
-from robo_orchard_sim.runner.data_synthesis.batch_synthesis import (
+from robo_orchard_sim.pipeline.data_synthesis.batch_synthesis import (
     load_batch_plan,
 )
+from robo_orchard_sim.pipeline.evaluator.batch_evaluation import (
+    run_group_evaluation,
+)
+from robo_orchard_sim.policy.factory import create_policy_from_model_cfg
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _POLICY_CONFIG_DIR = _REPO_ROOT / "robo_orchard_sim" / "policy" / "configs"

@@ -28,23 +28,23 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
-from robo_orchard_sim.cfg_wrappers.sim.simulation_cfg import SimulationCfg
-from robo_orchard_sim.envs.manager_based_env import IsaacManagerBasedEnvCfg
-from robo_orchard_sim.envs.managers.record import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import ViewerCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import SimulationCfg
+from robo_orchard_sim.ext.envs.manager_based_env import IsaacManagerBasedEnvCfg
+from robo_orchard_sim.ext.envs.managers.record import (
     NoOpRecordControllerCfg,
     RecordControllerCfg,
     RecordManagerCfg,
     RecordTermBaseCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
-from robo_orchard_sim.models.scenes.asset_scene import AssetSceneCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.ext.models.scenes.asset_scene import AssetSceneCfg
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
 from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
-from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
+from robo_orchard_sim.orchard_env.task_templates.task_base import TaskBase
 
 
 class EnvBuilder:

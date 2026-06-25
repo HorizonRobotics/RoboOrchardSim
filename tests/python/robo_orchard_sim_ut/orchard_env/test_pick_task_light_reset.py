@@ -22,12 +22,12 @@ import pytest
 from pydantic import ValidationError
 
 from robo_orchard_sim.orchard_env.assets.object_spec import RigidObjectSpec
-from robo_orchard_sim.orchard_env.tasks.pick_task import (
+from robo_orchard_sim.orchard_env.task_templates.pick_task import (
     PickAssets,
     PickTask,
     PickTaskParams,
 )
-from robo_orchard_sim.orchard_env.tasks.task_params import (
+from robo_orchard_sim.orchard_env.task_templates.task_params import (
     TaskDistantLightConfig,
     TaskLightResetConfig,
     TaskPoseResetConfig,
@@ -145,22 +145,24 @@ def test_pick_task_params_light_reset_dict_parses_nested_config():
     assert params.texture_reset.variant_index_range == [0, 3]
 
 
-def test_pick_task_params_legacy_flat_pose_fields_raise_validation_error():
-    with pytest.raises(
-        ValidationError, match="Extra inputs are not permitted"
-    ):
-        PickTaskParams(
-            mode="drop",
-            min_separation=0.07,
-            pose_range={
-                "x": (0.1, 0.2),
-                "y": (-0.2, 0.4),
-                "z": (0.01, 0.02),
-                "roll": (0.0, 0.1),
-                "pitch": (-0.1, 0.1),
-                "yaw": (-1.0, 1.5),
-            },
-        )
+def test_pick_task_params_legacy_flat_pose_fields_are_ignored():
+    params = PickTaskParams(
+        mode="drop",
+        min_separation=0.07,
+        pose_range={
+            "x": (0.1, 0.2),
+            "y": (-0.2, 0.4),
+            "z": (0.01, 0.02),
+            "roll": (0.0, 0.1),
+            "pitch": (-0.1, 0.1),
+            "yaw": (-1.0, 1.5),
+        },
+    )
+
+    assert params.pose_reset == TaskPoseResetConfig()
+    assert not hasattr(params, "mode")
+    assert not hasattr(params, "min_separation")
+    assert not hasattr(params, "pose_range")
 
 
 def test_pick_task_params_light_reset_missing_asset_names_raises_error():

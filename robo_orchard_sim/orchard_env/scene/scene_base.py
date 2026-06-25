@@ -27,13 +27,13 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
-from robo_orchard_sim.cfg_wrappers.sim.simulation_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import ViewerCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import (
     PhysxCfg,
     SimulationCfg,
 )
-from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.ext.envs.managers.record import RecordTermBaseCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 
 
 class SceneBase(ABC):

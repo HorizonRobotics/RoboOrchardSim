@@ -28,19 +28,21 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.envs.managers.actions.articulation.joint_base import (
-    ArticulationJointActionTermCfg,
+from robo_orchard_sim.contracts.joint_command import (
+    UnifiedJointCommand,
 )
-from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.contracts.policy_binding import PolicyBindingSchema
+from robo_orchard_sim.ext.envs.managers.actions.articulation import (
+    joint_base as _joint_base,
+)
+from robo_orchard_sim.ext.envs.managers.record import RecordTermBaseCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     RobotInfoCfg,
 )
-from robo_orchard_sim.orchard_env.joint_command import (
-    UnifiedJointCommand,
-)
-from robo_orchard_sim.policy.schema import PolicyBindingSchema
+
+ArticulationJointActionTermCfg = _joint_base.ArticulationJointActionTermCfg
 
 
 class EmbodimentBase:

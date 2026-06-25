@@ -19,12 +19,12 @@
 from __future__ import annotations
 from typing import Any
 
-from robo_orchard_sim.policy.action_layout import compile_action_layout
-from robo_orchard_sim.policy.schema import (
+from robo_orchard_sim.contracts.policy_binding import (
     CanonicalPolicyInput,
     PolicyBindingSchema,
     PolicyRequirement,
 )
+from robo_orchard_sim.policy.action_layout import compile_action_layout
 
 
 def validate_policy_compatibility(

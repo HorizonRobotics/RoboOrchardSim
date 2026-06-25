@@ -19,12 +19,12 @@ from robo_orchard_core.envs.managers.events.event_manager import (
     EventManagerCfg,
 )
 
-from robo_orchard_sim.envs import (
+from robo_orchard_sim.ext.envs import (
     IsaacEnvContextManager,
     IsaacManagerBasedEnv,
     IsaacManagerBasedEnvCfg,
 )
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
 from robo_orchard_sim_ut.envs.isaac.event_helper import (
     ResetEventTermBase,
     ResetEventTermCfg,

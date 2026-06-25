@@ -18,8 +18,8 @@
 
 from __future__ import annotations
 
-from robo_orchard_sim.models.sensors.realsense import CameraOffset
-from robo_orchard_sim.models.sensors.zed import (
+from robo_orchard_sim.ext.models.sensors.realsense import CameraOffset
+from robo_orchard_sim.ext.models.sensors.zed import (
     ZED_DROID_EXT1_CFG,
     ZED_DROID_EXT2_CFG,
     ZED_DROID_WRIST_CFG,

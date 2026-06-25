@@ -8,7 +8,9 @@ from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx import (
 from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
     FrankaPandaEmbodiment,
 )
-from robo_orchard_sim.tasks.validators.context import build_validator_context
+from robo_orchard_sim.task_components.validators.context import (
+    build_validator_context,
+)
 
 
 def _specs_by_name(embodiment):

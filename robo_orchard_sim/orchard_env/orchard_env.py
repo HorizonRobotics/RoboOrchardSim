@@ -20,16 +20,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from robo_orchard_sim.envs.manager_based_env import (
+    from robo_orchard_sim.ext.envs.manager_based_env import (
         IsaacManagerBasedEnvCfg,
     )
-    from robo_orchard_sim.envs.managers.record import RecordControllerCfg
+    from robo_orchard_sim.ext.envs.managers.record import RecordControllerCfg
     from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
         EmbodimentBase,
     )
     from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
     from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
-    from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
+    from robo_orchard_sim.orchard_env.task_templates.task_base import TaskBase
 
 
 class OrchardEnv:
@@ -54,7 +54,7 @@ class OrchardEnv:
         self.embodiment = embodiment
         self.task = task
         self.layout_builder = layout_builder
-        from robo_orchard_sim.envs.managers.record import (
+        from robo_orchard_sim.ext.envs.managers.record import (
             NoOpRecordControllerCfg,
         )
 
@@ -78,7 +78,7 @@ class OrchardEnv:
         controller: RecordControllerCfg | None = None,
     ) -> "OrchardEnv":
         """Enable recording with optional file path and controller."""
-        from robo_orchard_sim.envs.managers.record import (
+        from robo_orchard_sim.ext.envs.managers.record import (
             EpisodeRecordControllerCfg,
         )
 
@@ -89,7 +89,7 @@ class OrchardEnv:
 
     def disable_recording(self) -> "OrchardEnv":
         """Disable recording while keeping the current file path."""
-        from robo_orchard_sim.envs.managers.record import (
+        from robo_orchard_sim.ext.envs.managers.record import (
             NoOpRecordControllerCfg,
         )
 

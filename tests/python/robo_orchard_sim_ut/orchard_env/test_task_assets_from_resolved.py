@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from robo_orchard_sim.orchard_env.assets.object_spec import RigidObjectSpec
 from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
-from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
+from robo_orchard_sim.orchard_env.task_templates.place_a2b_task import (
     PlaceA2BTaskAssets,
 )
 

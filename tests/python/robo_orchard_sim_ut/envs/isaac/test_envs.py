@@ -26,39 +26,43 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationGroupCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.envs import (
+from robo_orchard_sim.ext.envs import (
     IsaacEnvCfg,
     IsaacEnvContextManager,
     IsaacManagerBasedEnv,
     IsaacManagerBasedEnvCfg,
 )
-from robo_orchard_sim.envs.managers.actions.articulation.joint_position import (  # noqa: E501
+from robo_orchard_sim.ext.envs.managers.actions.articulation.joint_position import (  # noqa: E501
     ArticulationJointPositionActionTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations import ObservationManagerCfg
-from robo_orchard_sim.envs.managers.observations.asset_obs import (
+from robo_orchard_sim.ext.envs.managers.observations import (
+    ObservationManagerCfg,
+)
+from robo_orchard_sim.ext.envs.managers.observations.asset_obs import (
     AssetObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.camera import (
+from robo_orchard_sim.ext.envs.managers.observations.camera import (
     CameraObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.last_action import (
+from robo_orchard_sim.ext.envs.managers.observations.last_action import (
     LastActionObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.sensor import (
+from robo_orchard_sim.ext.envs.managers.observations.sensor import (
     SensorObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.transform_frame import (
+from robo_orchard_sim.ext.envs.managers.observations.transform_frame import (
     FrameTransformTermCfg,
 )
-from robo_orchard_sim.models.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
-from robo_orchard_sim.models.scenes.interactive_scene import (
+from robo_orchard_sim.ext.models.scenes.interactive_scene import (
     InteractiveSceneCfg,
 )
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.orchard_env.embodiments.franka_panda.cfg import (
+    FRANKA_PANDA_HIGH_PD_CFG,
+)
 from robo_orchard_sim_ut.utils.cfg_test import CfgTestBase
 
 

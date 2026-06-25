@@ -7,7 +7,7 @@ import importlib
 import pytest
 import torch
 
-from robo_orchard_sim.tasks.validators.base import GripperRange
+from robo_orchard_sim.task_components.validators.base import GripperRange
 
 
 class _DummyRobot:
@@ -28,7 +28,7 @@ class _DummyEnv:
 
 def _checkers():
     return importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
 
 
@@ -69,7 +69,8 @@ def test_both_gripper_open_matches_expected_for_joint_range(
 
 def test_within_xy_gate_gripper_closed_blocks_containment(monkeypatch):
     checkers = _checkers()
-    utils = importlib.import_module("robo_orchard_sim.tasks.validators.utils")
+    utils_module_name = "robo_orchard_sim.task_components.validators.utils"
+    utils = importlib.import_module(utils_module_name)
     monkeypatch.setattr(utils, "is_object_center_in_obb", lambda *a, **k: True)
 
     class _Obj:

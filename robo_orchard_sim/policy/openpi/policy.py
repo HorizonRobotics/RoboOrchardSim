@@ -28,6 +28,10 @@ from pydantic import BaseModel, Field, field_validator
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
+from robo_orchard_sim.contracts.policy_binding import (
+    CanonicalPolicyInput,
+    PolicyRequirement,
+)
 from robo_orchard_sim.policy.openpi.adapter import (
     DEFAULT_CAMERAS,
     OpenPiAction,
@@ -38,10 +42,6 @@ from robo_orchard_sim.policy.openpi.openpi_config import (
     OpenPiModelConfig,
     build_openpi_model_config,
     build_openpi_transform_pipeline,
-)
-from robo_orchard_sim.policy.schema import (
-    CanonicalPolicyInput,
-    PolicyRequirement,
 )
 
 logger = logging.getLogger(__name__)

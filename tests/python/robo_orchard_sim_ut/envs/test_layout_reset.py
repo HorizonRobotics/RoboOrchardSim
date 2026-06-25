@@ -14,11 +14,11 @@ from unittest.mock import MagicMock
 
 import torch
 
-from robo_orchard_sim.envs.managers.events.layout_reset import (
+from robo_orchard_sim.ext.envs.managers.events.layout_reset import (
     LayoutResetTerm,
     LayoutResetTermCfg,
 )
-from robo_orchard_sim.models.scenes.pool_alias_state import PoolAliasState
+from robo_orchard_sim.ext.models.scenes.pool_alias_state import PoolAliasState
 from robo_orchard_sim.orchard_env.layout.loader import (
     Layout,
     LayoutObject,

@@ -16,16 +16,16 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from robo_orchard_sim.envs.managers.events.pool_reset import (
+from robo_orchard_sim.ext.envs.managers.events.pool_reset import (
     PoolResetTermCfg,
     PoolSlot,
     pool_reset,
     sample_pose_with_aabb_separation,
 )
-from robo_orchard_sim.envs.managers.events.pose_reset import (
+from robo_orchard_sim.ext.envs.managers.events.pose_reset import (
     _CROSS_GROUP_CACHE,
 )
-from robo_orchard_sim.models.scenes.pool_alias_state import PoolAliasState
+from robo_orchard_sim.ext.models.scenes.pool_alias_state import PoolAliasState
 
 
 def _make_env(slot_role_ids, teleport_recorder=None):

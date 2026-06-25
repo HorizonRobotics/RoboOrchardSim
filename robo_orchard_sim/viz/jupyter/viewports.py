@@ -23,8 +23,8 @@ from robo_orchard_core.datatypes.geometry import BatchPose6D
 from robo_orchard_core.utils.math.coord_convention import CoordAxisOpenGL
 from robo_orchard_core.viz.jupyter import IpyFPVCameraViz, draw_image
 
-from robo_orchard_sim.sim.context import SimulationContext
-from robo_orchard_sim.sim.viewports import ViewportCamera
+from robo_orchard_sim.ext.sim.context import SimulationContext
+from robo_orchard_sim.ext.sim.viewports import ViewportCamera
 
 if TYPE_CHECKING:
     from ipycanvas import Canvas

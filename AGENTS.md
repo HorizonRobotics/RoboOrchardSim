@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 
 Core code lives in `robo_orchard_sim/`: `orchard_env/` builds environments,
-`task_suite/` registers tasks, `models/` defines assets and robots,
+`benchmark/` registers tasks, `models/` defines assets and robots,
 `envs/managers/` handles runtime managers, and `viz/` contains display helpers.
 Tests live in `tests/python/`, examples in `examples/`, developer scripts in
 `scm/`, and longer internal notes in `agent_docs/`.

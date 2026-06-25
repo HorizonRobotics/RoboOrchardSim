@@ -198,7 +198,7 @@ def main() -> None:
     args = _build_parser().parse_args()
 
     from robo_orchard_core.utils.logging import LoggerManager
-    from robo_orchard_sim.evaluator import EvaluatorCfg, LaunchConfig
+    from robo_orchard_sim.pipeline.evaluator import EvaluatorCfg, LaunchConfig
     from robo_orchard_sim.policy.factory import create_policy_from_model_cfg
 
     logger = LoggerManager().get_child(__name__)

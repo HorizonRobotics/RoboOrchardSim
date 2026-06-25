@@ -22,7 +22,8 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 
-from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
+from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
+from robo_orchard_sim.contracts.policy_binding import CanonicalPolicyInput
 from robo_orchard_sim.policy.action_layout import (
     CompiledActionLayout,
     ManipulatorActionSpec,
@@ -31,7 +32,6 @@ from robo_orchard_sim.policy.action_layout import (
 from robo_orchard_sim.policy.gripper_codec import (
     policy_to_gripper_positions_torch,
 )
-from robo_orchard_sim.policy.schema import CanonicalPolicyInput
 
 if TYPE_CHECKING:
     from robo_orchard_lab.models.holobrain.processor import (

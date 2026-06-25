@@ -16,7 +16,7 @@
 
 """Canonical policy bindings for Franka Panda embodiments."""
 
-from robo_orchard_sim.policy.schema import (
+from robo_orchard_sim.contracts.policy_binding import (
     CameraBinding,
     ManipulatorBinding,
     PolicyBindingSchema,

@@ -25,16 +25,18 @@ from robo_orchard_core.kinematics.chain import (
 )
 from robo_orchard_core.utils import math as math_utils
 
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import SimulationCfg
-from robo_orchard_sim.envs.env_base import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import SimulationCfg
+from robo_orchard_sim.ext.envs.env_base import (
     IsaacEnvContextManager,
 )
-from robo_orchard_sim.envs.manager_based_env import (
+from robo_orchard_sim.ext.envs.manager_based_env import (
     IsaacManagerBasedEnvCfg,
 )
-from robo_orchard_sim.models.assets.articulation import Articulation
-from robo_orchard_sim.models.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.assets.articulation import Articulation
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.orchard_env.embodiments.franka_panda.cfg import (
+    FRANKA_PANDA_HIGH_PD_CFG,
+)
 from robo_orchard_sim.utils.usd import usd_to_urdf
 
 

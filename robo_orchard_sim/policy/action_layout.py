@@ -23,16 +23,16 @@ from typing import Any
 
 import numpy as np
 
-from robo_orchard_sim.orchard_env.joint_command import (
+from robo_orchard_sim.contracts.joint_command import (
     resolve_joint_name_specs,
+)
+from robo_orchard_sim.contracts.policy_binding import (
+    ManipulatorBinding,
+    PolicyBindingSchema,
 )
 from robo_orchard_sim.policy.gripper_codec import (
     gripper_policy_dim,
     gripper_positions_to_policy_numpy,
-)
-from robo_orchard_sim.policy.schema import (
-    ManipulatorBinding,
-    PolicyBindingSchema,
 )
 
 

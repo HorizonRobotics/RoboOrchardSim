@@ -7,12 +7,14 @@ import numpy as np
 import pytest
 import torch
 
-from robo_orchard_sim.tasks.validators.base import (
+from robo_orchard_sim.task_components.validators.base import (
     GripperRange,
     Validator,
     ValidatorActor,
 )
-from robo_orchard_sim.tasks.validators.context import build_validator_context
+from robo_orchard_sim.task_components.validators.context import (
+    build_validator_context,
+)
 
 
 class _DummyObjectData:
@@ -119,7 +121,7 @@ class _DummyEmbodiment:
 
 def test_checkers_can_be_imported_without_pxr():
     module = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     assert hasattr(module, "lift")
 
@@ -196,7 +198,7 @@ def test_validator_does_not_treat_plain_second_arg_as_env_idx():
 
 def test_lift_checker_reads_requested_env_index():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     actor = ValidatorActor(name="objects/cube")
     actor.init_state = np.array(
@@ -222,7 +224,7 @@ def test_lift_checker_reads_requested_env_index():
 
 def test_lift_checker_uses_per_env_init_height():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     actor = ValidatorActor(name="objects/cube")
     actor.init_state = np.array(
@@ -248,7 +250,7 @@ def test_lift_checker_uses_per_env_init_height():
 
 def test_lift_checker_missing_init_state_raises_value_error():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     actor = ValidatorActor(name="objects/cube")
     env = _DummyEnv(
@@ -268,7 +270,7 @@ def test_lift_checker_missing_init_state_raises_value_error():
 
 def test_reach_checker_reads_requested_env_index():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     env = _DummyEnv(
         scene={
@@ -301,7 +303,7 @@ def test_reach_checker_reads_requested_env_index():
 
 def test_alignment_xy_checker_reads_requested_env_index():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     env = _DummyEnv(
         scene={
@@ -328,7 +330,7 @@ def test_alignment_xy_checker_reads_requested_env_index():
 
 def test_alignment_xyz_checker_reads_requested_env_index():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     env = _DummyEnv(
         scene={
@@ -356,7 +358,7 @@ def test_alignment_xyz_checker_reads_requested_env_index():
 
 def test_gripper_checkers_read_requested_env_index():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     env = _DummyEnv(
         scene={
@@ -393,7 +395,7 @@ def test_gripper_checkers_read_requested_env_index():
 
 def test_within_xy_checker_uses_asset_prim_path(monkeypatch):
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     captured = {}
 
@@ -406,7 +408,9 @@ def test_within_xy_checker_uses_asset_prim_path(monkeypatch):
         captured["axes"] = axes
         return True
 
-    utils = importlib.import_module("robo_orchard_sim.tasks.validators.utils")
+    utils = importlib.import_module(
+        "robo_orchard_sim.task_components.validators.utils"
+    )
     monkeypatch.setattr(
         utils, "is_object_center_in_obb", fake_is_object_center_in_obb
     )
@@ -491,7 +495,7 @@ def test_validator_actor_from_rigid_object_captures_cfg_and_pose():
 
 def test_lift_checker_binds_validator_actor():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     actor = ValidatorActor(name="cube")
     checker = checkers.lift(actor, threshold=0.05)
@@ -502,7 +506,7 @@ def test_lift_checker_binds_validator_actor():
 
 def test_gripper_checker_accepts_plain_robot_identifier():
     checkers = importlib.import_module(
-        "robo_orchard_sim.tasks.validators.checkers"
+        "robo_orchard_sim.task_components.validators.checkers"
     )
     checker = checkers.is_gripper_open(
         GripperRange(name="left_joint7", open_val=0.05, close_val=0.0),

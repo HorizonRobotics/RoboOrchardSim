@@ -17,23 +17,27 @@
 import pytest
 from isaaclab.sensors.contact_sensor import ContactSensorCfg
 
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import SimulationCfg
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import SimulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.schemas.schemas_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.from_files_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.from_files import (
     UsdFileCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import NV_ISAAC_DIR
-from robo_orchard_sim.models.robots.franka import FRANKA_PANDA_CFG
-from robo_orchard_sim.models.scenes.interactive_scene import InteractiveScene
-from robo_orchard_sim.models.scenes.table_scene import (
+from robo_orchard_sim.ext.models.assets.asset_cfg import NV_ISAAC_DIR
+from robo_orchard_sim.ext.models.scenes.interactive_scene import (
+    InteractiveScene,
+)
+from robo_orchard_sim.ext.models.scenes.table_scene import (
     GroupAssetCfg,
     RigidObjectCfg,
     TableSceneCfg,
+)
+from robo_orchard_sim.orchard_env.embodiments.franka_panda.cfg import (
+    FRANKA_PANDA_CFG,
 )
 from robo_orchard_sim.sim_ctx import SimulationContextManager
 

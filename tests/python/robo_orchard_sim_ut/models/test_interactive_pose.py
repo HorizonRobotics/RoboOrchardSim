@@ -19,17 +19,19 @@ from pathlib import Path
 import pytest
 import torch
 
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import SimulationCfg
-from robo_orchard_sim.cfg_wrappers.sim.schemas.schemas_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import SimulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.from_files import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.from_files import (
     UsdFileCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import NV_ISAAC_DIR
-from robo_orchard_sim.models.assets.rigid_object import RigidObjectCfg
-from robo_orchard_sim.models.scenes.interactive_scene import InteractiveScene
-from robo_orchard_sim.models.scenes.table_scene import (
+from robo_orchard_sim.ext.models.assets.asset_cfg import NV_ISAAC_DIR
+from robo_orchard_sim.ext.models.assets.rigid_object import RigidObjectCfg
+from robo_orchard_sim.ext.models.scenes.interactive_scene import (
+    InteractiveScene,
+)
+from robo_orchard_sim.ext.models.scenes.table_scene import (
     GroupAssetCfg,
     TableSceneCfg,
 )

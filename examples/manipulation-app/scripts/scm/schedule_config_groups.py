@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 
-from robo_orchard_sim.runner.data_synthesis.batch_synthesis import (
+from robo_orchard_sim.pipeline.data_synthesis.batch_synthesis import (
     schedule_batch_plan,
     write_batch_plan,
 )

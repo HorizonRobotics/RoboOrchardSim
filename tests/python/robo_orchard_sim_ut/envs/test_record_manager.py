@@ -24,8 +24,8 @@ import pytest
 import torch
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from robo_orchard_sim.envs.manager_based_env import IsaacManagerBasedEnv
-from robo_orchard_sim.envs.managers.record import (
+from robo_orchard_sim.ext.envs.manager_based_env import IsaacManagerBasedEnv
+from robo_orchard_sim.ext.envs.managers.record import (
     NoOpRecordControllerCfg,
     RecordControlDecision,
     RecordController,
@@ -134,12 +134,12 @@ def _disable_mcap_writer_io(monkeypatch) -> None:
         self._running = False
 
     monkeypatch.setattr(
-        "robo_orchard_sim.envs.managers.record.record_manager."
+        "robo_orchard_sim.ext.envs.managers.record.record_manager."
         "McapRecorder.start",
         _fake_start,
     )
     monkeypatch.setattr(
-        "robo_orchard_sim.envs.managers.record.record_manager."
+        "robo_orchard_sim.ext.envs.managers.record.record_manager."
         "McapRecorder.end",
         _fake_end,
     )
@@ -533,27 +533,26 @@ class TestRecordManagerLifecycle:
             controller=StationaryEpisodeRecordControllerCfg(
                 min_wait_step=0,
                 max_wait_step=3,
+                streak=1,
             ),
         )
-        env.scene = {
-            "moving": _StubAsset(
-                root_state_w=_make_root_state(
-                    lin_vel=(0.03, 0.0, 0.0),
-                    ang_vel=(0.11, 0.0, 0.0),
-                )
-            )
-        }
+        moving = _StubAsset(root_state_w=_make_rot_root_state(0.0))
+        env.scene = {"moving": moving}
 
         manager.record_post_reset(
             {"obs": {"value": 0}},
             dt.datetime(2026, 1, 1, 12, 0, 0),
         )
         for step in (1, 2):
+            # Pose actually changes each step so the streak never builds.
+            moving.data.root_state_w = _make_rot_root_state(5.0 * step)
             env.step_count = step
             manager.record_step({"obs": {"value": step}})
 
         assert term.calls == []
 
+        # max_wait_step reached; recording starts even though pose still moves.
+        moving.data.root_state_w = _make_rot_root_state(15.0)
         env.step_count = 3
         manager.record_step({"obs": {"value": 3}})
 
@@ -572,6 +571,7 @@ class TestRecordManagerLifecycle:
             controller=StationaryEpisodeRecordControllerCfg(
                 min_wait_step=0,
                 max_wait_step=2,
+                streak=1,
             ),
         )
         env.scene = {"camera": _StubAsset()}
@@ -712,7 +712,7 @@ class TestEnvRecordHooks:
             return None
 
         monkeypatch.setattr(
-            "robo_orchard_sim.envs.manager_based_env.IsaacEnv.reset",
+            "robo_orchard_sim.ext.envs.manager_based_env.IsaacEnv.reset",
             _fake_reset,
         )
 
@@ -733,7 +733,7 @@ class TestEnvRecordHooks:
             return None
 
         monkeypatch.setattr(
-            "robo_orchard_sim.envs.manager_based_env.IsaacEnv.reset",
+            "robo_orchard_sim.ext.envs.manager_based_env.IsaacEnv.reset",
             _fake_reset,
         )
 
@@ -755,7 +755,7 @@ class TestEnvRecordHooks:
             return None
 
         monkeypatch.setattr(
-            "robo_orchard_sim.envs.manager_based_env.IsaacEnv.reset",
+            "robo_orchard_sim.ext.envs.manager_based_env.IsaacEnv.reset",
             _fake_reset,
         )
 
@@ -777,7 +777,7 @@ class TestEnvRecordHooks:
             return None
 
         monkeypatch.setattr(
-            "robo_orchard_sim.envs.manager_based_env.IsaacEnv.reset",
+            "robo_orchard_sim.ext.envs.manager_based_env.IsaacEnv.reset",
             _fake_reset,
         )
 

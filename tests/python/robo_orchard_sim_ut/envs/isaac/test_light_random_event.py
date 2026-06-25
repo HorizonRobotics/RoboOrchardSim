@@ -21,28 +21,28 @@ from robo_orchard_core.envs.managers.events.event_manager import (
     EventManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.lights_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.lights_cfg import (
     DistantLightCfg,
 )
-from robo_orchard_sim.envs import (
+from robo_orchard_sim.ext.envs import (
     IsaacEnvContextManager,
     IsaacManagerBasedEnv,
     IsaacManagerBasedEnvCfg,
 )
-from robo_orchard_sim.envs.managers.events.light_reset import (
+from robo_orchard_sim.ext.envs.managers.events.light_reset import (
     LightPoseCfg,
     LightResetTermCfg,
     RangeCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import (
+from robo_orchard_sim.ext.models.assets.asset_cfg import (
     AssetBaseCfg,
     asset_replace_usd_path,
 )
-from robo_orchard_sim.models.assets.xform_asset import XFormPrimAsset
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.assets.xform_asset import XFormPrimAsset
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
 
 
 class TestLightResetEvent:

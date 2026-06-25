@@ -25,8 +25,8 @@ from robo_orchard_core.controllers.differential_ik import (
 )
 from robo_orchard_core.utils import math as math_utils
 
-from robo_orchard_sim.envs.env_base import IsaacEnv
-from robo_orchard_sim.models.assets.articulation import Articulation
+from robo_orchard_sim.ext.envs.env_base import IsaacEnv
+from robo_orchard_sim.ext.models.assets.articulation import Articulation
 from robo_orchard_sim.utils.config import ClassType_co as ClassType
 
 

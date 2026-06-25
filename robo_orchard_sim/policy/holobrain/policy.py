@@ -24,12 +24,12 @@ from pydantic import field_validator
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
-from robo_orchard_sim.orchard_env.joint_command import UnifiedJointCommand
-from robo_orchard_sim.policy.holobrain.adapter import HolobrainAdapter
-from robo_orchard_sim.policy.schema import (
+from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
+from robo_orchard_sim.contracts.policy_binding import (
     CanonicalPolicyInput,
     PolicyRequirement,
 )
+from robo_orchard_sim.policy.holobrain.adapter import HolobrainAdapter
 
 HolobrainAction: TypeAlias = UnifiedJointCommand
 _MODEL_DIR_ENV_VAR = "ROBO_ORCHARD_HOLOBRAIN_MODEL_DIR"

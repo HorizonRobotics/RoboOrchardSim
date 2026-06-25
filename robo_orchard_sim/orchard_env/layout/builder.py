@@ -23,11 +23,15 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from robo_orchard_core.envs.managers.events import EventManagerCfg
 
-from robo_orchard_sim.envs.managers.events.layout_reset import (
+from robo_orchard_sim.ext.envs.managers.events.layout_reset import (
     LayoutResetTermCfg,
 )
-from robo_orchard_sim.envs.managers.events.pool_reset import PoolResetTermCfg
-from robo_orchard_sim.envs.managers.events.pose_reset import PoseResetTermCfg
+from robo_orchard_sim.ext.envs.managers.events.pool_reset import (
+    PoolResetTermCfg,
+)
+from robo_orchard_sim.ext.envs.managers.events.pose_reset import (
+    PoseResetTermCfg,
+)
 from robo_orchard_sim.orchard_env.assets import ObjectSpec
 from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
 from robo_orchard_sim.orchard_env.layout.loader import (

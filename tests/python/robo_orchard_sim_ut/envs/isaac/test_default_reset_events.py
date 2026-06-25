@@ -19,19 +19,19 @@ from robo_orchard_core.envs.managers.events.event_manager import (
     EventManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.envs import (
+from robo_orchard_sim.ext.envs import (
     IsaacEnvContextManager,
     IsaacManagerBasedEnv,
     IsaacManagerBasedEnvCfg,
 )
-from robo_orchard_sim.envs.managers.events.default_reset import (
+from robo_orchard_sim.ext.envs.managers.events.default_reset import (
     DefaultResetTerm,
     DefaultResetTermCfg,
 )
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
 
 
 class TestDefaultResetTerm:

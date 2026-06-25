@@ -241,7 +241,7 @@ def _default_base_config_path() -> Path:
     return (
         repo_root
         / "robo_orchard_sim"
-        / "task_suite"
+        / "benchmark"
         / "manipulation"
         / "semantic_pick"
         / "configs"

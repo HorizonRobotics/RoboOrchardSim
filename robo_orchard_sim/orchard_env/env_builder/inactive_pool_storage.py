@@ -22,15 +22,15 @@ and this storage (inactive) per episode reset.
 
 from __future__ import annotations
 
-from robo_orchard_sim.cfg_wrappers.materials.visual_materials_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.materials.visual_materials_cfg import (
     PreviewSurfaceCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.schemas.schemas_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (
     CollisionPropertiesCfg,
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.shapes_cfg import CuboidCfg
-from robo_orchard_sim.models.assets.rigid_object import RigidObjectCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.shapes_cfg import CuboidCfg
+from robo_orchard_sim.ext.models.assets.rigid_object import RigidObjectCfg
 
 INACTIVE_POOL_STORAGE_NAME = "inactive_pool_storage"
 INACTIVE_POOL_STORAGE_PRIM_PATH = "/World/inactive_pool_storage"
