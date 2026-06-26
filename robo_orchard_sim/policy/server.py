@@ -164,15 +164,10 @@ def _resolve_observation_fields(remote_policy_type: str) -> dict[str, Any]:
             from robo_orchard_sim.policy.openpi.adapter import OpenPiAdapter
 
             return OpenPiAdapter.required_observation_fields()
-        case "holobrain":
-            from robo_orchard_sim.policy.holobrain.adapter import (
-                HolobrainAdapter,
-            )
-
-            return HolobrainAdapter.required_observation_fields()
         case _:
             raise ValueError(
-                f"Unsupported remote policy type: {remote_policy_type}"
+                "Profiled remote observation extraction is unsupported "
+                f"for remote policy type: {remote_policy_type}"
             )
 
 

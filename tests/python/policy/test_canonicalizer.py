@@ -16,8 +16,10 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
+import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import torch
@@ -36,6 +38,27 @@ from robo_orchard_sim.policy.canonicalizer import (
     canonicalize_observations,
     validate_policy_compatibility,
 )
+
+_FRANKA_SCHEMA_PATH = (
+    _REPO_ROOT
+    / "robo_orchard_sim"
+    / "orchard_env"
+    / "embodiments"
+    / "franka_panda"
+    / "schema.py"
+)
+
+
+def _load_franka_schema_module() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "franka_panda_schema_for_test",
+        _FRANKA_SCHEMA_PATH,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class _Sensor:
@@ -140,6 +163,29 @@ def _build_franka_raw_observation() -> dict[str, object]:
     }
 
 
+def _build_franka_droid_raw_observation() -> dict[str, object]:
+    rgb = torch.ones((1, 2, 2, 3), dtype=torch.uint8)
+    depth = torch.ones((1, 2, 2), dtype=torch.float32)
+    intrinsic = torch.eye(3, dtype=torch.float32).unsqueeze(0)
+    sensor = {
+        "rgb": _Sensor(rgb, intrinsic_matrices=intrinsic, pose=object()),
+        "depth": _Sensor(depth),
+    }
+    return {
+        "/camera": {
+            "wrist_camera_term": sensor,
+            "ext1_camera_term": sensor,
+            "ext2_camera_term": sensor,
+        },
+        "/robot": {
+            "joint_position": torch.tensor(
+                [[1, 2, 3, 4, 5, 6, 7, 0.1, 0.1]],
+                dtype=torch.float32,
+            ),
+        },
+    }
+
+
 def test_canonicalize_observations_given_schema_maps_expected_slots() -> None:
     canonical = canonicalize_observations(
         observations=_build_raw_observation(),
@@ -181,6 +227,21 @@ def test_canonicalize_observations_single_arm_preserves_physical_joints() -> (
         canonical.manipulators["single_arm"]["joint_position"],
         torch.tensor([[1, 2, 3, 4, 5, 6, 7, 0.1, 0.1]], dtype=torch.float32),
     )
+
+
+def test_franka_schema_droid_camera_terms_maps_expected_slots() -> None:
+    franka_schema = _load_franka_schema_module()
+    canonical = canonicalize_observations(
+        observations=_build_franka_droid_raw_observation(),
+        instruction="pick apple",
+        schema=franka_schema.build_franka_panda_policy_binding_schema(
+            "franka_panda"
+        ),
+    )
+
+    assert "wrist_camera" in canonical.cameras
+    assert "ext1_camera" in canonical.cameras
+    assert "ext2_camera" in canonical.cameras
 
 
 @pytest.mark.parametrize(

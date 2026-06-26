@@ -10,11 +10,12 @@ logging_tag: null
 api_token: null
 language_key: annotation.task_index
 # GR00T video key -> canonical camera slot (franka_panda DROID cams).
-# Model keys ext1/ext2/wrist_camera -> franka schema slots base/right_wrist/wrist.
+# Model keys ext1_camera/ext2_camera/wrist_camera map to schema slots
+# with the same names.
 video_map:
-  ext1_camera: base
-  ext2_camera: right_wrist
-  wrist_camera: wrist
+  ext1_camera: ext1_camera
+  ext2_camera: ext2_camera
+  wrist_camera: wrist_camera
 # canonical manipulator slot -> GR00T arm/gripper keys (absolute targets).
 # franka_panda single-arm mapping (model state/action keys joint_pos/gripper_pos).
 arms:

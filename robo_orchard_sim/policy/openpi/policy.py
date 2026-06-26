@@ -110,6 +110,7 @@ def create_openpi_policy(cfg: "OpenPiPolicyCfg") -> Any:
             "OpenPi model_dir must be set in the config or via "
             f"{_MODEL_DIR_ENV_VAR}"
         )
+    logger.info("Resolved OpenPi model_dir: %s", model_dir)
     model = build_openpi_model_config(cfg.model)
     return create_openpi_policy_from_config(
         inference_cfg=cfg.inference,

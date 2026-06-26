@@ -15,6 +15,7 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
+import logging
 import os
 from typing import Any, TypeAlias
 
@@ -31,6 +32,7 @@ from robo_orchard_sim.contracts.policy_binding import (
 )
 from robo_orchard_sim.policy.holobrain.adapter import HolobrainAdapter
 
+logger = logging.getLogger(__name__)
 HolobrainAction: TypeAlias = UnifiedJointCommand
 _MODEL_DIR_ENV_VAR = "ROBO_ORCHARD_HOLOBRAIN_MODEL_DIR"
 
@@ -185,6 +187,7 @@ class HolobrainPolicy(PolicyMixin[CanonicalPolicyInput, HolobrainAction]):
                 "Holobrain model_dir must be set in the config or via "
                 f"{_MODEL_DIR_ENV_VAR}"
             )
+        logger.info("Resolved Holobrain model_dir: %s", model_dir)
         device = cfg.device
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"

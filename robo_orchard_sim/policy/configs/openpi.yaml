@@ -12,7 +12,9 @@ model:
   action_expert_variant: gemma_300m_lora
 inference:
   use_delta_joint_actions: true
+  delta_action_embodiment: dualarm_piperx #franka_panda
   norm_stats_name: isaac_pick_place
+  # norm_stats_name: droid
   default_prompt: null
 model_dir: null
 joint_num: 7

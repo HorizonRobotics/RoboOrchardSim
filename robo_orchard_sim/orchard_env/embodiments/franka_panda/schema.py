@@ -31,21 +31,21 @@ def build_franka_panda_policy_binding_schema(
         schema_version="1",
         embodiment_type=embodiment_type,
         camera_slots={
-            "wrist": CameraBinding(
+            "wrist_camera": CameraBinding(
                 obs_term="wrist_camera_term",
                 rgb=True,
                 depth=True,
                 intrinsic=True,
                 pose=True,
             ),
-            "base": CameraBinding(
+            "ext1_camera": CameraBinding(
                 obs_term="ext1_camera_term",
                 rgb=True,
                 depth=True,
                 intrinsic=True,
                 pose=True,
             ),
-            "right_wrist": CameraBinding(
+            "ext2_camera": CameraBinding(
                 obs_term="ext2_camera_term",
                 rgb=True,
                 depth=True,

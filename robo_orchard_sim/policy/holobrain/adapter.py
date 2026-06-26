@@ -15,7 +15,6 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -40,59 +39,6 @@ if TYPE_CHECKING:
     )
 
 
-@dataclass(frozen=True)
-class _HolobrainCameraSpec:
-    model_key: str
-    single_arm_slot: str | None
-    dual_arm_slot: str | None
-    required_for_single_arm: bool
-    required_for_dual_arm: bool
-
-    def slot_for_arm_count(self, arm_count: int) -> str | None:
-        if arm_count == 1:
-            return self.single_arm_slot
-        if arm_count == 2:
-            return self.dual_arm_slot
-        raise ValueError(
-            f"Holobrain supports only 1 or 2 arms, got {arm_count}."
-        )
-
-    def required_for_arm_count(self, arm_count: int) -> bool:
-        if arm_count == 1:
-            return self.required_for_single_arm
-        if arm_count == 2:
-            return self.required_for_dual_arm
-        raise ValueError(
-            f"Holobrain supports only 1 or 2 arms, got {arm_count}."
-        )
-
-
-# This order determines the input camera order.
-_HOLOBRAIN_CAMERA_SPECS = (
-    _HolobrainCameraSpec(
-        model_key="left",
-        single_arm_slot="wrist",
-        dual_arm_slot="left_wrist",
-        required_for_single_arm=True,
-        required_for_dual_arm=True,
-    ),
-    _HolobrainCameraSpec(
-        model_key="right",
-        single_arm_slot=None,
-        dual_arm_slot="right_wrist",
-        required_for_single_arm=False,
-        required_for_dual_arm=True,
-    ),
-    _HolobrainCameraSpec(
-        model_key="middle",
-        single_arm_slot="base",
-        dual_arm_slot="base",
-        required_for_single_arm=True,
-        required_for_dual_arm=True,
-    ),
-)
-
-
 class HolobrainAdapter:
     """Transforms sim observations to Holobrain inputs and back."""
 
@@ -108,31 +54,38 @@ class HolobrainAdapter:
         "franka_panda": np.eye(4, dtype=np.float64),
     }
 
+    _MODEL_CAMERA_SLOTS_BY_EMBODIMENT = {
+        "franka_panda": {
+            "wrist_camera": "wrist_camera",
+            "ext1_camera": "ext1_camera",
+            "ext2_camera": "ext2_camera",
+        },
+        "dualarm_piper": {
+            "left": "left_wrist",
+            "right": "right_wrist",
+            "middle": "base",
+        },
+        "dualarm_piperx": {
+            "left": "left_wrist",
+            "right": "right_wrist",
+            "middle": "base",
+        },
+    }
+
     def __init__(self, *, embodiment_type: str) -> None:
         try:
             self._t_sim_world_to_robot_base = (
                 self._T_SIM_WORLD_TO_ROBOT_BASE_BY_EMBODIMENT[embodiment_type]
             )
+            self._model_camera_slots = self._MODEL_CAMERA_SLOTS_BY_EMBODIMENT[
+                embodiment_type
+            ]
         except KeyError as exc:
             supported = tuple(self._T_SIM_WORLD_TO_ROBOT_BASE_BY_EMBODIMENT)
             raise ValueError(
                 "Unsupported Holobrain embodiment_type "
                 f"{embodiment_type!r}. Expected one of {supported}."
             ) from exc
-
-    @classmethod
-    def required_observation_fields(cls) -> dict[str, Any]:
-        return {
-            "camera_terms": ["left", "right", "middle"],
-            "include_rgb": True,
-            "include_depth": True,
-            "include_intrinsic": True,
-            "include_pose": True,
-            "robot_keys": [
-                "left_joint_position",
-                "right_joint_position",
-            ],
-        }
 
     def build_model_input(
         self,
@@ -146,8 +99,7 @@ class HolobrainAdapter:
             context="Holobrain observation",
         )
         images, depths, intrinsics, t_world2cam = self._extract_camera_inputs(
-            obs,
-            layout=layout,
+            obs
         )
         joint_state = self._build_joint_state(obs, layout=layout)
 
@@ -185,33 +137,27 @@ class HolobrainAdapter:
     def _extract_camera_inputs(
         self,
         obs: CanonicalPolicyInput,
-        *,
-        layout: CompiledActionLayout,
     ) -> tuple[dict, dict, dict, dict]:
         images = {}
         depths = {}
         intrinsics = {}
         t_world2cam = {}
-        arm_count = len(layout.manipulator_order)
 
-        for camera_spec in _HOLOBRAIN_CAMERA_SPECS:
-            camera_slot = camera_spec.slot_for_arm_count(arm_count)
-            if camera_slot is None:
-                continue
+        for model_key, camera_slot in self._model_camera_slots.items():
             if camera_slot not in obs.cameras:
                 raise ValueError(
-                    f"Holobrain requires camera slot {camera_slot!r}."
+                    f"Holobrain requires camera slot {camera_slot!r} "
+                    f"for model key {model_key!r}."
                 )
             camera_obs = obs.cameras[camera_slot]
             self._validate_camera_obs(camera_obs, camera_slot=camera_slot)
             rgb, depth, intrinsic, camera_t_world2cam = (
                 self._extract_single_camera_input(camera_obs)
             )
-            camera_key = camera_spec.model_key
-            images[camera_key] = [rgb]
-            depths[camera_key] = [depth]
-            intrinsics[camera_key] = intrinsic
-            t_world2cam[camera_key] = camera_t_world2cam
+            images[model_key] = [rgb]
+            depths[model_key] = [depth]
+            intrinsics[model_key] = intrinsic
+            t_world2cam[model_key] = camera_t_world2cam
 
         return images, depths, intrinsics, t_world2cam
 

@@ -93,8 +93,9 @@ def _build_franka_schema() -> PolicyBindingSchema:
         schema_version="1",
         embodiment_type="franka_panda",
         camera_slots={
-            "wrist": CameraBinding(obs_term="hand_camera_term"),
-            "base": CameraBinding(obs_term="static_camera_term"),
+            "wrist_camera": CameraBinding(obs_term="wrist_camera_term"),
+            "ext1_camera": CameraBinding(obs_term="ext1_camera_term"),
+            "ext2_camera": CameraBinding(obs_term="ext2_camera_term"),
         },
         manipulator_slots={
             "single_arm": ManipulatorBinding(
@@ -192,8 +193,9 @@ def _build_single_arm_obs() -> CanonicalPolicyInput:
     }
     return CanonicalPolicyInput(
         cameras={
-            "wrist": camera_output,
-            "base": camera_output,
+            "wrist_camera": camera_output,
+            "ext1_camera": camera_output,
+            "ext2_camera": camera_output,
         },
         manipulators={
             "single_arm": {
@@ -257,14 +259,6 @@ def test_build_model_input_valid_observation_returns_expected_result(
     assert np.isclose(model_input.history_joint_state[0, 13], -0.4)
 
 
-def test_required_observation_fields_camera_terms_returns_adapter_order() -> (
-    None
-):
-    required_fields = HolobrainAdapter.required_observation_fields()
-
-    assert required_fields["camera_terms"] == ["left", "right", "middle"]
-
-
 def test_build_model_input_reordered_schema_uses_adapter_camera_slots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -297,10 +291,26 @@ def test_build_model_input_single_arm_observation_returns_expected_result(
     model_input = adapter.build_model_input(_build_single_arm_obs())
 
     assert model_input.instruction == "pick apple"
-    assert set(model_input.image) == {"left", "middle"}
-    assert set(model_input.depth) == {"left", "middle"}
-    assert set(model_input.intrinsic) == {"left", "middle"}
-    assert set(model_input.t_world2cam) == {"left", "middle"}
+    assert set(model_input.image) == {
+        "wrist_camera",
+        "ext1_camera",
+        "ext2_camera",
+    }
+    assert set(model_input.depth) == {
+        "wrist_camera",
+        "ext1_camera",
+        "ext2_camera",
+    }
+    assert set(model_input.intrinsic) == {
+        "wrist_camera",
+        "ext1_camera",
+        "ext2_camera",
+    }
+    assert set(model_input.t_world2cam) == {
+        "wrist_camera",
+        "ext1_camera",
+        "ext2_camera",
+    }
     assert model_input.history_joint_state.shape == (1, 8)
     assert np.isclose(model_input.history_joint_state[0, 7], 0.2)
 

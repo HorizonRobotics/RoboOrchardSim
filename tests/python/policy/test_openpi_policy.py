@@ -829,3 +829,28 @@ def test_build_openpi_transform_pipeline_given_delta_actions_wraps(
     assert runtime.use_quantile_norm is True
     assert runtime.data_transforms.inputs == [("delta", (6, -1, 6, -1))]
     assert runtime.data_transforms.outputs == [("absolute", (6, -1, 6, -1))]
+
+
+def test_build_openpi_transform_pipeline_franka_delta_actions_uses_arm_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_openpi_runtime(monkeypatch)
+    model = build_openpi_model_config(
+        OpenPiModelConfig(
+            model_type="pi05",
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        )
+    )
+
+    runtime = build_openpi_transform_pipeline(
+        OpenPiInferenceConfig(
+            use_delta_joint_actions=True,
+            norm_stats_name="fake_asset",
+            delta_action_embodiment="franka_panda",
+        ),
+        model,
+    )
+
+    assert runtime.data_transforms.inputs == [("delta", (7, -1))]
+    assert runtime.data_transforms.outputs == [("absolute", (7, -1))]

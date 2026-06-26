@@ -67,6 +67,14 @@ class OpenPiInferenceConfig(BaseModel):
     use_delta_joint_actions: bool = False
     norm_stats_name: str
     default_prompt: str | None = None
+    delta_action_embodiment: (
+        Literal[
+            "dualarm_piper",
+            "dualarm_piperx",
+            "franka_panda",
+        ]
+        | None
+    ) = None
 
 
 def build_openpi_model_config(model_cfg: OpenPiModelConfig) -> Any:
@@ -94,7 +102,9 @@ def build_openpi_transform_pipeline(
 
     data_transforms = transforms.Group()
     if inference_cfg.use_delta_joint_actions:
-        delta_action_mask = transforms.make_bool_mask(6, -1, 6, -1)
+        delta_action_mask = transforms.make_bool_mask(
+            *_delta_action_mask_args(inference_cfg)
+        )
         data_transforms = data_transforms.push(
             inputs=[transforms.DeltaActions(delta_action_mask)],
             outputs=[transforms.AbsoluteActions(delta_action_mask)],
@@ -104,6 +114,19 @@ def build_openpi_transform_pipeline(
         model_transforms=_model_transforms(model),
         use_quantile_norm=getattr(model.model_type, "name", model.model_type)
         != "PI0",
+    )
+
+
+def _delta_action_mask_args(
+    inference_cfg: OpenPiInferenceConfig,
+) -> tuple[int, ...]:
+    embodiment = inference_cfg.delta_action_embodiment
+    if embodiment == "franka_panda":
+        return (7, -1)
+    if embodiment in {"dualarm_piper", "dualarm_piperx", None}:
+        return (6, -1, 6, -1)
+    raise ValueError(
+        f"Unsupported OpenPI delta action embodiment: {embodiment!r}"
     )
 
 
