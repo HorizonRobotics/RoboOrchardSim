@@ -124,3 +124,15 @@ python3 examples/manipulation-app/scripts/scm/run_multi_task_synthesis.py \
 Output is written under `--output-root-dir`, including group summaries, copied
 configs, record paths, and mcap path lists.
 
+## Cluster Policy Evaluation
+
+Submit:
+
+```bash
+RoboOrchardJob-AIDISubmit submit_from_config \
+  --config examples/manipulation-app/scripts/scm/submit_eval_policy.json
+```
+
+Keep `gpu_per_worker` (submit JSON), `--gpus` (cmd), and the number of
+tasks in the eval-config consistent — one GPU per task.
+

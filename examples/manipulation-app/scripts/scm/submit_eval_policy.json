@@ -1,0 +1,34 @@
+{
+    "job_name": "eval_policy",
+    "workspace_folder": "workspace_to_submit",
+    "docker_image": "hub.hobot.cc/auto/robot_lab/mengao.zhao:ubuntu22.04-gcc11.4-py3.11-cuda12.8-isaac_lab-v2.0.2-sem-ext-v0.2",
+    "input_bucket": "robot_lab,robot_lab2",
+    "output_bucket": "robot_lab,robot_lab2",
+    "num_workers": 1,
+    "gpu_per_worker": 3,
+    "wall_time": 7200,
+    "cmd": [
+        "export PYTHONPATH=${WORKING_PATH}/robo_orchard_sim:$PYTHONPATH",
+        "export PYTHONPATH=${WORKING_PATH}:$PYTHONPATH",
+        "echo $PYTHONPATH",
+        "export NV_ASSET_ROOT_DIR=/horizon-bucket/robot_lab/assets/NVIDIA/Assets/Isaac/4.1",
+        "echo $NV_ASSET_ROOT_DIR",
+        "pip install msgpack-numpy",
+        "output_dir=/job_data/eval_result",
+        "mkdir -p ${output_dir}",
+        "cd ${WORKING_PATH} && \\",
+        "python3 examples/manipulation-app/scripts/eval_policy.py \\",
+        "    --eval-config examples/manipulation-app/configs/eval_example.yaml \\",
+        "    --output-dir ${output_dir} \\",
+        "    --gpus 0,1,2 \\",
+        "    --enable-recording"
+    ],
+    "python_launcher": "accelerate",
+    "to_upload": [
+        "robo_orchard_sim",
+        "examples"
+    ],
+    "job_password": "1227",
+    "queue_name": "project-5090-robot-lab-debug-bcloud-bj",
+    "project_id": "horizon-labs"
+}

@@ -277,17 +277,28 @@ python3 examples/manipulation-app/scripts/data_synthesis_example.py \
 
 #### Run `eval_policy.py`
 
-You can override the evaluation seed, number of episodes, maximum steps, and
-output path:
+`eval_policy.py` runs multi-task policy evaluation. The entire run —
+policy, per-task settings, splits, batch plans — is described by one
+eval-config YAML; the CLI only carries runtime knobs (output dir, GPUs,
+recording).
 
 ```bash
 python3 examples/manipulation-app/scripts/eval_policy.py \
-  --task-name place_a2b \
-  --seed 0 \
-  --episode-num 3 \
-  --max-steps 10 \
-  --output eval_result/isaac_eval/eval_result.json
+  --eval-config examples/manipulation-app/configs/eval_example.yaml \
+  --output-dir XXXXX \
+  --gpus 0,1,2,3 \
+  [--enable-recording]
 ```
+
+- `--eval-config`: eval-config YAML (`policy` / `defaults` / `tasks`).
+- `--output-dir`: top-level output directory; each task writes to
+  `<output-dir>/<task>/`, summary to `<output-dir>/summary.json`.
+- `--gpus`: comma-separated GPU ids; tasks run one per GPU and queue
+  when they exceed cards. Defaults to `CUDA_VISIBLE_DEVICES` or `0`.
+- `--enable-recording`: turn on MCAP recording for every task.
+
+See `examples/manipulation-app/configs/eval_example.yaml` for the YAML
+schema.
 
 ## License
 

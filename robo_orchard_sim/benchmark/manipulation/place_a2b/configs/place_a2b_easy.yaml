@@ -46,10 +46,10 @@ task:
         pitch: [0.0, 0.0]
         yaw: [-3.141592653589793, 3.141592653589793]
     light_reset:
-      enabled: true
+      enabled: false
       preset: default_distant_light
     texture_reset:
-      enabled: true
+      enabled: false
       preset: default_table_texture
 
 # Template consumed by AssetResolver. Top-level keys = role names

@@ -28,6 +28,12 @@ embodiment:
     right_joint7: 0.05
     right_joint8: -0.05
 
+# You can also use franka_panda embodiment for place_a2b_hard task.
+# embodiement:
+#   type: franka_panda
+#   initial_pos: [0.0, 0.0, 0.0]
+#   init_joint_noise_std: 0.05
+
 instruction:
   template: place_a2b_default
   template_mode: variants  # valid values: fixed | variants
@@ -46,10 +52,10 @@ task:
         pitch: [0.0, 0.0]
         yaw: [-3.141592653589793, 3.141592653589793]
     light_reset:
-      enabled: true
+      enabled: false
       preset: default_distant_light
     texture_reset:
-      enabled: true
+      enabled: false
       preset: default_table_texture
 
 # Template consumed by AssetResolver. Entries with an `anchor` key are

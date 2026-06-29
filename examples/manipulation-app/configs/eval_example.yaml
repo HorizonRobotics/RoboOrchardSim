@@ -1,0 +1,65 @@
+# Example eval-config for examples/manipulation-app/scripts/eval_policy.py
+#
+# Run with:
+#   python3 examples/manipulation-app/scripts/eval_policy.py \
+#       --eval-config examples/manipulation-app/configs/eval_example.yaml \
+#       --output-dir eval_result/run_001 \
+#       --gpus 0,1,2,3 \
+#       [--enable-recording]
+#
+# Embodiment support (which robot can run which task):
+#   - franka:  place_a2b_hard, spatial_pick_easy
+#   - piperx:  pick_category, pick_attribute, place_a2b_hard
+# Pick the policy `model_yaml` that matches the embodiment you want.
+
+policy:
+  model_type: dummy # Support "dummy", "groot", "holobrain", "motus" and "openpi"
+  #model_yaml: robo_orchard_sim/policy/configs/groot_franka.yaml # See robo_orchard_sim/policy/configs
+
+# Default values inherited by every task. Tasks may override any field here.
+defaults:
+  asset_root: /horizon-bucket/robot_lab/users/chaodong.huang-labs/wuwen_assets/wuwen_supply_usd_scaled_library
+  splits: /horizon-bucket/robot_lab/users/chaodong.huang-labs/wuwen_assets/wuwen_supply_usd_scaled_library/splits/wuwen_scaled_split_v1.yaml
+  episode_num: 100
+  max_steps: 300
+  seed: 100000
+
+tasks:
+  # `task_type` is required and must match a registered task name. The YAML
+  # key (e.g. `pick_attribute_color`) is the user-facing instance name used
+  # for output paths and logs. Use the same `task_type` under different keys
+  # to run one registered task multiple times with different yaml / splits.
+  pick_category:
+    task_type: pick_category
+    splits: /horizon-bucket/robot_lab/users/mengao.zhao-labs/dataset/anymove_mcap_instruction/pick_category0522_005/wuwen_scaled_split_v1_selected_seen_only.yaml
+
+  # To evaluate pick_category on unseen_instance / unseen_category, copy
+  # robo_orchard_sim/benchmark/manipulation/semantic_pick/configs/pick_category.yaml
+  # and change `asset_configs.pick.split` (and `distractors.split`) from
+  # `seen` to `unseen_instance` or `unseen_category`. Then add an entry
+  # here with a distinct YAML key and `yaml: <path/to/new.yaml>`.
+  # For example:
+  # pick_category_unseen_instance:
+  #   task_type: pick_category
+  #   yaml: <path/to/new.yaml>
+  #   splits: /horizon-bucket/robot_lab/users/mengao.zhao-labs/dataset/anymove_mcap_instruction/pick_category0522_005/wuwen_scaled_split_v1_selected_seen_only.yaml
+
+  pick_attribute_color:
+    task_type: pick_attribute
+    splits: /horizon-bucket/robot_lab/users/mengao.zhao-labs/dataset/anymove_mcap_instruction/pick_attribute_0522_2124/wuwen_scaled_split_v1_seen_instructions_only.yaml
+
+  # Same `task_type` with a different yaml / splits.
+  # pick_attribute_shape:
+  #   task_type: pick_attribute
+  #   yaml: xxxxxx
+  #   splits: /horizon-bucket/robot_lab/users/mengao.zhao-labs/dataset/anymove_mcap_instruction/pick_attribute_0522_2124/wuwen_scaled_split_v1_seen_instructions_only.yaml
+
+  place_a2b_hard:
+    task_type: place_a2b_hard
+    splits: /horizon-bucket/robot_lab/users/mengao.zhao-labs/dataset/anymove_mcap_instruction/pick_category0522_005/wuwen_scaled_split_v1_selected_seen_only.yaml
+
+  # Tasks that need multiple yamls (e.g. spatial_pick_easy) point to a batch
+  # plan JSON. `yaml` and `batch_plan` are mutually exclusive.
+  # spatial_pick_easy:
+  #   task_type: spatial_pick_easy
+  #   batch_plan: /horizon-bucket/robot_lab/users/ziang.li/workspace/anymove/spatial_pick/sch/spatial_pick_eval.json
