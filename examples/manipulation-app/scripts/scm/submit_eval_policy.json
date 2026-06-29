@@ -13,7 +13,7 @@
         "echo $PYTHONPATH",
         "export NV_ASSET_ROOT_DIR=/horizon-bucket/robot_lab/assets/NVIDIA/Assets/Isaac/4.1",
         "echo $NV_ASSET_ROOT_DIR",
-        "pip install msgpack-numpy",
+        "pip install msgpack-numpy pyzstd",
         "output_dir=/job_data/eval_result",
         "mkdir -p ${output_dir}",
         "cd ${WORKING_PATH} && \\",
