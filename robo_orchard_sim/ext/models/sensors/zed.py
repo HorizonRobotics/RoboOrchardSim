@@ -34,11 +34,11 @@ DROID_IMAGE_WIDTH = 1280
 # aperture offsets above the local validation limit, so these configs keep the
 # calibrated focal lengths and use the image center as the principal point.
 ZED_DROID_WRIST_INTRINSIC_MATRIX = [
-    732.2020874023438,
+    666.67,
     0.0,
     640.0,
     0.0,
-    732.2020874023438,
+    666.67,
     360.0,
     0.0,
     0.0,
@@ -46,11 +46,11 @@ ZED_DROID_WRIST_INTRINSIC_MATRIX = [
 ]
 
 ZED_DROID_EXT1_INTRINSIC_MATRIX = [
-    524.419677734375,
+    500.0,
     0.0,
     640.0,
     0.0,
-    524.419677734375,
+    500.0,
     360.0,
     0.0,
     0.0,

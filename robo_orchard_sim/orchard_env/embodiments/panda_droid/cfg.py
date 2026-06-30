@@ -32,7 +32,9 @@ __all__ = [
 PANDA_DROID_CFG = ArticulationCfg(
     prim_path="{ENV_REGEX_NS}/panda_droid",
     spawn=UsdFileCfg(
-        usd_path=f"{ORCHARD_ASSET}/ROBOTS/FRANKA/franka_robotiq.usd",
+        usd_path=(
+            f"{ORCHARD_ASSET}/ROBOTS/FRANKA/franka_panda_robotiq_flange.usd"
+        ),
         semantic_tags=[("class", "panda_droid")],
         activate_contact_sensors=False,
         rigid_props=RigidBodyPropertiesCfg(
@@ -41,7 +43,7 @@ PANDA_DROID_CFG = ArticulationCfg(
         ),
         articulation_props=ArticulationRootPropertiesCfg(
             enabled_self_collisions=False,
-            solver_position_iteration_count=8,
+            solver_position_iteration_count=64,
             solver_velocity_iteration_count=0,
             fix_root_link=True,
         ),
@@ -49,12 +51,12 @@ PANDA_DROID_CFG = ArticulationCfg(
     init_state=ArticulationCfg.InitialStateCfg(
         joint_pos={
             "panda_joint1": 0.0,
-            "panda_joint2": -0.569,
+            "panda_joint2": -0.6283,
             "panda_joint3": 0.0,
-            "panda_joint4": -2.3,
+            "panda_joint4": -2.5133,
             "panda_joint5": 0.0,
-            "panda_joint6": 1.97,
-            "panda_joint7": 0.741,
+            "panda_joint6": 1.8850,
+            "panda_joint7": 0.0,
             "finger_joint": 0.0,
         },
     ),
@@ -75,10 +77,9 @@ PANDA_DROID_CFG = ArticulationCfg(
         ),
         "robotiq_85_gripper": ImplicitActuatorCfg(
             joint_names_expr=["finger_joint"],
-            effort_limit_sim=5000.0,
-            velocity_limit_sim=2.0,
-            stiffness=1e4,
-            damping=1e2,
+            velocity_limit_sim=5.0,
+            stiffness=None,
+            damping=None,
         ),
     },
     soft_joint_pos_limit_factor=1.0,

@@ -37,15 +37,15 @@ PANDA_DROID_EXT1_CAMERA_CFG.prim_path = (
 )
 PANDA_DROID_EXT1_CAMERA_CFG.offset = CameraOffset(
     xyz=(
-        0.4039752945788883,
-        0.47318839256292644,
-        0.27170584157181743,
+        0.05,
+        0.57,
+        0.66,
     ),
     quat=(
-        0.18349093652008167,
-        -0.15021511934166842,
-        0.7301497053783577,
-        -0.6408181503921759,
+        0.195029,
+        -0.393059,
+        0.805121,
+        -0.399060,
     ),
 )
 
@@ -72,12 +72,12 @@ PANDA_DROID_WRIST_CAMERA_CFG.prim_path = (
     "{ENV_REGEX_NS}/panda_droid/base_link/droid_wrist_camera"
 )
 PANDA_DROID_WRIST_CAMERA_CFG.offset = CameraOffset(
-    xyz=(0.0723751, -0.02661379, 0.01563972),
+    xyz=(-0.073999, 0.030860, 0.009252),
     quat=(
-        0.10438,
-        0.700,
-        0.69959,
-        0.11683,
+        0.114662,
+        0.704006,
+        -0.692276,
+        -0.109465,
     ),
     convention="opengl",
 )
