@@ -145,13 +145,25 @@ def write_batch_plan(plan: BatchPlan, output_path: str) -> None:
 
 
 def load_batch_plan(manifest_path: str) -> BatchPlan:
-    """Load a batch plan from JSON."""
+    """Load a batch plan from JSON.
+
+    Entries in each group's ``configs`` may be absolute paths or relative
+    paths; relative paths are resolved against the manifest's directory.
+    """
+    manifest_dir = Path(manifest_path).resolve().parent
     payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+
+    def _resolve_config(entry: Any) -> str:
+        path = Path(str(entry))
+        if not path.is_absolute():
+            path = manifest_dir / path
+        return str(path.resolve())
+
     groups = [
         BatchGroup(
             group_id=str(group["group_id"]),
             seed=int(group["seed"]),
-            configs=[str(config) for config in group["configs"]],
+            configs=[_resolve_config(config) for config in group["configs"]],
         )
         for group in payload["groups"]
     ]

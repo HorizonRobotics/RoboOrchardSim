@@ -126,12 +126,37 @@ class EvalConfig:
         raise KeyError(f"unknown task {name!r}; known: {known}")
 
 
+def _expand_env(obj: Any, *, src: Path) -> Any:
+    """Recursively expand ${VAR} in string leaves of a parsed config.
+
+    Raises ``RuntimeError`` with a clear hint when a referenced env var is
+    unset, instead of silently leaving a literal ``${VAR}`` for downstream
+    file IO to fail on.
+    """
+    if isinstance(obj, str):
+        expanded = os.path.expandvars(obj)
+        if "${" in expanded:
+            raise RuntimeError(
+                f"unresolved env var in {src}: {obj!r}. "
+                "Set the variable (e.g. "
+                "`export ORCHARD_ASSET=/path/to/asset/root`) "
+                "or replace the placeholder with an absolute path."
+            )
+        return expanded
+    if isinstance(obj, dict):
+        return {k: _expand_env(v, src=src) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_env(v, src=src) for v in obj]
+    return obj
+
+
 def load_eval_config(path: str | Path) -> EvalConfig:
     """Parse and validate an eval-config YAML file."""
     src = Path(path).resolve()
     raw = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"eval config must be a mapping: {src}")
+    raw = _expand_env(raw, src=src)
 
     unknown_top = set(raw) - _TOP_LEVEL_FIELDS
     if unknown_top:

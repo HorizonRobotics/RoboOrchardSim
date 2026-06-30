@@ -53,11 +53,9 @@ NV_ISAAC_DIR = f"{NV_ASSET_ROOT_DIR}/Isaac"
 NV_ISAACLAB_DIR = f"{NV_ISAAC_DIR}/IsaacLab"
 """Path to the ``Isaac/IsaacLab`` directory on the NVIDIA Nucleus Server."""
 
-ORCHARD_NV_ISAAC_ASSET_ROOT = (
-    "/horizon-bucket/robot_lab/assets/NVIDIA/Assets/Isaac/4.1/Isaac/"
+ORCHARD_ASSET = os.getenv(
+    "ORCHARD_ASSET", "/horizon-bucket/robot_lab/assets/ROBO_ORCHARD_SIM"
 )
-
-ORCHARD_ASSET = os.getenv("ORCHARD_ASSET", "/horizon-bucket/robot_lab/assets")
 """Path to the ``ORCHARD`` directory."""
 
 SensorCfgType_co = TypeVar(

@@ -14,6 +14,7 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -409,6 +410,12 @@ class TestTextureResetTerm:
         assert kwargs["prim_path"] == "/World/env_1/Object/Looks/material_0"
 
     def test_texture_reset_changes_real_asset_look_variant_on_reset(self):
+        if not Path(MUG_VARIANTS_USD).exists():
+            pytest.skip(
+                f"mug variants USD not found at {MUG_VARIANTS_USD}; "
+                "set ORCHARD_ASSET so that "
+                "$ORCHARD_ASSET/Test_assets/mug/variants/variants.usd exists"
+            )
         env_cfg = IsaacManagerBasedEnvCfg(
             decimation=1,
             scene=_make_scene_cfg(),
