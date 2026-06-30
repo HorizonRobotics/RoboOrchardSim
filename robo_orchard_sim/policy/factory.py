@@ -62,7 +62,6 @@ def create_policy_from_model_cfg(
             model=_cfg_get(model_cfg, "model"),
             model_dir=_cfg_get(model_cfg, "model_dir"),
             logging_tag=_cfg_get(model_cfg, "logging_tag"),
-            joint_num=_cfg_get(model_cfg, "joint_num", 7),
             valid_action_step=_cfg_get(model_cfg, "valid_action_step", 50),
             enable_intrinsic_remap=_cfg_get(
                 model_cfg,
@@ -70,6 +69,11 @@ def create_policy_from_model_cfg(
                 True,
             ),
         )
+        resolved_embodiment_type = _cfg_get_non_null(
+            model_cfg, "embodiment_type", embodiment_type
+        )
+        if resolved_embodiment_type is not None:
+            openpi_kwargs["embodiment_type"] = resolved_embodiment_type
         inference = _cfg_get(model_cfg, "inference")
         if inference is not None:
             openpi_kwargs["inference"] = inference

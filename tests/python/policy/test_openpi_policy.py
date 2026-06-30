@@ -86,9 +86,9 @@ def _build_franka_schema() -> PolicyBindingSchema:
         schema_version="1",
         embodiment_type="franka_panda",
         camera_slots={
-            "wrist": CameraBinding(obs_term="wrist_camera_term"),
-            "base": CameraBinding(obs_term="ext1_camera_term"),
-            "right_wrist": CameraBinding(obs_term="ext2_camera_term"),
+            "wrist_camera": CameraBinding(obs_term="wrist_camera_term"),
+            "ext1_camera": CameraBinding(obs_term="ext1_camera_term"),
+            "ext2_camera": CameraBinding(obs_term="ext2_camera_term"),
         },
         manipulator_slots={
             "single_arm": ManipulatorBinding(
@@ -118,6 +118,18 @@ def _camera_cfg(size: tuple[int, int]) -> dict[str, Any]:
             [0.0, 0.0, 0.0, 1.0],
         ],
     }
+
+
+def _build_dualarm_adapter() -> OpenPiAdapter:
+    return OpenPiAdapter(
+        embodiment_type="dualarm_piper",
+    )
+
+
+def _build_franka_adapter() -> OpenPiAdapter:
+    return OpenPiAdapter(
+        embodiment_type="franka_panda",
+    )
 
 
 def test_openpi_policy_requirement_declares_broad_contract() -> None:
@@ -184,9 +196,9 @@ def _build_single_arm_obs(batch_size: int = 1) -> CanonicalPolicyInput:
     camera_obs = {"rgb": _Sensor(rgb, intrinsic)}
     return CanonicalPolicyInput(
         cameras={
-            "wrist": camera_obs,
-            "right_wrist": camera_obs,
-            "base": camera_obs,
+            "wrist_camera": camera_obs,
+            "ext1_camera": camera_obs,
+            "ext2_camera": camera_obs,
         },
         manipulators={
             "single_arm": {
@@ -515,7 +527,7 @@ def _build_openpi_policy(
 def test_openpi_adapter_build_action_sequence_given_valid_actions_splits() -> (
     None
 ):
-    adapter = OpenPiAdapter(joint_num=7)
+    adapter = _build_dualarm_adapter()
     actions = torch.tensor(
         [
             [1, 2, 3, 4, 5, 6, 0.4, 7, 8, 9, 10, 11, 12, -0.2],
@@ -553,7 +565,7 @@ def test_openpi_adapter_build_action_sequence_given_valid_actions_splits() -> (
 def test_openpi_adapter_build_model_input_given_valid_obs_returns_input() -> (
     None
 ):
-    adapter = OpenPiAdapter(joint_num=7)
+    adapter = _build_dualarm_adapter()
 
     model_input = adapter.build_model_input(_build_obs())
 
@@ -590,7 +602,7 @@ def test_openpi_adapter_build_model_input_given_valid_obs_returns_input() -> (
 
 
 def test_openpi_adapter_build_model_input_missing_instruction_raises() -> None:
-    adapter = OpenPiAdapter(joint_num=7)
+    adapter = _build_dualarm_adapter()
     obs = _build_obs()
     obs = obs.model_copy(update={"instruction": None})
 
@@ -599,7 +611,7 @@ def test_openpi_adapter_build_model_input_missing_instruction_raises() -> None:
 
 
 def test_openpi_adapter_single_arm_obs_returns_model_input() -> None:
-    adapter = OpenPiAdapter(joint_num=8)
+    adapter = _build_franka_adapter()
 
     model_input = adapter.build_model_input(_build_single_arm_obs())
 
@@ -617,7 +629,7 @@ def test_openpi_adapter_single_arm_obs_returns_model_input() -> None:
 
 
 def test_openpi_adapter_dualarm_missing_right_camera_raises() -> None:
-    adapter = OpenPiAdapter(joint_num=7)
+    adapter = _build_dualarm_adapter()
     obs = _build_obs()
     del obs.cameras["right_wrist"]
 
@@ -626,16 +638,16 @@ def test_openpi_adapter_dualarm_missing_right_camera_raises() -> None:
 
 
 def test_openpi_adapter_single_arm_missing_base_camera_raises() -> None:
-    adapter = OpenPiAdapter(joint_num=8)
+    adapter = _build_franka_adapter()
     obs = _build_single_arm_obs()
-    del obs.cameras["base"]
+    del obs.cameras["ext1_camera"]
 
     with pytest.raises(ValueError, match="requires canonical camera slot"):
         adapter.build_model_input(obs)
 
 
 def test_openpi_adapter_missing_manipulator_slot_raises_value_error() -> None:
-    adapter = OpenPiAdapter(joint_num=7)
+    adapter = _build_dualarm_adapter()
     obs = _build_obs()
     del obs.manipulators["right_arm"]
 
@@ -694,6 +706,7 @@ def test_openpi_policy_act_given_single_arm_obs_returns_single_arm_command(
             action_expert_variant="gemma_300m",
         ),
         inference=OpenPiInferenceConfig(norm_stats_name="pi05"),
+        embodiment_type="franka_panda",
         model_dir="/tmp/pi-checkpoint",
         joint_num=8,
     )
@@ -727,9 +740,9 @@ def test_create_policy_from_model_cfg_openpi_camera_cfg_returns_cfg() -> None:
             "valid_action_step": 3,
             "enable_intrinsic_remap": False,
             "cameras": {
-                "left": _camera_cfg((28, 28)),
-                "right": _camera_cfg((28, 28)),
-                "middle": _camera_cfg((56, 28)),
+                "left_wrist_0_rgb": _camera_cfg((28, 28)),
+                "right_wrist_0_rgb": _camera_cfg((28, 28)),
+                "base_0_rgb": _camera_cfg((56, 28)),
             },
         }
     )
@@ -738,7 +751,7 @@ def test_create_policy_from_model_cfg_openpi_camera_cfg_returns_cfg() -> None:
     assert policy_cfg.model.model_type == "pi05"
     assert policy_cfg.valid_action_step == 3
     assert policy_cfg.enable_intrinsic_remap is False
-    assert policy_cfg.cameras["middle"].target_size == (56, 28)
+    assert policy_cfg.cameras["base_0_rgb"].target_size == (56, 28)
 
 
 def test_create_openpi_policy_from_config_given_default_prompt_injects_once(
@@ -760,6 +773,7 @@ def test_create_openpi_policy_from_config_given_default_prompt_injects_once(
         ),
         model=model,
         checkpoint_dir="/tmp/pi-checkpoint",
+        embodiment_type="dualarm_piper",
     )
 
     assert policy == "policy-instance"
@@ -819,6 +833,7 @@ def test_build_openpi_transform_pipeline_given_delta_actions_wraps(
             norm_stats_name="fake_asset",
         ),
         model,
+        embodiment_type="dualarm_piper",
     )
 
     assert runtime.model_transforms.inputs == [
@@ -847,9 +862,9 @@ def test_build_openpi_transform_pipeline_franka_delta_actions_uses_arm_mask(
         OpenPiInferenceConfig(
             use_delta_joint_actions=True,
             norm_stats_name="fake_asset",
-            delta_action_embodiment="franka_panda",
         ),
         model,
+        embodiment_type="franka_panda",
     )
 
     assert runtime.data_transforms.inputs == [("delta", (7, -1))]

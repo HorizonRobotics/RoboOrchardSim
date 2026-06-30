@@ -53,6 +53,7 @@ def create_openpi_policy_from_config(
     inference_cfg: OpenPiInferenceConfig,
     model: Any,
     checkpoint_dir: Path | str,
+    embodiment_type: str | None,
 ) -> Any:
     """Create an OpenPI policy from a trained checkpoint."""
     import jax.numpy as jnp
@@ -71,7 +72,16 @@ def create_openpi_policy_from_config(
             dtype=jnp.bfloat16,
         )
     )
-    pipeline = build_openpi_transform_pipeline(inference_cfg, model)
+    if embodiment_type is None:
+        raise ValueError(
+            "OpenPi policy creation requires embodiment_type to build "
+            "the transform pipeline"
+        )
+    pipeline = build_openpi_transform_pipeline(
+        inference_cfg,
+        model,
+        embodiment_type=embodiment_type,
+    )
     norm_stats_dir = checkpoint_dir / "assets" / inference_cfg.norm_stats_name
     logger.info("Loading OpenPi norm stats from %s", norm_stats_dir)
     norm_stats = _normalize.load(norm_stats_dir)
@@ -116,6 +126,7 @@ def create_openpi_policy(cfg: "OpenPiPolicyCfg") -> Any:
         inference_cfg=cfg.inference,
         model=model,
         checkpoint_dir=model_dir,
+        embodiment_type=cfg.embodiment_type,
     )
 
 
@@ -135,12 +146,9 @@ class OpenPiPolicy(PolicyMixin[CanonicalPolicyInput, OpenPiAction]):
             observation_space=observation_space,
             action_space=action_space,
         )
-        self._adapter = OpenPiAdapter(
-            joint_num=cfg.joint_num,
-            cameras=cfg.cameras,
-            enable_intrinsic_remap=cfg.enable_intrinsic_remap,
-        )
-        self._policy = self._load_policy(cfg)
+        self._embodiment_type: str | None = cfg.embodiment_type
+        self._adapter: OpenPiAdapter | None = None
+        self._policy: Any | None = None
         self._cached_actions: list[OpenPiAction] = []
         self._cached_index = 0
 
@@ -184,10 +192,12 @@ class OpenPiPolicy(PolicyMixin[CanonicalPolicyInput, OpenPiAction]):
         self,
         obs: CanonicalPolicyInput,
     ) -> list[OpenPiAction]:
-        model_input = self._adapter.build_model_input(obs)
-        result = self._policy.infer(model_input)
+        adapter = self._ensure_adapter(obs)
+        policy = self._ensure_policy(obs)
+        model_input = adapter.build_model_input(obs)
+        result = policy.infer(model_input)
         _, device = self._observation_batch_info(obs)
-        return self._adapter.build_action_sequence(
+        return adapter.build_action_sequence(
             result["actions"],
             obs,
             device=device,
@@ -223,6 +233,66 @@ class OpenPiPolicy(PolicyMixin[CanonicalPolicyInput, OpenPiAction]):
             min_manipulator_count=1,
             require_instruction=True,
         )
+
+    def _build_adapter(self, *, embodiment_type: str) -> OpenPiAdapter:
+        return OpenPiAdapter(
+            embodiment_type=embodiment_type,
+            cameras=self.cfg.cameras,
+            enable_intrinsic_remap=self.cfg.enable_intrinsic_remap,
+        )
+
+    def _ensure_adapter(self, obs: CanonicalPolicyInput) -> OpenPiAdapter:
+        layout = obs.action_layout
+        runtime_embodiment_type = getattr(layout, "embodiment_type", None)
+        if not isinstance(runtime_embodiment_type, str):
+            raise ValueError(
+                "OpenPi observation requires action_layout with "
+                "embodiment_type"
+            )
+        if self._embodiment_type is None:
+            self._embodiment_type = runtime_embodiment_type
+            self._adapter = self._build_adapter(
+                embodiment_type=runtime_embodiment_type
+            )
+            return self._adapter
+        if runtime_embodiment_type != self._embodiment_type:
+            raise ValueError(
+                "OpenPiPolicy is already bound to embodiment_type "
+                f"{self._embodiment_type!r}, got "
+                f"{runtime_embodiment_type!r}."
+            )
+        if self._adapter is None:
+            self._adapter = self._build_adapter(
+                embodiment_type=self._embodiment_type
+            )
+        return self._adapter
+
+    def _ensure_policy(self, obs: CanonicalPolicyInput) -> Any:
+        layout = obs.action_layout
+        runtime_embodiment_type = getattr(layout, "embodiment_type", None)
+        if not isinstance(runtime_embodiment_type, str):
+            raise ValueError(
+                "OpenPi observation requires action_layout with "
+                "embodiment_type"
+            )
+        if self._embodiment_type is None:
+            self._embodiment_type = runtime_embodiment_type
+        elif runtime_embodiment_type != self._embodiment_type:
+            raise ValueError(
+                "OpenPiPolicy is already bound to embodiment_type "
+                f"{self._embodiment_type!r}, got "
+                f"{runtime_embodiment_type!r}."
+            )
+        if self._policy is None:
+            self._policy = create_openpi_policy_from_config(
+                inference_cfg=self.cfg.inference,
+                model=build_openpi_model_config(self.cfg.model),
+                checkpoint_dir=(
+                    self.cfg.model_dir or os.getenv(_MODEL_DIR_ENV_VAR)
+                ),
+                embodiment_type=self._embodiment_type,
+            )
+        return self._policy
 
     @staticmethod
     def _load_policy(cfg: "OpenPiPolicyCfg") -> Any:
@@ -263,9 +333,9 @@ class OpenPiPolicyCfg(PolicyConfig[OpenPiPolicy]):
 
     model: OpenPiModelConfig
     inference: OpenPiInferenceConfig
+    embodiment_type: str | None = None
     model_dir: str | None = None
     logging_tag: str | None = None
-    joint_num: int = 7
     valid_action_step: int | None = 50
     enable_intrinsic_remap: bool = True
     cameras: dict[str, OpenPiCameraCfg] = Field(

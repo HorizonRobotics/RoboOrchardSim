@@ -17,8 +17,6 @@
 # INTERNAL
 
 from __future__ import annotations
-from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any
 
 import cv2
@@ -45,75 +43,35 @@ DEFAULT_TARGET_INTRINSIC = [
 ]
 
 
-@dataclass(frozen=True)
-class _OpenPiCameraSpec:
-    position: str
-    model_image_key: str
-    single_arm_slot: str | None
-    dual_arm_slot: str | None
-    required_for_single_arm: bool
-    required_for_dual_arm: bool
-
-    def slot_for_arm_count(self, arm_count: int) -> str | None:
-        if arm_count == 1:
-            return self.single_arm_slot
-        if arm_count == 2:
-            return self.dual_arm_slot
-        raise ValueError(f"OpenPi supports only 1 or 2 arms, got {arm_count}.")
-
-    def required_for_arm_count(self, arm_count: int) -> bool:
-        if arm_count == 1:
-            return self.required_for_single_arm
-        if arm_count == 2:
-            return self.required_for_dual_arm
-        raise ValueError(f"OpenPi supports only 1 or 2 arms, got {arm_count}.")
-
-
-_OPENPI_CAMERA_SPECS = (
-    _OpenPiCameraSpec(
-        position="left",
-        model_image_key="left_wrist_0_rgb",
-        single_arm_slot="wrist",
-        dual_arm_slot="left_wrist",
-        required_for_single_arm=True,
-        required_for_dual_arm=True,
-    ),
-    _OpenPiCameraSpec(
-        position="right",
-        model_image_key="right_wrist_0_rgb",
-        single_arm_slot="right_wrist",
-        dual_arm_slot="right_wrist",
-        required_for_single_arm=True,
-        required_for_dual_arm=True,
-    ),
-    _OpenPiCameraSpec(
-        position="middle",
-        model_image_key="base_0_rgb",
-        single_arm_slot="base",
-        dual_arm_slot="base",
-        required_for_single_arm=True,
-        required_for_dual_arm=True,
-    ),
-)
-OPENPI_IMAGE_KEYS = tuple(
-    spec.model_image_key for spec in _OPENPI_CAMERA_SPECS
+_OPENPI_MODEL_CAMERA_SLOTS_BY_EMBODIMENT = {
+    "franka_panda": {
+        "left_wrist_0_rgb": "wrist_camera",
+        "right_wrist_0_rgb": "ext2_camera",
+        "base_0_rgb": "ext1_camera",
+    },
+    "dualarm_piper": {
+        "left_wrist_0_rgb": "left_wrist",
+        "right_wrist_0_rgb": "right_wrist",
+        "base_0_rgb": "base",
+    },
+    "dualarm_piperx": {
+        "left_wrist_0_rgb": "left_wrist",
+        "right_wrist_0_rgb": "right_wrist",
+        "base_0_rgb": "base",
+    },
+}
+OPENPI_IMAGE_KEYS = (
+    "left_wrist_0_rgb",
+    "right_wrist_0_rgb",
+    "base_0_rgb",
 )
 DEFAULT_CAMERAS = {
-    spec.position: {
+    model_image_key: {
         "target_size": (392, 252),
         "target_intrinsic": [row[:] for row in DEFAULT_TARGET_INTRINSIC],
     }
-    for spec in _OPENPI_CAMERA_SPECS
+    for model_image_key in OPENPI_IMAGE_KEYS
 }
-
-
-@dataclass(frozen=True)
-class _OpenPiCameraMapping:
-    slots_by_position: dict[str, str | None]
-    arm_count: int
-
-    def slot_for(self, spec: _OpenPiCameraSpec) -> str | None:
-        return self.slots_by_position[spec.position]
 
 
 class OpenPiAdapter:
@@ -139,11 +97,22 @@ class OpenPiAdapter:
 
     def __init__(
         self,
-        joint_num: int = 7,
+        *,
+        embodiment_type: str,
         cameras: dict[str, Any] | None = None,
         enable_intrinsic_remap: bool = True,
     ) -> None:
-        del joint_num
+        self._embodiment_type = embodiment_type
+        try:
+            self._model_camera_slots = (
+                _OPENPI_MODEL_CAMERA_SLOTS_BY_EMBODIMENT[embodiment_type]
+            )
+        except KeyError as exc:
+            supported = tuple(_OPENPI_MODEL_CAMERA_SLOTS_BY_EMBODIMENT)
+            raise ValueError(
+                "Unsupported OpenPi embodiment_type "
+                f"{embodiment_type!r}. Expected one of {supported}."
+            ) from exc
         self._enable_intrinsic_remap = enable_intrinsic_remap
         self._camera_resize = (
             self._build_camera_resize(cameras)
@@ -159,14 +128,7 @@ class OpenPiAdapter:
             layout=layout,
             context="OpenPi observation",
         )
-        camera_mapping = self._compile_camera_mapping(
-            arm_count=len(layout.manipulator_order),
-            available_camera_slots=obs.cameras.keys(),
-        )
-        images, intrinsics = self._extract_camera_inputs(
-            obs,
-            camera_mapping=camera_mapping,
-        )
+        images, intrinsics = self._extract_camera_inputs(obs)
         joint_state = self._build_joint_state(obs, layout=layout)
         images_for_model = (
             self._resize_images(images, intrinsics)
@@ -175,11 +137,8 @@ class OpenPiAdapter:
         )
         hist_joint_state = self._build_hist_joint_state(joint_state)
         return {
-            "image": self._build_openpi_images(
-                images_for_model,
-                camera_mapping=camera_mapping,
-            ),
-            "image_mask": self._build_openpi_image_masks(camera_mapping),
+            "image": self._build_openpi_images(images_for_model),
+            "image_mask": self._build_openpi_image_masks(images),
             "state": hist_joint_state[0, :],
             "prompt": instruction,
         }
@@ -205,31 +164,23 @@ class OpenPiAdapter:
     def _extract_camera_inputs(
         self,
         obs: CanonicalPolicyInput,
-        *,
-        camera_mapping: _OpenPiCameraMapping,
     ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         images: dict[str, np.ndarray] = {}
         intrinsics: dict[str, np.ndarray] = {}
-        for spec in _OPENPI_CAMERA_SPECS:
-            slot = camera_mapping.slot_for(spec)
-            if slot is None:
-                continue
-            if (
-                spec.required_for_arm_count(camera_mapping.arm_count)
-                and slot not in obs.cameras
-            ):
+        for model_image_key, camera_slot in self._model_camera_slots.items():
+            if camera_slot not in obs.cameras:
                 raise ValueError(
-                    f"OpenPi requires canonical camera slot {slot!r}."
+                    f"OpenPi requires canonical camera slot {camera_slot!r}."
                 )
-            camera_obs = obs.cameras[slot]
+            camera_obs = obs.cameras[camera_slot]
             rgb_sensor = camera_obs["rgb"]
-            images[spec.position] = rgb_sensor.sensor_data[0].cpu().numpy()
+            images[model_image_key] = rgb_sensor.sensor_data[0].cpu().numpy()
 
             intrinsic = np.eye(4, dtype=np.float64)
             intrinsic[:3, :3] = (
                 rgb_sensor.intrinsic_matrices[0].cpu().numpy()[:3, :3]
             )
-            intrinsics[spec.position] = intrinsic
+            intrinsics[model_image_key] = intrinsic
         return images, intrinsics
 
     def _build_camera_resize(
@@ -238,17 +189,17 @@ class OpenPiAdapter:
     ) -> dict[str, dict[str, Any]]:
         cameras = cameras or DEFAULT_CAMERAS
         resize_params = {}
-        for spec in _OPENPI_CAMERA_SPECS:
-            if spec.position not in cameras:
+        for model_image_key in OPENPI_IMAGE_KEYS:
+            if model_image_key not in cameras:
                 raise ValueError(
-                    f"Missing OpenPi camera resize config: {spec.position}"
+                    f"Missing OpenPi camera resize config: {model_image_key}"
                 )
-            camera_cfg = cameras[spec.position]
+            camera_cfg = cameras[model_image_key]
             target_size = tuple(self._cfg_get(camera_cfg, "target_size"))
             target_intrinsic = self._build_target_intrinsic(
                 self._cfg_get(camera_cfg, "target_intrinsic")
             )
-            resize_params[spec.position] = {
+            resize_params[model_image_key] = {
                 "target_size": target_size,
                 "target_intrinsic": target_intrinsic,
                 "target_points": self._build_target_points(
@@ -353,37 +304,26 @@ class OpenPiAdapter:
     def _build_openpi_images(
         self,
         images: dict[str, np.ndarray],
-        *,
-        camera_mapping: _OpenPiCameraMapping,
     ) -> dict[str, np.ndarray]:
         openpi_images = {}
-        for spec in _OPENPI_CAMERA_SPECS:
-            image = images.get(spec.position)
+        for model_image_key in OPENPI_IMAGE_KEYS:
+            image = images.get(model_image_key)
             if image is None:
-                if (
-                    spec.position == "right"
-                    and camera_mapping.arm_count == 1
-                    and "left" in images
-                ):
-                    image = np.zeros_like(images["left"])
-                else:
-                    target_size = DEFAULT_CAMERAS[spec.position]["target_size"]
-                    image = np.zeros(
-                        (target_size[1], target_size[0], 3),
-                        dtype=np.uint8,
-                    )
-            openpi_images[spec.model_image_key] = self._as_rgb_uint8(image)
+                target_size = DEFAULT_CAMERAS[model_image_key]["target_size"]
+                image = np.zeros(
+                    (target_size[1], target_size[0], 3),
+                    dtype=np.uint8,
+                )
+            openpi_images[model_image_key] = self._as_rgb_uint8(image)
         return openpi_images
 
     def _build_openpi_image_masks(
         self,
-        camera_mapping: _OpenPiCameraMapping,
+        images: dict[str, np.ndarray],
     ) -> dict[str, np.bool_]:
         return {
-            spec.model_image_key: np.bool_(
-                camera_mapping.slot_for(spec) is not None
-            )
-            for spec in _OPENPI_CAMERA_SPECS
+            model_image_key: np.bool_(model_image_key in images)
+            for model_image_key in OPENPI_IMAGE_KEYS
         }
 
     @staticmethod
@@ -506,35 +446,3 @@ class OpenPiAdapter:
                     cursor += manipulator.gripper_policy_dim
             sequence.append(UnifiedJointCommand.merge(*commands))
         return sequence
-
-    @staticmethod
-    def _compile_camera_mapping(
-        *,
-        arm_count: int,
-        available_camera_slots: Iterable[str],
-    ) -> _OpenPiCameraMapping:
-        available = set(available_camera_slots)
-        slots_by_position = {}
-        for spec in _OPENPI_CAMERA_SPECS:
-            slot = spec.slot_for_arm_count(arm_count)
-            slots_by_position[spec.position] = (
-                OpenPiAdapter._require_camera_slot(available, slot)
-                if slot is not None
-                else None
-            )
-        return _OpenPiCameraMapping(
-            slots_by_position=slots_by_position,
-            arm_count=arm_count,
-        )
-
-    @staticmethod
-    def _require_camera_slot(
-        available_camera_slots: set[str],
-        slot: str,
-    ) -> str:
-        if slot not in available_camera_slots:
-            raise ValueError(
-                f"OpenPi requires canonical camera slot {slot!r}, "
-                f"got {tuple(sorted(available_camera_slots))}."
-            )
-        return slot

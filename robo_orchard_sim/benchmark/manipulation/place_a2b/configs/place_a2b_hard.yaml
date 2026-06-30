@@ -29,7 +29,7 @@ embodiment:
     right_joint8: -0.05
 
 # You can also use franka_panda embodiment for place_a2b_hard task.
-# embodiement:
+# embodiment:
 #   type: franka_panda
 #   initial_pos: [0.0, 0.0, 0.0]
 #   init_joint_noise_std: 0.05

@@ -12,31 +12,29 @@ model:
   action_expert_variant: gemma_300m_lora
 inference:
   use_delta_joint_actions: true
-  delta_action_embodiment: dualarm_piperx #franka_panda
   norm_stats_name: isaac_pick_place
   # norm_stats_name: droid
   default_prompt: null
 model_dir: null
-joint_num: 7
 valid_action_step: 50
 logging_tag: openpi_example
 enable_intrinsic_remap: true
 cameras:
-  left:
+  left_wrist_0_rgb:
     target_size: [392, 252]
     target_intrinsic:
       - [290.0, 0.0, 196.0, 0.0]
       - [0.0, 310.0, 126.0, 0.0]
       - [0.0, 0.0, 1.0, 0.0]
       - [0.0, 0.0, 0.0, 1.0]
-  right:
+  right_wrist_0_rgb:
     target_size: [392, 252]
     target_intrinsic:
       - [290.0, 0.0, 196.0, 0.0]
       - [0.0, 310.0, 126.0, 0.0]
       - [0.0, 0.0, 1.0, 0.0]
       - [0.0, 0.0, 0.0, 1.0]
-  middle:
+  base_0_rgb:
     target_size: [392, 252]
     target_intrinsic:
       - [290.0, 0.0, 196.0, 0.0]
