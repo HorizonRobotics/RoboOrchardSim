@@ -17,7 +17,6 @@
 # INTERNAL
 
 from __future__ import annotations
-import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -27,6 +26,7 @@ import torch
 from pydantic import BaseModel, Field, field_validator
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
+from robo_orchard_core.utils.logging import LoggerManager
 
 from robo_orchard_sim.contracts.policy_binding import (
     CanonicalPolicyInput,
@@ -44,7 +44,7 @@ from robo_orchard_sim.policy.openpi.openpi_config import (
     build_openpi_transform_pipeline,
 )
 
-logger = logging.getLogger(__name__)
+logger = LoggerManager().get_child(__name__)
 _MODEL_DIR_ENV_VAR = "ROBO_ORCHARD_OPENPI_MODEL_DIR"
 
 

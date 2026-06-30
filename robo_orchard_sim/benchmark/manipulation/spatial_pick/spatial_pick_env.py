@@ -17,9 +17,10 @@
 """Spatial-pick task definitions (D3) driven by upstream layout JSON."""
 
 from __future__ import annotations
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
+
+from robo_orchard_core.utils.logging import LoggerManager
 
 from robo_orchard_sim.benchmark.base import TaskDefinition
 from robo_orchard_sim.benchmark.manipulation.spatial_pick import action_plan
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
         BaseExecutorCfg,
     )
 
-logger = logging.getLogger(__name__)
+logger = LoggerManager().get_child(__name__)
 
 _DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _DIR / "configs"

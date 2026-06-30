@@ -49,6 +49,7 @@ import torch
 import yaml
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
+from robo_orchard_core.utils.logging import LoggerManager
 
 from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
 from robo_orchard_sim.contracts.policy_binding import (
@@ -57,7 +58,7 @@ from robo_orchard_sim.contracts.policy_binding import (
 )
 from robo_orchard_sim.policy.action_layout import CompiledActionLayout
 
-logger = logging.getLogger(__name__)
+logger = LoggerManager().get_child(__name__)
 
 _MAX_MSG = 200 * 1024 * 1024  # 200 MB – large enough for image payloads
 _POLICY_CONFIG_DIR = Path(__file__).resolve().parent / "configs"
@@ -912,7 +913,7 @@ if __name__ == "__main__":
         level=logging.INFO,
         format=f"%(asctime)s %(levelname)s [{logging_tag}] %(message)s",
     )
-    logging.info("model_cfg: %s", model_cfg)
+    logger.info("model_cfg: %s", model_cfg)
 
     policy = _normalize_local_policy(create_policy_from_model_cfg(model_cfg))
     server = PolicyWebsocketServer(

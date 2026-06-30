@@ -15,7 +15,6 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
-import logging
 import os
 from typing import Any, TypeAlias
 
@@ -24,6 +23,7 @@ import torch
 from pydantic import field_validator
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
+from robo_orchard_core.utils.logging import LoggerManager
 
 from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
 from robo_orchard_sim.contracts.policy_binding import (
@@ -32,7 +32,7 @@ from robo_orchard_sim.contracts.policy_binding import (
 )
 from robo_orchard_sim.policy.holobrain.adapter import HolobrainAdapter
 
-logger = logging.getLogger(__name__)
+logger = LoggerManager().get_child(__name__)
 HolobrainAction: TypeAlias = UnifiedJointCommand
 _MODEL_DIR_ENV_VAR = "ROBO_ORCHARD_HOLOBRAIN_MODEL_DIR"
 
