@@ -10,7 +10,7 @@ set -e
 : "${ASSETS_DIR:?Please set ASSETS_DIR}"
 CONTAINER_ASSETS="${CONTAINER_ASSETS:-/assets}"
 
-IMAGE="horizonrobotics/robo_orchard_sim:cuda11.8-ubuntu22.04-py3.10-isaacsim4.5.0-isaaclab2.0.2-curobo-gui"
+IMAGE="horizonrobotics/robo_orchard_sim:cuda11.8-ubuntu22.04-py3.10-isaacsim4.5.0-isaaclab2.0.2-curobo-gui-v1.0"
 
 mkdir -p "${HOST_WORKSPACE}"
 xhost +local:docker
@@ -20,8 +20,6 @@ docker run -it \
   --name "${CONTAINER_NAME}" \
   --network host \
   --shm-size=256g \
-  -e USER=root \
-  -e HOME=/root \
   -e DISPLAY=$DISPLAY \
   -e XAUTHORITY=/root/.Xauthority \
   -e OMNI_KIT_ACCEPT_EULA=YES \
@@ -29,11 +27,11 @@ docker run -it \
   -e PRIVACY_CONSENT=Y \
   -e ORCHARD_ASSET="${CONTAINER_ASSETS}" \
   -e NV_ASSET_ROOT_DIR="${CONTAINER_ASSETS}/NVIDIA/Assets/Isaac/4.1" \
-  -w /workspace \
+  -w /workspace/robo_orchard_sim \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v $HOME/.Xauthority:/root/.Xauthority:ro \
   -v $HOME/.cache:/root/.cache \
-  -v "${HOST_WORKSPACE}":/workspace:rw \
+  -v "${HOST_WORKSPACE}":/workspace/robo_orchard_sim:rw \
   -v "${ASSETS_DIR}":"${CONTAINER_ASSETS}":rw \
   "${IMAGE}" \
   /bin/bash
