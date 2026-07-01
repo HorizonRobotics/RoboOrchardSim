@@ -1,0 +1,25 @@
+{
+    "rule_base_formal_logic": "SEQ(Pick({src}), PlaceAt({src}, RightOf({dest}, table_frame)))",
+    "rule_base_natural_language": "Pick up the {src} and place it to the right of the {dest}.",
+    "operator": "SEQ",
+    "actions": ["Pick", "PlaceAt"],
+    "formal_logic": "SEQ(Pick(apple), PlaceAt(apple, RightOf(banana, table_frame)))",
+    "natural_language": "Pick up the apple and place it to the right of the banana.",
+    "spatial_task_type": "establish",
+    "spatial_relation": "right",
+    "src_objects": ["apple"],
+    "dest_object": "banana",
+
+    "position": {
+        "src": {
+            "category": "apple",
+            "position": [0.0451, 0.1068, 0.8324],
+            "rotation": [-0.666, 0.0, 0.0, 0.746]
+        },
+        "dest": {
+            "category": "banana",
+            "position": [-0.2459, -0.4237, 0.8816],
+            "rotation": [-0.305, 0.0, 0.0, 0.9524]
+        }
+    }
+}

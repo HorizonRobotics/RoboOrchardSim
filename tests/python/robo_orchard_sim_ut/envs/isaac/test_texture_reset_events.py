@@ -14,6 +14,7 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -25,27 +26,27 @@ from robo_orchard_core.envs.managers.events.event_manager import (
     EventManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import RigidObjectCfg
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import RigidObjectCfg
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.schemas.schemas_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.from_files_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.from_files import (
     UsdFileCfg,
 )
-from robo_orchard_sim.envs import (
+from robo_orchard_sim.ext.envs import (
     IsaacEnvContextManager,
     IsaacManagerBasedEnv,
     IsaacManagerBasedEnvCfg,
 )
-from robo_orchard_sim.envs.managers.events.texture_reset import (
+from robo_orchard_sim.ext.envs.managers.events.texture_reset import (
     TextureResetTerm,
     TextureResetTermCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
 
 MUG_VARIANTS_USD = (
     "/horizon-bucket/robot_lab2/assets/Test_assets/mug/variants/variants.usd"
@@ -53,7 +54,7 @@ MUG_VARIANTS_USD = (
 DEFAULT_VARIANT = "green"
 EXPECTED_RESET_VARIANTS = {"beige", "blue"}
 SELECT_USD_VARIANTS_PATCH_TARGET = (
-    "robo_orchard_sim.envs.managers.events.texture_reset."
+    "robo_orchard_sim.ext.envs.managers.events.texture_reset."
     "sim_utils.select_usd_variants"
 )
 
@@ -409,6 +410,12 @@ class TestTextureResetTerm:
         assert kwargs["prim_path"] == "/World/env_1/Object/Looks/material_0"
 
     def test_texture_reset_changes_real_asset_look_variant_on_reset(self):
+        if not Path(MUG_VARIANTS_USD).exists():
+            pytest.skip(
+                f"mug variants USD not found at {MUG_VARIANTS_USD}; "
+                "set ORCHARD_ASSET so that "
+                "$ORCHARD_ASSET/Test_assets/mug/variants/variants.usd exists"
+            )
         env_cfg = IsaacManagerBasedEnvCfg(
             decimation=1,
             scene=_make_scene_cfg(),

@@ -93,10 +93,10 @@ class _StubMessage:
 def tf_term_module(monkeypatch: pytest.MonkeyPatch):
     package_names = [
         "robo_orchard_sim",
-        "robo_orchard_sim.envs",
-        "robo_orchard_sim.envs.managers",
-        "robo_orchard_sim.envs.managers.record",
-        "robo_orchard_sim.envs.managers.record.mcap",
+        "robo_orchard_sim.ext.envs",
+        "robo_orchard_sim.ext.envs.managers",
+        "robo_orchard_sim.ext.envs.managers.record",
+        "robo_orchard_sim.ext.envs.managers.record.mcap",
         "robo_orchard_sim.utils",
     ]
     for name in package_names:
@@ -104,23 +104,23 @@ def tf_term_module(monkeypatch: pytest.MonkeyPatch):
         package.__path__ = []
         monkeypatch.setitem(sys.modules, name, package)
 
-    record_module = sys.modules["robo_orchard_sim.envs.managers.record"]
+    record_module = sys.modules["robo_orchard_sim.ext.envs.managers.record"]
     record_module.__path__ = []
     record_module.RecordTermBase = _StubRecordTermBase
     record_module.RecordTermBaseCfg = _StubRecordTermBaseCfg
 
     message_module = types.ModuleType(
-        "robo_orchard_sim.envs.managers.record.mcap.message"
+        "robo_orchard_sim.ext.envs.managers.record.mcap.message"
     )
     message_module.Message = _StubMessage
     monkeypatch.setitem(sys.modules, message_module.__name__, message_module)
 
-    env_base_module = types.ModuleType("robo_orchard_sim.envs.env_base")
+    env_base_module = types.ModuleType("robo_orchard_sim.ext.envs.env_base")
     env_base_module.IsaacEnvType_co = object
     monkeypatch.setitem(sys.modules, env_base_module.__name__, env_base_module)
 
     record_manager_module = types.ModuleType(
-        "robo_orchard_sim.envs.managers.record.record_manager"
+        "robo_orchard_sim.ext.envs.managers.record.record_manager"
     )
     record_manager_module.MsgsType = dict
     monkeypatch.setitem(
@@ -138,6 +138,7 @@ def tf_term_module(monkeypatch: pytest.MonkeyPatch):
     module_path = (
         Path(__file__).resolve().parents[4]
         / "robo_orchard_sim"
+        / "ext"
         / "envs"
         / "managers"
         / "record"

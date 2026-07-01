@@ -19,8 +19,10 @@
 from __future__ import annotations
 import hashlib
 import logging
+import os
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,14 +31,27 @@ import pyarrow.parquet as pq
 
 from robo_orchard_sim.asset_manager.registry.errors import (
     DuplicateAssetIdError,
+    MissingAabbError,
 )
 from robo_orchard_sim.asset_manager.registry.urdf_parser import (
     ParsedUrdf,
     parse_urdf_extra_info,
 )
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "5"
 INDEX_FILENAME = "asset_index.parquet"
+
+
+def _auto_default_workers() -> int:
+    """Pick a thread-pool size suited to the current machine."""
+    try:
+        cpu = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cpu = os.cpu_count() or 4
+    return max(4, min(32, cpu * 4))
+
+
+DEFAULT_WORKERS = _auto_default_workers()
 
 DEFAULT_CACHE_ROOT = Path("/tmp/.cache/robo_orchard_sim/asset_index")
 
@@ -67,9 +82,9 @@ _EMPTY_SCHEMA = pa.schema(
         ("category", pa.string()),
         ("name", pa.string()),
         ("description", pa.string()),
-        ("color", pa.string()),
-        ("shape", pa.string()),
-        ("material", pa.string()),
+        ("color", pa.list_(pa.string())),
+        ("shape", pa.list_(pa.string())),
+        ("material", pa.list_(pa.string())),
         ("real_height", pa.float64()),
         ("real_mass", pa.float64()),
         ("min_height", pa.float64()),
@@ -80,6 +95,12 @@ _EMPTY_SCHEMA = pa.schema(
         ("urdf_path", pa.string()),
         ("interaction_path", pa.string()),
         ("caption_path", pa.string()),
+        ("aabb_x_min", pa.float64()),
+        ("aabb_x_max", pa.float64()),
+        ("aabb_y_min", pa.float64()),
+        ("aabb_y_max", pa.float64()),
+        ("aabb_z_min", pa.float64()),
+        ("aabb_z_max", pa.float64()),
         ("tags", pa.list_(pa.string())),
         ("version", pa.string()),
         ("generate_time", pa.string()),
@@ -104,12 +125,30 @@ class BuildReport:
 
 
 def _find_asset_dirs(root: Path) -> list[Path]:
-    """Every dir containing <dirname>.urdf counts as an asset."""
-    dirs: list[Path] = []
-    for urdf in root.rglob("*.urdf"):
-        if urdf.stem == urdf.parent.name:
-            dirs.append(urdf.parent)
-    return sorted(dirs)
+    super_dirs: list[Path] = []
+    for domain_dir in root.iterdir():
+        if not domain_dir.is_dir():
+            continue
+        for super_dir in domain_dir.iterdir():
+            if super_dir.is_dir():
+                super_dirs.append(super_dir)
+
+    if not super_dirs:
+        return []
+
+    def walk_super(super_dir: Path) -> list[Path]:
+        return [
+            urdf.parent
+            for urdf in super_dir.glob("*/*.urdf")
+            if urdf.stem == urdf.parent.name
+        ]
+
+    n_workers = max(1, min(DEFAULT_WORKERS, len(super_dirs)))
+    asset_dirs: list[Path] = []
+    with ThreadPoolExecutor(max_workers=n_workers) as ex:
+        for batch in ex.map(walk_super, super_dirs):
+            asset_dirs.extend(batch)
+    return sorted(asset_dirs)
 
 
 def _parse_one(
@@ -143,8 +182,23 @@ def _row_from_parsed(
     parsed: ParsedUrdf,
     asset_dir: Path,
     rel: str,
+    *,
+    strict: bool = False,
 ) -> dict:
     asset_id = asset_dir.name
+    if parsed.aabb_min is None or parsed.aabb_max is None:
+        if strict:
+            raise MissingAabbError(
+                f"URDF for {asset_id} lacks <aabb>. "
+                f"Re-run the labeller (Step 2 of usd-asset-batch-labelling "
+                f"skill) to populate the field from the asset's USD."
+            )
+        aabb_x_min = aabb_x_max = None
+        aabb_y_min = aabb_y_max = None
+        aabb_z_min = aabb_z_max = None
+    else:
+        aabb_x_min, aabb_y_min, aabb_z_min = parsed.aabb_min
+        aabb_x_max, aabb_y_max, aabb_z_max = parsed.aabb_max
     return {
         "uuid": parsed.uuid,
         "asset_id": asset_id,
@@ -154,9 +208,9 @@ def _row_from_parsed(
         "category": parsed.category,
         "name": parsed.name,
         "description": parsed.description,
-        "color": parsed.color,
-        "shape": parsed.shape,
-        "material": parsed.material,
+        "color": sorted(parsed.color) if parsed.color else None,
+        "shape": sorted(parsed.shape) if parsed.shape else None,
+        "material": sorted(parsed.material) if parsed.material else None,
         "real_height": parsed.real_height,
         "real_mass": parsed.real_mass,
         "min_height": parsed.min_height,
@@ -166,20 +220,48 @@ def _row_from_parsed(
         "usd_path": str(asset_dir / f"{asset_id}.usd"),
         "urdf_path": str(asset_dir / f"{asset_id}.urdf"),
         "interaction_path": str(asset_dir / "interaction.json"),
-        "caption_path": str(asset_dir / "caption_candidates.json"),
+        "caption_path": str(
+            asset_dir / parsed.caption_link
+            if parsed.caption_link
+            else asset_dir / "caption_candidates.json"
+        ),
+        "aabb_x_min": aabb_x_min,
+        "aabb_x_max": aabb_x_max,
+        "aabb_y_min": aabb_y_min,
+        "aabb_y_max": aabb_y_max,
+        "aabb_z_min": aabb_z_min,
+        "aabb_z_max": aabb_z_max,
         "tags": sorted(parsed.tags),
         "version": parsed.version,
         "generate_time": parsed.generate_time,
     }
 
 
-def _build_table(rows: list[dict]) -> pa.Table:
+def asset_set_fingerprint(root: Path) -> str:
+    """sha256 over sorted asset dir paths (add/remove/rename detection)."""
+    rels: list[str] = []
+    for domain in sorted(root.iterdir()):
+        if not domain.is_dir():
+            continue
+        for super_dir in sorted(domain.iterdir()):
+            if not super_dir.is_dir():
+                continue
+            for asset_dir in sorted(super_dir.iterdir()):
+                if asset_dir.is_dir():
+                    rels.append(str(asset_dir.relative_to(root)))
+    return hashlib.sha256("\n".join(rels).encode()).hexdigest()
+
+
+def _build_table(rows: list[dict], fingerprint: str) -> pa.Table:
     if rows:
         table = pa.Table.from_pylist(rows, schema=_EMPTY_SCHEMA)
     else:
         table = _EMPTY_SCHEMA.empty_table()
     return table.replace_schema_metadata(
-        {b"schema_version": SCHEMA_VERSION.encode()}
+        {
+            b"schema_version": SCHEMA_VERSION.encode(),
+            b"asset_set_fingerprint": fingerprint.encode(),
+        }
     )
 
 
@@ -196,6 +278,7 @@ def build_asset_index(
         output_path = str(root / INDEX_FILENAME)
 
     report = BuildReport(output_path=output_path)
+    fingerprint = asset_set_fingerprint(root)
     asset_dirs = _find_asset_dirs(root)
     report.total_scanned = len(asset_dirs)
 
@@ -212,23 +295,42 @@ def build_asset_index(
         raise DuplicateAssetIdError(aid, paths)
 
     rows: list[dict] = []
-    for asset_dir in asset_dirs:
-        asset_id = asset_dir.name
-        rel = str(asset_dir.relative_to(root))
+    if asset_dirs:
+        n_workers = max(1, min(DEFAULT_WORKERS, len(asset_dirs)))
+        with ThreadPoolExecutor(max_workers=n_workers) as ex:
+            parsed_results = list(
+                ex.map(
+                    lambda d: _parse_one(d, strict=strict),
+                    asset_dirs,
+                )
+            )
 
-        parsed, reason = _parse_one(asset_dir, strict=strict)
-        if parsed is None:
-            report.skipped.append(SkippedAsset(rel, reason))
-            logger.warning("skip %s: %s", rel, reason)
-            continue
-        for w in parsed.warnings:
-            report.warnings.append(f"{asset_id}: {w}")
+        for asset_dir, (parsed, reason) in zip(
+            asset_dirs, parsed_results, strict=False
+        ):
+            asset_id = asset_dir.name
+            rel = str(asset_dir.relative_to(root))
+            if parsed is None:
+                report.skipped.append(SkippedAsset(rel, reason))
+                logger.warning("skip %s: %s", rel, reason)
+                continue
+            for w in parsed.warnings:
+                report.warnings.append(f"{asset_id}: {w}")
 
-        rows.append(_row_from_parsed(parsed, asset_dir, rel))
+            if (
+                parsed.aabb_min is None or parsed.aabb_max is None
+            ) and not strict:
+                report.warnings.append(
+                    f"{asset_id}: missing <aabb> in URDF; recorded as None"
+                )
+
+            rows.append(
+                _row_from_parsed(parsed, asset_dir, rel, strict=strict)
+            )
 
     report.total_indexed = len(rows)
 
-    table = _build_table(rows)
+    table = _build_table(rows, fingerprint)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output_path)
     logger.info(

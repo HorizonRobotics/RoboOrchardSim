@@ -125,7 +125,7 @@ def test_sample_distractors_match_category_differ_color(
     )
     assert len(distractors) == 1
     assert distractors[0].asset_id == "apple_002"
-    assert distractors[0].color == "green"
+    assert distractors[0].color == frozenset({"green"})
 
 
 def test_sample_distractors_excludes_anchor_from_pool(mini_asset_root: Path):
@@ -332,3 +332,168 @@ def test_sample_compatible_pair_exhaustion_raises_collision_exhausted(
     # Also verify it's a subclass of EmptyPoolError for backward compat
     assert isinstance(ei.value, EmptyPoolError)
     assert ei.value.attempts == 10
+
+
+def test_sample_target_pool_returns_k_distinct(mini_asset_root: Path):
+    """sample_target_pool returns exactly k distinct AssetMeta."""
+    reg = AssetRegistry(str(mini_asset_root))
+    sampler = AssetSampler(reg)
+    pool = sampler.sample_target_pool(
+        AssetFilter(super_category="fruits"),
+        k=3,
+        rng=np.random.default_rng(0),
+    )
+    assert len(pool) == 3
+    assert len({m.uuid for m in pool}) == 3
+
+
+def test_sample_target_pool_raises_when_pool_too_small(mini_asset_root: Path):
+    """Pool < k raises InsufficientPoolError."""
+    sampler = AssetSampler(AssetRegistry(str(mini_asset_root)))
+    f = AssetFilter(super_category="fruits", category="nonexistent_category")
+    with pytest.raises(InsufficientPoolError):
+        sampler.sample_target_pool(f, k=1, rng=np.random.default_rng(0))
+
+
+def test_sample_distractor_pool_returns_distinct_matching_anchor(
+    mini_asset_root: Path,
+):
+    """sample_distractor_pool draws distinct members honouring match."""
+    reg = AssetRegistry(str(mini_asset_root))
+    sampler = AssetSampler(reg)
+    anchor = reg.get_by_asset_id("apple_001")
+    spec = DistractorSpec(
+        min_count=1,
+        max_count=10,
+        match=("super_category",),
+    )
+    pool = sampler.sample_distractor_pool(
+        anchor, spec, pool_size=2, rng=np.random.default_rng(0)
+    )
+    assert len(pool) == 2 and len({m.uuid for m in pool}) == 2
+    for m in pool:
+        assert m.super_category == anchor.super_category
+        assert m.uuid != anchor.uuid
+
+
+def test_sample_distractor_pool_raises_when_pool_too_small(
+    mini_asset_root: Path,
+):
+    """pool_size > available_candidates raises InsufficientPoolError."""
+    reg = AssetRegistry(str(mini_asset_root))
+    sampler = AssetSampler(reg)
+    anchor = reg.get_by_asset_id("apple_001")
+    spec = DistractorSpec(
+        min_count=0,
+        max_count=2,
+        match=("super_category",),
+        differ=("category",),
+    )
+    with pytest.raises(InsufficientPoolError):
+        sampler.sample_distractor_pool(
+            anchor, spec, pool_size=2, rng=np.random.default_rng(0)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Multi-value color sampler scenarios
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multicolor_asset_root(tmp_path: Path) -> Path:
+    """4-asset fixture with multi-color assets for overlap/disjoint tests."""
+    import json
+    from textwrap import dedent
+
+    def _write(rel: str, color_csv: str, asset_id: str, uuid: str):
+        d = tmp_path / rel
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{asset_id}.urdf").write_text(
+            dedent(f"""<?xml version='1.0' encoding='utf-8'?>
+            <robot name="{asset_id}">
+              <link name="{asset_id}">
+                <inertial><mass value="0.1"/><origin xyz="0 0 0"/>
+                <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+                </inertial>
+                <extra_info>
+                  <uuid>{uuid}</uuid>
+                  <domain>food</domain>
+                  <super_category>fruits</super_category>
+                  <category>apple</category>
+                  <name>{asset_id}</name>
+                  <color>{color_csv}</color>
+                  <shape>sphere</shape>
+                  <material>organic</material>
+                  <description>x</description>
+                  <min_height>0.05</min_height>
+                  <max_height>0.10</max_height>
+                  <real_height>0.08</real_height>
+                  <min_mass>0.1</min_mass>
+                  <max_mass>0.2</max_mass>
+                  <version>v0.1.0</version>
+                  <generate_time>20260428000000</generate_time>
+                  <tags>graspable</tags>
+                </extra_info>
+              </link>
+            </robot>
+            """).strip()
+        )
+        (d / f"{asset_id}.usd").write_text("fake-usd")
+        (d / "interaction.json").write_text(json.dumps({"interaction": {}}))
+
+    _write("food/fruits/apple_a", "red,blue", "apple_a", "u-a")
+    _write("food/fruits/apple_b", "red,yellow", "apple_b", "u-b")
+    _write("food/fruits/apple_c", "green", "apple_c", "u-c")
+    _write("food/fruits/apple_d", "blue", "apple_d", "u-d")
+    return tmp_path
+
+
+def test_sample_distractors_match_color_treats_overlap_as_match(
+    multicolor_asset_root: Path,
+):
+    """match=color: {red,yellow},{blue} overlap anchor; {green} excluded."""
+    reg = AssetRegistry(str(multicolor_asset_root))
+    sampler = AssetSampler(reg)
+    anchor = reg.get_by_asset_id("apple_a")  # {red, blue}
+    distractors = sampler.sample_distractors(
+        anchor,
+        DistractorSpec(min_count=2, max_count=2, match=("color",)),
+        np.random.default_rng(0),
+    )
+    ids = {d.asset_id for d in distractors}
+    assert ids == {"apple_b", "apple_d"}  # both share at least one token
+    assert "apple_c" not in ids  # green is disjoint from {red,blue}
+
+
+def test_sample_distractors_differ_color_treats_disjoint_as_differ(
+    multicolor_asset_root: Path,
+):
+    """anchor={red,blue}: differ=color admits {green} only (one disjoint)."""
+    reg = AssetRegistry(str(multicolor_asset_root))
+    sampler = AssetSampler(reg)
+    anchor = reg.get_by_asset_id("apple_a")  # {red, blue}
+    distractors = sampler.sample_distractors(
+        anchor,
+        DistractorSpec(min_count=1, max_count=1, differ=("color",)),
+        np.random.default_rng(0),
+    )
+    assert [d.asset_id for d in distractors] == ["apple_c"]
+
+
+def test_sample_distractors_differ_color_excludes_overlapping_assets(
+    multicolor_asset_root: Path,
+):
+    """{red,yellow} and {blue} share with anchor; only {green} is disjoint.
+
+    Trying to draw 2 disjoint candidates should raise InsufficientPoolError.
+    """
+    reg = AssetRegistry(str(multicolor_asset_root))
+    sampler = AssetSampler(reg)
+    anchor = reg.get_by_asset_id("apple_a")  # {red, blue}
+    with pytest.raises(InsufficientPoolError):
+        sampler.sample_distractors(
+            anchor,
+            DistractorSpec(min_count=2, max_count=2, differ=("color",)),
+            np.random.default_rng(0),
+        )

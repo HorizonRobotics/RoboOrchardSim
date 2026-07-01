@@ -19,13 +19,15 @@
 from __future__ import annotations
 from abc import ABC
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import ArticulationCfg
-from robo_orchard_sim.cfg_wrappers.sim.schemas import (
+from pydantic import Field
+
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import ArticulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas import (
     MassPropertiesCfg,
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners import UsdFileCfg
-from robo_orchard_sim.models.assets.rigid_object import RigidObjectCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import UsdFileCfg
+from robo_orchard_sim.ext.models.assets.rigid_object import RigidObjectCfg
 from robo_orchard_sim.orchard_env.assets.asset_spec import AssetSpec
 
 
@@ -47,7 +49,8 @@ class RigidObjectSpec(ObjectSpec):
     uuid: str | None = None
     category: str | None = None
     actor_type: str = "object"
-    attributes: tuple[str, ...] = ()
+    attributes: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    aabb_z_min: float | None = None
 
     def to_isaac_cfg(self) -> RigidObjectCfg:
         """Convert this spec into a rigid object cfg."""
@@ -83,6 +86,7 @@ class RigidObjectSpec(ObjectSpec):
             category=self.category,
             actor_type=self.actor_type,
             attributes=self.attributes,
+            aabb_z_min=self.aabb_z_min,
         )
         return cfg
 

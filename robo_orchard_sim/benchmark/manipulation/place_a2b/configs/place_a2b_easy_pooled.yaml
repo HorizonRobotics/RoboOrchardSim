@@ -1,0 +1,70 @@
+scene:
+  type: plane_table
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: dualarm_piper
+  initial_pos: [0.0, 0.3, 0.0]
+
+instruction:
+  template: place_a2b_default
+  template_mode: variants  # valid values: fixed | variants
+
+task:
+  params:
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.25, 0.55]
+        y: [-0.35, 0.35]
+        z: [0.0, 0.0]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [-3.141592653589793, 3.141592653589793]
+    light_reset:
+      enabled: false
+      preset: default_distant_light
+    texture_reset:
+      enabled: false
+      preset: default_table_texture
+
+# Pooled variant: pick / place / distractors pre-spawn pool_size
+# candidates; each episode reset activates one (or max_count) and stows
+# the rest on the inactive-pool storage (auto-inserted by EnvBuilder).
+asset_configs:
+
+  pick:
+    filter:
+      super_category: fruits
+      category: lemon
+    prim_name: pick_object
+    # pool_size N: pre-spawn N candidates; one is active per episode.
+    # Library must have >= N matching assets or AssetResolutionError.
+    pool_size: 5
+
+  place:
+    filter:
+      super_category: containers
+    prim_name: place_object
+    pool_size: 3
+
+  distractors:
+    anchor: pick
+    match: [super_category]
+    differ: [category]
+    # NOTE: in pool mode (pool_size set), min_count is IGNORED.
+    # Each episode activates exactly max_count distinct members drawn
+    # from the pool. To vary distractor count per episode, drop
+    # pool_size and use the classic non-pool path.
+    min_count: 1
+    max_count: 3
+    # pool_size must be >= max_count or AssetResolutionError at build
+    # time. pool_size > max_count gives variety across episodes:
+    # max_count distinct actives drawn from pool_size candidates.
+    pool_size: 6
+    prim_name_prefix: distractor

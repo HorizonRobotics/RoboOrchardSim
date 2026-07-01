@@ -31,6 +31,7 @@ import pyarrow.parquet as pq
 from robo_orchard_sim.asset_manager.registry.build_index import (
     INDEX_FILENAME,
     SCHEMA_VERSION,
+    asset_set_fingerprint,
     build_asset_index,
 )
 from robo_orchard_sim.asset_manager.registry.errors import (
@@ -59,6 +60,15 @@ def _num(v: Any, default: float = 0.0) -> float:
     return float(v) if v is not None else default
 
 
+def _row_set(row: dict[str, Any], key: str) -> frozenset[str] | None:
+    """Convert a pyarrow list<string> column value to frozenset, or None."""
+    val = row.get(key)
+    if val is None:
+        return None
+    fs = frozenset(val)
+    return fs or None
+
+
 def _row_to_meta(row: dict[str, Any]) -> AssetMeta:
     """Convert a parquet row dict to an AssetMeta.
 
@@ -75,9 +85,9 @@ def _row_to_meta(row: dict[str, Any]) -> AssetMeta:
         category=row["category"],
         name=row.get("name") or "",
         description=row.get("description") or "",
-        color=row.get("color"),
-        shape=row.get("shape"),
-        material=row.get("material"),
+        color=_row_set(row, "color"),
+        shape=_row_set(row, "shape"),
+        material=_row_set(row, "material"),
         real_height=_num(row.get("real_height")),
         real_mass=_num(row.get("real_mass")),
         min_height=_num(row.get("min_height")),
@@ -91,6 +101,12 @@ def _row_to_meta(row: dict[str, Any]) -> AssetMeta:
         tags=tags,
         version=row.get("version") or "",
         generate_time=row.get("generate_time") or "",
+        aabb_x_min=row.get("aabb_x_min"),
+        aabb_x_max=row.get("aabb_x_max"),
+        aabb_y_min=row.get("aabb_y_min"),
+        aabb_y_max=row.get("aabb_y_max"),
+        aabb_z_min=row.get("aabb_z_min"),
+        aabb_z_max=row.get("aabb_z_max"),
     )
 
 
@@ -116,6 +132,36 @@ class AssetRegistry:
         self._by_super: dict[str, list[str]] = {}
         self._by_tag: dict[str, list[str]] = {}
         self._load(auto_build=auto_build_index)
+
+    def _check_asset_set_staleness(self, table, schema_meta, *, auto_build):
+        """Rebuild (or warn) if the asset set changed since the index build."""
+        stored = schema_meta.get(b"asset_set_fingerprint")
+        if stored is None:
+            logger.info(
+                "index at %s has no asset_set_fingerprint (older build); "
+                "staleness check skipped until next rebuild",
+                self._index_path,
+            )
+            return table
+        current = asset_set_fingerprint(self._asset_root)
+        if stored.decode() == current:
+            return table
+        if auto_build:
+            logger.info(
+                "asset set changed since index build; rebuilding %s",
+                self._index_path,
+            )
+            build_asset_index(
+                str(self._asset_root), output_path=str(self._index_path)
+            )
+            return pq.read_table(str(self._index_path))
+        logger.warning(
+            "asset set changed since index build at %s; index may be stale "
+            "(new/removed assets invisible). Rebuild with build_asset_index "
+            "or pass auto_build_index=True.",
+            self._index_path,
+        )
+        return table
 
     def _load(self, *, auto_build: bool) -> None:
         index_path = self._index_path
@@ -184,6 +230,10 @@ class AssetRegistry:
                     f"rebuilt asset_index.parquet schema_version={version!r} "
                     f"expected {SCHEMA_VERSION!r}"
                 )
+
+        table = self._check_asset_set_staleness(
+            table, schema_meta, auto_build=auto_build
+        )
 
         # --- atomic load (Fix 1 + Fix 2) ---
         metas: dict[str, AssetMeta] = {}
@@ -279,9 +329,9 @@ class AssetRegistry:
 
     # ---- to be implemented in later tasks ----
     def query(self, asset_filter: AssetFilter) -> list[AssetMeta]:
-        """Return all metas matching asset_filter, sorted by asset_id."""
+        """Return all metas matching asset_filter, sorted by uuid."""
         matches = [m for m in self._metas.values() if asset_filter.matches(m)]
-        matches.sort(key=lambda m: m.asset_id)
+        matches.sort(key=lambda m: m.uuid)
         return matches
 
     def build_spec(
@@ -317,6 +367,12 @@ class AssetRegistry:
             uuid=meta.uuid,
             category=meta.category,
             actor_type=role,
+            attributes={
+                "color": tuple(sorted(meta.color or ())),
+                "shape": tuple(sorted(meta.shape or ())),
+                "material": tuple(sorted(meta.material or ())),
+            },
+            aabb_z_min=meta.aabb_z_min,
         )
 
 
@@ -324,12 +380,41 @@ class AssetRegistry:
 # AssetSampler — stateless sampling primitives over an AssetRegistry.
 # ---------------------------------------------------------------------------
 
-# Fields comparable via match/differ on a DistractorSpec. Single-valued
-# taxonomy/attribute fields only — excludes tags (set-valued), identity
-# fields (uuid/asset_id), and physics floats (fragile equality).
+# Fields allowed in DistractorSpec.match / .differ. Excludes tags
+# (filtered by AssetFilter, not by match/differ), identity fields
+# (uuid/asset_id), and physics floats (fragile equality).
+# color/shape/material use set-overlap / set-disjoint via
+# _attr_match / _attr_differ; scalar fields use ==/!=.
 _MATCH_DIFFER_ALLOWED = frozenset(
     ("super_category", "category", "color", "shape", "material", "size_bucket")
 )
+
+_SET_VALUED_FIELDS = frozenset(("color", "shape", "material"))
+
+
+def _attr_match(a: Any, c: Any, field: str) -> bool:
+    """match=(field,) test: set any-overlap, scalar equality.
+
+    None on either side never counts as a match.
+    """
+    if field in _SET_VALUED_FIELDS:
+        if a is None or c is None:
+            return False
+        return bool(a & c)
+    return a == c
+
+
+def _attr_differ(a: Any, c: Any, field: str) -> bool:
+    """differ=(field,) test: set disjoint, scalar inequality.
+
+    None on either side counts as differing.
+    """
+    if field in _SET_VALUED_FIELDS:
+        if a is None or c is None:
+            return True
+        return not (a & c)
+    return a != c
+
 
 _COMPATIBLE_PAIR_MAX_ATTEMPTS = 10
 
@@ -365,6 +450,30 @@ class AssetSampler:
         idx = int(rng.integers(0, len(pool)))
         return pool[idx]
 
+    def sample_target_pool(
+        self,
+        asset_filter: AssetFilter,
+        k: int,
+        rng: np.random.Generator,
+    ) -> list[AssetMeta]:
+        """Uniform-random draw of k distinct AssetMeta from matching pool.
+
+        Raises:
+            ValueError: k is non-positive.
+            InsufficientPoolError: matching pool has fewer than k assets.
+        """
+        if k <= 0:
+            raise ValueError(f"k must be positive, got {k}")
+        pool = self._reg.query(asset_filter)
+        if len(pool) < k:
+            raise InsufficientPoolError(
+                mode="target_pool",
+                available=len(pool),
+                requested=k,
+            )
+        idxs = rng.choice(len(pool), size=k, replace=False)
+        return [pool[int(i)] for i in idxs]
+
     def sample_distractors(
         self,
         anchor: AssetMeta,
@@ -373,11 +482,12 @@ class AssetSampler:
     ) -> list[AssetMeta]:
         """Sample distractors relative to an anchor asset.
 
-        Pool is built by: (1) every meta whose listed ``spec.match``
-        fields equal the anchor's values for those fields, (2) and whose
-        listed ``spec.differ`` fields differ from the anchor's, (3) and
-        which passes ``spec.absolute_filter``. The anchor itself is
-        always excluded.
+        Pool is built by: (1) assets whose listed ``spec.match`` fields
+        are compatible with the anchor (equality for scalar fields;
+        set-overlap for color/shape/material), (2) and whose listed
+        ``spec.differ`` fields are incompatible (inequality for scalar;
+        set-disjoint for color/shape/material), (3) and which passes
+        ``spec.absolute_filter``. The anchor itself is always excluded.
 
         Raises:
             InsufficientPoolError: the pool has fewer unique assets
@@ -385,6 +495,72 @@ class AssetSampler:
             ValueError: match/differ references an unknown AssetMeta
                 field (see ``_MATCH_DIFFER_ALLOWED``).
         """
+        invalid = [
+            f
+            for f in tuple(spec.match) + tuple(spec.differ)
+            if f not in _MATCH_DIFFER_ALLOWED
+        ]
+        if invalid:
+            raise ValueError(
+                f"Unknown match/differ field(s): {invalid}. "
+                f"Allowed: {sorted(_MATCH_DIFFER_ALLOWED)}"
+            )
+
+        pool: list[AssetMeta] = []
+        for m in self._reg:
+            if m.uuid == anchor.uuid:
+                continue
+            if not all(
+                _attr_match(getattr(anchor, f), getattr(m, f), f)
+                for f in spec.match
+            ):
+                continue
+            if not all(
+                _attr_differ(getattr(anchor, f), getattr(m, f), f)
+                for f in spec.differ
+            ):
+                continue
+            if not spec.absolute_filter.matches(m):
+                continue
+            if spec.exclude and m.uuid in spec.exclude:
+                continue
+            if spec.only_in is not None and m.uuid not in spec.only_in:
+                continue
+            pool.append(m)
+
+        # deterministic baseline ordering
+        pool.sort(key=lambda m: m.uuid)
+
+        if len(pool) < spec.min_count:
+            raise InsufficientPoolError(
+                mode="distractor",
+                available=len(pool),
+                requested=spec.min_count,
+            )
+
+        n = min(len(pool), spec.max_count)
+        if n == 0:
+            return []
+        idxs = rng.choice(len(pool), size=n, replace=False)
+        return [pool[int(i)] for i in idxs]
+
+    def sample_distractor_pool(
+        self,
+        anchor: AssetMeta,
+        spec: DistractorSpec,
+        pool_size: int,
+        rng: np.random.Generator,
+    ) -> list[AssetMeta]:
+        """Uniform-random draw of pool_size distinct distractors.
+
+        Raises:
+            ValueError: pool_size is non-positive, or match/differ
+                has unknown fields.
+            InsufficientPoolError: matching pool has fewer than
+                pool_size assets.
+        """
+        if pool_size <= 0:
+            raise ValueError(f"pool_size must be positive, got {pool_size}")
         invalid = [
             f
             for f in tuple(spec.match) + tuple(spec.differ)
@@ -416,20 +592,15 @@ class AssetSampler:
                 continue
             pool.append(m)
 
-        # deterministic baseline ordering
-        pool.sort(key=lambda m: m.asset_id)
+        pool.sort(key=lambda m: m.uuid)
 
-        if len(pool) < spec.min_count:
+        if len(pool) < pool_size:
             raise InsufficientPoolError(
-                mode="distractor",
+                mode="distractor_pool",
                 available=len(pool),
-                requested=spec.min_count,
+                requested=pool_size,
             )
-
-        n = min(len(pool), spec.max_count)
-        if n == 0:
-            return []
-        idxs = rng.choice(len(pool), size=n, replace=False)
+        idxs = rng.choice(len(pool), size=pool_size, replace=False)
         return [pool[int(i)] for i in idxs]
 
     def sample_compatible_pair(

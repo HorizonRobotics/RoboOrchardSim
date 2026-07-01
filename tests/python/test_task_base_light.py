@@ -22,53 +22,57 @@ from pathlib import Path
 import pytest
 from robo_orchard_core.envs.managers.events import EventManagerCfg
 
-from robo_orchard_sim.tasks.validators.base import Validator
+from robo_orchard_sim.task_components.validators.base import Validator
 
 
 def _load_task_base_with_stubbed_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    record_module = types.ModuleType("robo_orchard_sim.envs.managers.record")
+    record_module = types.ModuleType(
+        "robo_orchard_sim.ext.envs.managers.record"
+    )
     record_module.RecordTermBaseCfg = type("RecordTermBaseCfg", (), {})
     monkeypatch.setitem(
         sys.modules,
-        "robo_orchard_sim.envs",
-        types.ModuleType("robo_orchard_sim.envs"),
+        "robo_orchard_sim.ext.envs",
+        types.ModuleType("robo_orchard_sim.ext.envs"),
+    )
+    managers_module_name = "robo_orchard_sim.ext.envs.managers"
+    monkeypatch.setitem(
+        sys.modules,
+        managers_module_name,
+        types.ModuleType(managers_module_name),
     )
     monkeypatch.setitem(
         sys.modules,
-        "robo_orchard_sim.envs.managers",
-        types.ModuleType("robo_orchard_sim.envs.managers"),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "robo_orchard_sim.envs.managers.record",
+        "robo_orchard_sim.ext.envs.managers.record",
         record_module,
     )
 
     asset_cfg_module = types.ModuleType(
-        "robo_orchard_sim.models.assets.asset_cfg"
+        "robo_orchard_sim.ext.models.assets.asset_cfg"
     )
     asset_cfg_module.GroupAssetCfg = type("GroupAssetCfg", (), {})
     monkeypatch.setitem(
         sys.modules,
-        "robo_orchard_sim.models",
-        types.ModuleType("robo_orchard_sim.models"),
+        "robo_orchard_sim.ext.models",
+        types.ModuleType("robo_orchard_sim.ext.models"),
     )
     monkeypatch.setitem(
         sys.modules,
-        "robo_orchard_sim.models.assets",
-        types.ModuleType("robo_orchard_sim.models.assets"),
+        "robo_orchard_sim.ext.models.assets",
+        types.ModuleType("robo_orchard_sim.ext.models.assets"),
     )
     monkeypatch.setitem(
         sys.modules,
-        "robo_orchard_sim.models.assets.asset_cfg",
+        "robo_orchard_sim.ext.models.assets.asset_cfg",
         asset_cfg_module,
     )
 
     assets_module = types.ModuleType("robo_orchard_sim.orchard_env.assets")
     assets_module.AssetSpec = type("AssetSpec", (), {})
     assets_module.ObjectSpec = type("ObjectSpec", (), {})
+    assets_module.PoolSpec = type("PoolSpec", (), {})
     monkeypatch.setitem(
         sys.modules,
         "robo_orchard_sim.orchard_env.assets",
@@ -79,7 +83,7 @@ def _load_task_base_with_stubbed_dependencies(
         Path(__file__).resolve().parents[2]
         / "robo_orchard_sim"
         / "orchard_env"
-        / "tasks"
+        / "task_templates"
         / "task_base.py"
     )
     task_base_spec = importlib.util.spec_from_file_location(
@@ -108,8 +112,12 @@ def test_task_base_subclass_without_instruction_can_be_instantiated(
         def get_validator_actor_names(self) -> list[str]:
             return []
 
-        def build_validator(self, actors: list[object]) -> Validator:
-            del actors
+        def build_validator(
+            self,
+            actors: list[object],
+            context=None,
+        ) -> Validator:
+            del actors, context
             return Validator(
                 actors=[],
                 criteria=[],

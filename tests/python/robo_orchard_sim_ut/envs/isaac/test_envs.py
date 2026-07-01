@@ -19,36 +19,50 @@ import torch
 from isaaclab.sensors.camera import CameraData as LabCameraData
 from robo_orchard_core.datatypes.camera_data import BatchCameraData
 from robo_orchard_core.datatypes.tf_graph import BatchFrameTransformGraph
+from robo_orchard_core.envs.managers.actions.action_manager import (
+    ActionManagerCfg,
+)
 from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationGroupCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.envs import (
+from robo_orchard_sim.ext.envs import (
     IsaacEnvCfg,
     IsaacEnvContextManager,
     IsaacManagerBasedEnv,
     IsaacManagerBasedEnvCfg,
 )
-from robo_orchard_sim.envs.managers.observations import ObservationManagerCfg
-from robo_orchard_sim.envs.managers.observations.asset_obs import (
+from robo_orchard_sim.ext.envs.managers.actions.articulation.joint_position import (  # noqa: E501
+    ArticulationJointPositionActionTermCfg,
+)
+from robo_orchard_sim.ext.envs.managers.observations import (
+    ObservationManagerCfg,
+)
+from robo_orchard_sim.ext.envs.managers.observations.asset_obs import (
     AssetObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.camera import (
+from robo_orchard_sim.ext.envs.managers.observations.camera import (
     CameraObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.sensor import (
+from robo_orchard_sim.ext.envs.managers.observations.last_action import (
+    LastActionObservationTermCfg,
+)
+from robo_orchard_sim.ext.envs.managers.observations.sensor import (
     SensorObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.transform_frame import (
+from robo_orchard_sim.ext.envs.managers.observations.transform_frame import (
     FrameTransformTermCfg,
 )
-from robo_orchard_sim.models.scenes.interactive_scene import (
+from robo_orchard_sim.ext.models.scenes.interactive_scene import (
     InteractiveSceneCfg,
 )
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.orchard_env.embodiments.franka_panda.cfg import (
+    FRANKA_PANDA_HIGH_PD_CFG,
+)
 from robo_orchard_sim_ut.utils.cfg_test import CfgTestBase
 
 
@@ -304,6 +318,101 @@ class TestSensorObservationTerm:
             # CameraObservationTerm.ReturnType
             # assert isinstance(cam_term_ret, CameraObservationTerm.ReturnType)
             assert isinstance(cam_term_ret, LabCameraData)
+
+
+class TestLastActionObservationTerm:
+    def _make_franka_env_cfg(
+        self, action_name: str | None = "joint_position"
+    ) -> tuple[IsaacManagerBasedEnvCfg, str]:
+        action_term_name = "joint_position"
+        scene_cfg = TableSceneCfg(
+            num_envs=1,
+            env_spacing=2,
+            robots={
+                "robot_franka": FRANKA_PANDA_HIGH_PD_CFG.replace(
+                    prim_path="{ENV_REGEX_NS}/robot_franka"
+                )
+            },
+        )
+        env_cfg = IsaacManagerBasedEnvCfg(
+            decimation=1,
+            scene=scene_cfg,
+            actions=ActionManagerCfg(
+                terms={
+                    action_term_name: ArticulationJointPositionActionTermCfg(
+                        asset_cfg=SceneEntityCfg(
+                            name="robots/robot_franka",
+                            joint_names=["panda_joint[1-7]"],
+                        ),
+                        use_default_offset=False,
+                        scale=1.0,
+                        offset=0.0,
+                    ),
+                },
+            ),
+            observations=ObservationManagerCfg(
+                groups={
+                    "policy": ObservationGroupCfg(
+                        terms={
+                            "last_action": LastActionObservationTermCfg(
+                                action_name=action_name,
+                            )
+                        },
+                    )
+                },
+            ),
+        )
+        return env_cfg, action_term_name
+
+    def test_last_action_observation_with_action_name_returns_input_tensor(
+        self,
+    ):
+        env_cfg, action_term_name = self._make_franka_env_cfg(
+            action_name="joint_position"
+        )
+
+        with IsaacEnvContextManager(
+            env_cfg, with_new_stage=True, disable_exit_on_stop=True
+        ) as env:
+            assert isinstance(env, IsaacManagerBasedEnv)
+            expected_action = torch.tensor(
+                [[0.10, -0.20, 0.30, -0.40, 0.50, -0.60, 0.70]],
+                device=env.device,
+                dtype=torch.float32,
+            )
+
+            step_ret = env.step(action={action_term_name: expected_action})
+            observed_last_action = step_ret.observations["policy"][
+                "last_action"
+            ]
+
+            torch.testing.assert_close(observed_last_action, expected_action)
+
+    def test_last_action_observation_with_action_name_none_returns_action_dict(
+        self,
+    ):
+        env_cfg, action_term_name = self._make_franka_env_cfg(action_name=None)
+
+        with IsaacEnvContextManager(
+            env_cfg, with_new_stage=True, disable_exit_on_stop=True
+        ) as env:
+            assert isinstance(env, IsaacManagerBasedEnv)
+            expected_action = torch.tensor(
+                [[0.10, -0.20, 0.30, -0.40, 0.50, -0.60, 0.70]],
+                device=env.device,
+                dtype=torch.float32,
+            )
+
+            step_ret = env.step(action={action_term_name: expected_action})
+            observed_last_action = step_ret.observations["policy"][
+                "last_action"
+            ]
+
+            assert isinstance(observed_last_action, dict)
+            assert list(observed_last_action.keys()) == [action_term_name]
+            torch.testing.assert_close(
+                observed_last_action[action_term_name], expected_action
+            )
 
 
 class TestFrameTransformTerm:

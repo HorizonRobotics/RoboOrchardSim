@@ -14,7 +14,9 @@ writes the ``caption_candidates.json`` file plus the URDF
 from __future__ import annotations
 import json
 import logging
+import math
 import os
+import random
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -52,7 +54,7 @@ _MAX_WORDS = 6
 # Top-up is retried independently because it runs only after the initial
 # call already produced some valid phrases.
 MAX_INITIAL_ATTEMPTS = 3
-MAX_TOPUP_ATTEMPTS = 2
+MAX_TOPUP_ATTEMPTS = 4
 _DROP_TOLERANCE = 0.30
 
 
@@ -81,15 +83,51 @@ def _valid_phrase(phrase) -> bool:
     return _MIN_WORDS <= len(words) <= _MAX_WORDS
 
 
+_TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _category_in_phrase(phrase: str, category: str) -> bool:
+    """True iff the literal `category` token sequence appears in `phrase`.
+
+    `category` is lowercased and underscores normalised to spaces (matching
+    how the prompt presents the category to the model). `phrase` is split
+    on any run of non-alphanumeric characters. The category tokens must
+    appear as a contiguous unbroken run inside the phrase tokens.
+    """
+    cat_tokens = category.lower().replace("_", " ").split()
+    if not cat_tokens:
+        return False
+    phrase_tokens = [t for t in _TOKEN_SPLIT_RE.split(phrase.lower()) if t]
+    n = len(cat_tokens)
+    for i in range(len(phrase_tokens) - n + 1):
+        if phrase_tokens[i : i + n] == cat_tokens:
+            return True
+    return False
+
+
 def parse_response(raw: str, category: str) -> list[str]:
     """Parse a GPT response into a validated list of caption phrases.
 
+    Args:
+        raw: raw text returned by the GPT client (may include a markdown
+            code fence; the response body must be a JSON object with a
+            ``"candidates"`` list of strings).
+        category: asset category string from the URDF, e.g. ``"apple"`` or
+            ``"facial_cleanser"``. Underscores are normalised to spaces by
+            ``_category_in_phrase`` before matching.
+
+    Two-stage filter:
+      1. Structural validity (`_valid_phrase`): non-empty ASCII string of
+         4-6 words.
+      2. Category presence (`_category_in_phrase`): literal token
+         sequence of `category` (after `_`-to-space norm) must appear
+         contiguously in the phrase.
+
     Raises ``CaptionParseError`` if the response is malformed, the
-    ``candidates`` key is missing or the wrong type, more than 30% of
-    phrases are dropped during per-phrase validation, or the remaining
-    list is empty.
+    ``candidates`` key is missing or wrong type, the candidates list is
+    empty, or more than ``_DROP_TOLERANCE`` of phrases are dropped across
+    the two stages combined.
     """
-    del category  # reserved for future filtering
     text = _strip_code_fence(raw)
     try:
         obj = json.loads(text)
@@ -100,16 +138,21 @@ def parse_response(raw: str, category: str) -> list[str]:
     raw_list = obj["candidates"]
     if not isinstance(raw_list, list):
         raise CaptionParseError("'candidates' is not a list")
+    if not raw_list:
+        raise CaptionParseError("candidates list is empty")
 
-    kept = [p for p in raw_list if _valid_phrase(p)]
+    structure_kept = [p for p in raw_list if _valid_phrase(p)]
+    kept = [p for p in structure_kept if _category_in_phrase(p, category)]
+
     total = len(raw_list)
     dropped = total - len(kept)
-    if total > 0 and dropped / total > _DROP_TOLERANCE:
+    if dropped / total > _DROP_TOLERANCE:
+        struct_dropped = total - len(structure_kept)
+        cat_dropped = len(structure_kept) - len(kept)
         raise CaptionParseError(
-            f"drop rate too high: {dropped}/{total} phrases invalid"
+            f"drop rate too high: {dropped}/{total} dropped "
+            f"({struct_dropped} bad structure, {cat_dropped} missing category)"
         )
-    if not kept:
-        raise CaptionParseError("no valid candidates after validation")
     return [p.strip() for p in kept]
 
 
@@ -187,12 +230,17 @@ _INITIAL_PROMPT_TEMPLATE = (
     "**3. EACH PHRASE MUST BE A PURE NOUN PHRASE, ACTION-AGNOSTIC.** "
     "It must read naturally after ANY of the action verbs above "
     '(e.g. "pick up the ___", "push the ___", "rotate the ___"). '
-    "Use the object category ({category}) or a common synonym as the "
-    'head noun in MOST phrases (e.g. "the red apple with a stem", '
+    "Use the object category ({category}) as the head noun "
+    '(e.g. "the red apple with a stem", '
     'not just "the small object with white dots"). Do NOT include '
     "any verb, action, or grasping/manipulation language inside the "
     'phrase itself (no "to grasp", "for picking", "easy to hold", '
     "etc.).\n\n"
+    "**4. EVERY PHRASE MUST CONTAIN THE EXACT CATEGORY TOKEN "
+    "({category}).** The literal category word(s) must appear, in "
+    "order, with no synonyms, paraphrases, or plural variants. "
+    'Phrases like "cup" for category "mug", "vessel" for "container", '
+    'or "apples" for "apple" will be rejected.\n'
     "Other constraints on EACH phrase:\n"
     "- Focus on features that visually DISTINGUISH this object from "
     "other objects of the same category — its specific color, "
@@ -286,18 +334,28 @@ class CaptionLabeller:
         gpt_client: an object exposing ``query(text_prompt, images=...)``
             and returning a string (matches
             ``asset_labeller.gpt_client.GPTClient``).
-        num_candidates: target number of candidates per asset.
+        seen_count: number of phrases to write into the ``seen`` list.
+        unseen_count: number of phrases to write into the ``unseen`` list.
         force: regenerate even if ``<caption_candidates>`` already present.
     """
 
     def __init__(
         self,
         gpt_client,
-        num_candidates: int = 20,
+        seen_count: int = 15,
+        unseen_count: int = 5,
         force: bool = False,
     ) -> None:
+        if seen_count < 0 or unseen_count < 0:
+            raise ValueError(
+                "seen_count and unseen_count must be non-negative"
+            )
+        if seen_count + unseen_count == 0:
+            raise ValueError("seen_count + unseen_count must be > 0")
         self.gpt_client = gpt_client
-        self.num_candidates = num_candidates
+        self.seen_count = seen_count
+        self.unseen_count = unseen_count
+        self.num_candidates = seen_count + unseen_count
         self.force = force
 
     def process(self, urdf_path: str) -> ProcessResult:
@@ -319,9 +377,14 @@ class CaptionLabeller:
         if not renders:
             return ProcessResult(status="failed", reason="no_renders")
 
+        # Guardrail A: over-ask 1.5x on the initial round so the typical
+        # combined drop (structure + category) is absorbed without entering
+        # top-up. Truncation later in this function caps the final pool at
+        # the target.
+        ask_n = math.ceil(self.num_candidates * 1.5)
         prompt = render_initial_prompt(
             category=fields["category"],
-            num_candidates=self.num_candidates,
+            num_candidates=ask_n,
             num_views=len(renders),
         )
 
@@ -407,10 +470,33 @@ class CaptionLabeller:
                 self.num_candidates,
             )
 
+        # Slicing below assumes the pool fits inside seen + unseen so the
+        # two lists never overlap; line 412 above caps the pool length.
+        assert len(phrases) <= self.num_candidates
+        # Sort first so the split depends only on (uuid, phrase set), not
+        # on GPT's response order. Seed by uuid so re-runs reproduce the
+        # same split.
+        pool = sorted(phrases)
+        random.Random(fields["uuid"]).shuffle(pool)
+        seen = pool[: self.seen_count]
+        unseen = pool[self.seen_count : self.seen_count + self.unseen_count]
+        # Shortage policy: seen fills first, unseen takes the remainder.
+        # Warn separately so operators can tell which list degraded.
+        if len(unseen) < self.unseen_count:
+            logger.warning(
+                "unseen short: %s got %d/%d (seen=%d/%d)",
+                urdf_path,
+                len(unseen),
+                self.unseen_count,
+                len(seen),
+                self.seen_count,
+            )
+
         payload = {
             "raw": fields["category"],
             "uuid": fields["uuid"],
-            "candidates": phrases,
+            "seen": seen,
+            "unseen": unseen,
         }
         json_path = os.path.join(
             os.path.dirname(os.path.abspath(urdf_path)), CAPTION_JSON_NAME

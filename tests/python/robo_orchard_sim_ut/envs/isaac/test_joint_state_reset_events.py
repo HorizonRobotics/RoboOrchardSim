@@ -28,7 +28,7 @@ import pytest
 import torch
 from robo_orchard_core.envs.manager_based_env import ResetEvent
 
-from robo_orchard_sim.envs.managers.events.joint_state_reset import (
+from robo_orchard_sim.ext.envs.managers.events.joint_state_reset import (
     JointStateResetTerm,
     JointStateResetTermCfg,
 )

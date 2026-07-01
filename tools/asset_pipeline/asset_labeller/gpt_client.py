@@ -177,7 +177,7 @@ class GPTClient:
                 {"role": "user", "content": content_user},
             ],
             "temperature": 0.1,
-            "max_tokens": 500,
+            "max_completion_tokens": 2000,
             "top_p": 0.1,
             "frequency_penalty": 0,
             "presence_penalty": 0,
@@ -216,7 +216,7 @@ class GPTClient:
                 ],
                 model=self.model_name,
                 temperature=0,
-                max_tokens=100,
+                max_completion_tokens=100,
             )
             _ = response.choices[0].message.content
             logger.info("GPT connection check passed.")

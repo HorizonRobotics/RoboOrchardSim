@@ -1,0 +1,14 @@
+[
+  {
+    "position": {
+      "src":  {"category": "apple",  "position": [0.0, 0.0, 0.8], "rotation": [1.0, 0.0, 0.0, 0.0]},
+      "dest": {"category": "banana", "position": [0.0, 0.0, 0.8], "rotation": [1.0, 0.0, 0.0, 0.0]}
+    }
+  },
+  {
+    "position": {
+      "obj":   {"category": "orange", "position": [0.0, 0.0, 0.8], "rotation": [1.0, 0.0, 0.0, 0.0]},
+      "place": {"category": "plate",  "position": [0.0, 0.0, 0.8], "rotation": [1.0, 0.0, 0.0, 0.0]}
+    }
+  }
+]

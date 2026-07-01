@@ -1,0 +1,25 @@
+policy: groot
+# both sim + model containers run with --network=host -> same loopback.
+host: 127.0.0.1
+port: 8000
+timeout_ms: 15000
+open_loop_horizon: null
+# null -> use the task instruction; set a string to override it.
+instruction: null
+logging_tag: null
+api_token: null
+language_key: annotation.task_index
+# GR00T video key -> canonical camera slot (franka_panda DROID cams).
+# Model keys ext1_camera/ext2_camera/wrist_camera map to schema slots
+# with the same names.
+video_map:
+  ext1_camera: ext1_camera
+  ext2_camera: ext2_camera
+  wrist_camera: wrist_camera
+# canonical manipulator slot -> GR00T arm/gripper keys (absolute targets).
+# franka_panda single-arm mapping (model state/action keys joint_pos/gripper_pos).
+arms:
+  - manipulator_slot: single_arm
+    arm_key: joint_pos
+    gripper_key: gripper_pos
+    arm_relative: false

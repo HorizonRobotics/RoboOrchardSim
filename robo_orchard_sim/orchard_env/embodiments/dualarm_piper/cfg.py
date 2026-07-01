@@ -14,20 +14,22 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-from robo_orchard_sim.cfg_wrappers.actuators_cfg import ImplicitActuatorCfg
-from robo_orchard_sim.cfg_wrappers.assets_cfg import ArticulationCfg
-from robo_orchard_sim.cfg_wrappers.sim.converters.urdf_converter_cfg import (
-    UrdfConverterCfg,
+from robo_orchard_sim.ext.cfg_wrappers.actuators_cfg import ImplicitActuatorCfg
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import ArticulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.converters import (
+    urdf_converter_cfg as _urdf_converter_cfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.schemas.schemas_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (
     ArticulationRootPropertiesCfg,
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import (
     UrdfFileCfg,
     UsdFileCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import ORCHARD_ASSET
+from robo_orchard_sim.ext.models.assets.asset_cfg import ORCHARD_ASSET
+
+UrdfConverterCfg = _urdf_converter_cfg.UrdfConverterCfg
 
 __all__ = ["DUALARM_PIPER_CFG"]
 

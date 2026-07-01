@@ -1,0 +1,89 @@
+scene:
+  type: room_table
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: dualarm_piperx
+  initial_pos: [0.0, 0.3, 0.0]
+  init_joint_noise_std: 0.05
+  init_joint_pos:
+    left_joint1: -0.319669
+    left_joint2: 0.898663
+    left_joint3: -1.405843
+    left_joint4: 1.392390
+    left_joint5: 0.030785
+    left_joint6: 0.05
+    left_joint7: 0.05
+    left_joint8: -0.05
+    right_joint1: 0.319669
+    right_joint2: 0.898663
+    right_joint3: -1.405843
+    right_joint4: 1.392390
+    right_joint5: 0.030785
+    right_joint6: 0.05
+    right_joint7: 0.05
+    right_joint8: -0.05
+
+instruction:
+  template: place_a2b_default
+  template_mode: variants  # valid values: fixed | variants
+  actor_description_mode: seen  # valid values: raw | seen | unseen
+
+task:
+  params:
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.25, 0.55]
+        y: [-0.35, 0.35]
+        z: [0.0, 0.0]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [-3.141592653589793, 3.141592653589793]
+    light_reset:
+      enabled: false
+      preset: default_distant_light
+    texture_reset:
+      enabled: false
+      preset: default_table_texture
+
+# Template consumed by AssetResolver. Top-level keys = role names
+# (must match PlaceA2BTaskAssets fields). Entries with an `anchor`
+# key are distractors; others are targets.
+asset_configs:
+
+  pick:
+    # uuid: <asset-uuid>            # pin a specific asset; takes precedence
+    #                                 over filter/split (mismatch -> warning).
+    filter:
+      # tags: [is_graspable]        # AND-match; requires URDF <tags>
+      super_category: fruits          # ware / tableware / ornaments / ...
+      category: peach                 # mug / bowl / toothbrush / ...
+      # color: white
+      # shape: cylinder
+      # material: ceramic
+      # size_bucket: medium         # small / medium / large
+    prim_name: pick_object          # runtime scene/prim name
+    # split: seen                   # seen / unseen_category / unseen_instance
+
+  place:
+    filter:
+      super_category: containers
+      category: plate
+    prim_name: place_object
+
+  distractors:
+    anchor: pick                    # anchor role (must be a target above)
+    match: [super_category]         # fields equal to anchor's
+    differ: [category]              # fields differing from anchor's
+    # filter:                       # optional absolute filter
+    #   tags: [is_graspable]
+    min_count: 1                    # fail if pool < min_count
+    max_count: 3                    # sample min(len(pool), max_count)
+    prim_name_prefix: distractor
+    # split: seen

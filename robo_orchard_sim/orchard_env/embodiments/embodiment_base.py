@@ -19,6 +19,7 @@
 from __future__ import annotations
 from collections.abc import Mapping
 
+import torch
 from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
@@ -27,12 +28,21 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.contracts.joint_command import (
+    UnifiedJointCommand,
+)
+from robo_orchard_sim.contracts.policy_binding import PolicyBindingSchema
+from robo_orchard_sim.ext.envs.managers.actions.articulation import (
+    joint_base as _joint_base,
+)
+from robo_orchard_sim.ext.envs.managers.record import RecordTermBaseCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     RobotInfoCfg,
 )
+
+ArticulationJointActionTermCfg = _joint_base.ArticulationJointActionTermCfg
 
 
 class EmbodimentBase:
@@ -74,6 +84,46 @@ class EmbodimentBase:
         """Return embodiment action cfg fragment."""
         return ActionManagerCfg(terms={})
 
+    def translate_joint_command_to_env_action(
+        self,
+        action: UnifiedJointCommand,
+    ) -> dict[str, torch.Tensor]:
+        """Translate canonical joint command into action-manager inputs.
+
+        The default implementation derives term names and joint specs from
+        subclass-provided articulation joint action configs.
+        """
+        return self._translate_joint_command_by_action_cfg(
+            action=action,
+            action_cfg=self.get_action_cfg(),
+        )
+
+    def _translate_joint_command_by_action_cfg(
+        self,
+        action: UnifiedJointCommand,
+        action_cfg: ActionManagerCfg,
+    ) -> dict[str, torch.Tensor]:
+        """Translate a joint command using articulation joint action terms."""
+        translated: dict[str, torch.Tensor] = {}
+        for term_name, term_cfg in action_cfg.terms.items():
+            if not isinstance(term_cfg, ArticulationJointActionTermCfg):
+                continue
+            joint_specs = term_cfg.asset_cfg.joint_names
+            if not joint_specs:
+                continue
+            wildcard_specs = [spec for spec in joint_specs if "*" in spec]
+            if wildcard_specs:
+                raise ValueError(
+                    "Wildcard joint specs are not supported by default "
+                    "joint-command translation. Use explicit joint names or "
+                    f"range specs for action term '{term_name}'. Unsupported "
+                    f"specs: {', '.join(wildcard_specs)}."
+                )
+            term_action = action.select_if_present(*joint_specs)
+            if term_action is not None:
+                translated[term_name] = term_action
+        return translated
+
     def get_event_cfg(self) -> EventManagerCfg:
         """Return embodiment event cfg fragment."""
         return EventManagerCfg(terms={})
@@ -97,3 +147,10 @@ class EmbodimentBase:
                 f"{available or '<none>'}."
             )
         return robot_info_cfgs[manipulator_name]
+
+    def get_policy_binding_schema(self) -> PolicyBindingSchema:
+        """Return the canonical policy binding schema for this embodiment."""
+        raise NotImplementedError(
+            f"Embodiment {self.__class__.__name__} does not define a "
+            "policy binding schema."
+        )

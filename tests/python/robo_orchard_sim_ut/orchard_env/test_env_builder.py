@@ -16,6 +16,7 @@
 
 """Tests for orchard env builder phase 1.5 refactor."""
 
+import numpy as np
 import pytest
 import torch
 from pydantic import ValidationError
@@ -24,32 +25,35 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import (
+from robo_orchard_sim.benchmark.manipulation.place_a2b import (
+    PlaceA2BEasyTaskDefinition,
+)
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import (
     ArticulationCfg,
     AssetBaseCfg,
 )
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
-from robo_orchard_sim.cfg_wrappers.sim.simulation_cfg import SimulationCfg
-from robo_orchard_sim.cfg_wrappers.sim.spawners import UsdFileCfg
-from robo_orchard_sim.cfg_wrappers.sim.spawners.lights_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import ViewerCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import SimulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import UsdFileCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.lights_cfg import (
     DomeLightCfg,
 )
-from robo_orchard_sim.envs.managers.actions.action_manager import (
+from robo_orchard_sim.ext.envs.managers.actions.action_manager import (
     ActionManagerCfg,
 )
-from robo_orchard_sim.envs.managers.record import (
+from robo_orchard_sim.ext.envs.managers.record import (
     EpisodeRecordControllerCfg,
     NoOpRecordControllerCfg,
     RecordTermBaseCfg,
     StationaryEpisodeRecordControllerCfg,
 )
-from robo_orchard_sim.envs.managers.record.mcap import (
+from robo_orchard_sim.ext.envs.managers.record.mcap import (
     McapImageTermCfg,
     McapTFTermCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
-from robo_orchard_sim.models.assets.xform_asset import XFormPrimAsset
-from robo_orchard_sim.models.scenes.asset_scene import AssetSceneCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.ext.models.assets.xform_asset import XFormPrimAsset
+from robo_orchard_sim.ext.models.scenes.asset_scene import AssetSceneCfg
 from robo_orchard_sim.orchard_env import OrchardEnv
 from robo_orchard_sim.orchard_env.assets import (
     ArticulationSpec,
@@ -67,17 +71,25 @@ from robo_orchard_sim.orchard_env.scene.plane_table_scene import (
     PlaneTableScene,
 )
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
-from robo_orchard_sim.orchard_env.tasks.place_a2b_task import (
+from robo_orchard_sim.orchard_env.task_templates.place_a2b_task import (
     PlaceA2BTask,
     PlaceA2BTaskAssets,
     PlaceA2BTaskParams,
 )
-from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
-from robo_orchard_sim.orchard_env.tasks.task_params import PoseRangeConfig
-from robo_orchard_sim.task_suite.manipulation.place_a2b import (
-    PlaceA2BEasyTaskDefinition,
+from robo_orchard_sim.orchard_env.task_templates.task_base import TaskBase
+from robo_orchard_sim.orchard_env.task_templates.task_params import (
+    PoseRangeConfig,
+    TaskPoseResetConfig,
 )
-from robo_orchard_sim.tasks.validators.base import Validator, ValidatorActor
+from robo_orchard_sim.task_components.validators.base import (
+    GripperRange,
+    Validator,
+    ValidatorActor,
+)
+from robo_orchard_sim.task_components.validators.context import (
+    ValidatorContext,
+    ValidatorRobotContext,
+)
 
 
 def _make_asset_cfg(name: str) -> AssetBaseCfg:
@@ -171,7 +183,12 @@ class DummyTask(TaskBase):
             "objects/place_object",
         ]
 
-    def build_validator(self, actors: list[ValidatorActor]) -> Validator:
+    def build_validator(
+        self,
+        actors: list[ValidatorActor],
+        context=None,
+    ) -> Validator:
+        del context
         return Validator(
             actors=actors,
             criteria=[],
@@ -250,7 +267,7 @@ class _DummyRobotData:
         self.body_com_pos_w = torch.tensor(
             [[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]], dtype=torch.float32
         )
-        self.joint_pos = torch.zeros((1, 2), dtype=torch.float32)
+        self.joint_pos = torch.zeros((1, 4), dtype=torch.float32)
 
 
 class _DummyRobot:
@@ -262,12 +279,30 @@ class _DummyRobot:
         return [body_names.index(name)], [name]
 
     def find_joints(self, name: str):
-        joint_names = ["left_joint7", "right_joint7"]
+        joint_names = [
+            "left_joint7",
+            "left_joint8",
+            "right_joint7",
+            "right_joint8",
+        ]
         return [joint_names.index(name)], [name]
 
-    def set_gripper_positions(self, left: float, right: float) -> None:
+    def set_gripper_positions(
+        self,
+        left: float,
+        right: float,
+        *,
+        left_mirror: float | None = None,
+        right_mirror: float | None = None,
+    ) -> None:
         self.data.joint_pos[0] = torch.tensor(
-            [left, right], dtype=torch.float32
+            [
+                left,
+                left_mirror if left_mirror is not None else -left,
+                right,
+                right_mirror if right_mirror is not None else -right,
+            ],
+            dtype=torch.float32,
         )
 
 
@@ -386,7 +421,7 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        "robo_orchard_sim.tasks.validators.utils.is_object_center_in_obb",
+        "robo_orchard_sim.task_components.validators.utils.is_object_center_in_obb",
         lambda *_args, **_kwargs: env.allow_xy_match,
     )
     validator = _make_place_a2b_task().build_validator(
@@ -396,14 +431,30 @@ def test_place_a2b_task_build_validator_reports_task_progress_order(
                 uuid="pick-uuid",
                 category="pick",
                 actor_type="pick",
+                init_state=np.array([[0.6, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
             ),
             ValidatorActor(
                 name="objects/place_object",
                 uuid="place-uuid",
                 category="place",
                 actor_type="place",
+                init_state=np.array([[0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
             ),
-        ]
+        ],
+        context=ValidatorContext(
+            robot=ValidatorRobotContext(
+                robot_name="robots/dualarm_piper",
+                ee_links=("left_link6", "right_link6"),
+                gripper_joints=(
+                    GripperRange(
+                        name="left_joint7", open_val=0.05, close_val=0.0
+                    ),
+                    GripperRange(
+                        name="right_joint7", open_val=0.05, close_val=0.0
+                    ),
+                ),
+            )
+        ),
     )
     env = _make_validator_env()
     pick_object = env.scene["objects/pick_object"]
@@ -588,16 +639,18 @@ def test_place_a2b_task_uses_injected_pose_range_for_pose_reset():
             ),
         ),
         params=PlaceA2BTaskParams(
-            mode="drop",
-            pose_range=PoseRangeConfig(
-                x=(0.1, 0.2),
-                y=(-0.2, 0.4),
-                z=(0.01, 0.02),
-                roll=(0.0, 0.1),
-                pitch=(-0.1, 0.1),
-                yaw=(-1.0, 1.5),
+            pose_reset=TaskPoseResetConfig(
+                mode="drop",
+                pose_range=PoseRangeConfig(
+                    x=(0.1, 0.2),
+                    y=(-0.2, 0.4),
+                    z=(0.01, 0.02),
+                    roll=(0.0, 0.1),
+                    pitch=(-0.1, 0.1),
+                    yaw=(-1.0, 1.5),
+                ),
+                min_separation=0.07,
             ),
-            min_separation=0.07,
         ),
     )
 
@@ -988,3 +1041,102 @@ def test_dualarm_piper_image_record_terms_cover_rgb_depth_calibration():
         assert term_cfg.topic == expected_topic
         assert term_cfg.frame_id == expected_frame_id
         assert term_cfg.mode == expected_mode
+
+
+# ----- layout_builder integration -----------------------------------------
+
+
+def _layout_builder_with_one_role(role: str = "pick"):
+    """Build a LayoutBuilder containing one episode for ``role``."""
+    from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
+    from robo_orchard_sim.orchard_env.layout.loader import (
+        Layout,
+        LayoutObject,
+        LayoutSequence,
+    )
+
+    layout = Layout(
+        objects={
+            role: LayoutObject(
+                category="apple",
+                position=(0.0, 0.0, 0.0),
+                rotation=(1.0, 0.0, 0.0, 0.0),
+            )
+        },
+        raw={},
+    )
+    return LayoutBuilder(
+        layouts=LayoutSequence(entries=[layout], raw=[]),
+        role_member_by_category={role: {"apple": "objects/pick"}},
+    )
+
+
+def test_env_builder_with_layout_builder_injects_layout_reset():
+    """Layout-mode env_cfg.events contains the layout_reset term."""
+    builder = _layout_builder_with_one_role()
+    env_cfg = EnvBuilder(
+        scene=DummyScene(),
+        embodiment=DummyEmbodiment(),
+        task=DummyTask(),
+        layout_builder=builder,
+    ).build()
+
+    assert "layout_reset" in env_cfg.events.terms
+
+
+def test_env_builder_without_layout_builder_uses_task_event_cfg():
+    """Sampler-mode env_cfg.events comes from the task (no layout_reset)."""
+    env_cfg = EnvBuilder(
+        scene=DummyScene(),
+        embodiment=DummyEmbodiment(),
+        task=DummyTask(),
+    ).build()
+
+    assert "layout_reset" not in env_cfg.events.terms
+
+
+def test_layout_builder_apply_to_drops_pose_reset_keeps_others():
+    """Pose/pool-reset terms are shadowed by layout; other terms survive."""
+    from unittest.mock import MagicMock
+
+    from robo_orchard_sim.ext.envs.managers.events.pose_reset import (
+        PoseResetTermCfg,
+    )
+
+    builder = _layout_builder_with_one_role()
+    pose_term = MagicMock(spec=PoseResetTermCfg)
+    light_term = MagicMock()
+    task_event_cfg = EventManagerCfg(
+        terms={
+            "random_pose_event": pose_term,
+            "light_randomization": light_term,
+        }
+    )
+
+    merged = builder.apply_to(task_event_cfg)
+
+    assert set(merged.terms) == {"light_randomization", "layout_reset"}
+
+
+def test_orchard_env_num_episodes_with_layout_builder():
+    """OrchardEnv.num_episodes reads layout_builder.num_episodes."""
+    from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+
+    env = OrchardEnv(
+        scene=DummyScene(),
+        embodiment=DummyEmbodiment(),
+        task=DummyTask(),
+        layout_builder=_layout_builder_with_one_role(),
+    )
+    assert env.num_episodes == 1
+
+
+def test_orchard_env_num_episodes_without_layout_builder_is_none():
+    from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+
+    env = OrchardEnv(
+        scene=DummyScene(),
+        embodiment=DummyEmbodiment(),
+        task=DummyTask(),
+    )
+    assert env.num_episodes is None

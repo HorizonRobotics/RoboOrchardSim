@@ -1,0 +1,5 @@
+policy: server
+host: 127.0.0.1
+port: 8765
+logging_tag: null
+remote_policy_type: null

@@ -20,23 +20,37 @@ from pathlib import Path
 import pytest
 import yaml
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import ArticulationCfg
-from robo_orchard_sim.cfg_wrappers.sim.spawners import UsdFileCfg
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.benchmark import base as task_base
+from robo_orchard_sim.benchmark.base import TaskDefinition
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import ArticulationCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import UsdFileCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper import (
     DualArmPiperEmbodiment,
 )
+from robo_orchard_sim.orchard_env.embodiments.dualarm_piperx import (
+    DualArmPiperXEmbodiment,
+)
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
+from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
+    FrankaPandaEmbodiment,
+)
+from robo_orchard_sim.orchard_env.embodiments.panda_droid import (
+    PandaDroidEmbodiment,
+)
+from robo_orchard_sim.orchard_env.scene.plane_table_scene import (
+    PlaneTableScene,
+)
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
-from robo_orchard_sim.task_suite import base as task_base
-from robo_orchard_sim.task_suite.base import TaskDefinition
-from robo_orchard_sim.tasks.instructions import (
+from robo_orchard_sim.task_components.instructions import (
     registry as instruction_registry,
 )
-from robo_orchard_sim.tasks.instructions.base import InstructionWrapper
+from robo_orchard_sim.task_components.instructions.base import (
+    InstructionWrapper,
+)
 
 
 class DummyScene(SceneBase):
@@ -132,6 +146,12 @@ def test_resolve_scene_rejects_unknown_registered_name() -> None:
         UnknownSceneTaskDefinition.resolve_scene()
 
 
+def test_resolve_scene_missing_yaml_scene_returns_default_scene() -> None:
+    scene = DummyTaskDefinition.resolve_scene()
+
+    assert isinstance(scene, PlaneTableScene)
+
+
 def test_resolve_embodiment_prefers_yaml_over_class_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -188,6 +208,63 @@ def test_resolve_embodiment_passes_init_joint_pos_from_yaml(
     assert embodiment.init_joint_pos == {"left_joint1": 0.1}
 
 
+def test_resolve_embodiment_franka_panda_type_returns_franka_embodiment(
+    tmp_path: Path,
+) -> None:
+    class YamlEmbodimentTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {"embodiment": {"type": "franka_panda"}},
+        )
+
+    embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
+
+    assert isinstance(embodiment, FrankaPandaEmbodiment)
+
+
+def test_franka_panda_policy_binding_schema_camera_terms_match_observations():
+    embodiment = FrankaPandaEmbodiment(enable_cameras=True)
+
+    observation_cfg = embodiment.get_observation_cfg()
+    camera_terms = set(observation_cfg.groups["/camera"].terms)
+    schema_terms = {
+        binding.obs_term
+        for binding in (
+            embodiment.get_policy_binding_schema().camera_slots.values()
+        )
+    }
+
+    assert schema_terms <= camera_terms
+
+
+def test_resolve_embodiment_panda_droid_type_returns_droid_embodiment(
+    tmp_path: Path,
+) -> None:
+    class YamlEmbodimentTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {"embodiment": {"type": "panda_droid"}},
+        )
+
+    embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
+
+    assert isinstance(embodiment, PandaDroidEmbodiment)
+
+
+def test_resolve_embodiment_dualarm_piperx_type_returns_piperx_embodiment(
+    tmp_path: Path,
+) -> None:
+    class YamlEmbodimentTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {"embodiment": {"type": "dualarm_piperx"}},
+        )
+
+    embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
+
+    assert isinstance(embodiment, DualArmPiperXEmbodiment)
+
+
 def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -220,25 +297,64 @@ def test_resolve_instruction_prefers_yaml_template_mode_over_class_default(
     assert instruction.template_mode == "variants"
 
 
-def test_place_a2b_task_definitions_register_easy_and_hard_namespaces() -> (
-    None
-):
-    from robo_orchard_sim.task_suite.manipulation.place_a2b import (
+def test_resolve_instruction_yaml_attribute_name_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        instruction_registry.INSTRUCTION_TEMPLATE_REGISTRY,
+        "attribute_template",
+        {
+            "fixed": "Pick {actor1.attribute_value} {actor1.category}",
+            "variants": [],
+        },
+    )
+
+    class YamlAttributeInstructionTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {
+                "instruction": {
+                    "template": "attribute_template",
+                    "template_mode": "fixed",
+                    "attribute_name": "color",
+                }
+            },
+        )
+
+    instruction = YamlAttributeInstructionTaskDefinition.resolve_instruction()
+
+    assert isinstance(instruction, InstructionWrapper)
+    assert instruction.attribute_name == "color"
+
+
+@pytest.mark.parametrize(
+    ("task_class_name", "expected_namespace", "expected_config_suffix"),
+    [
+        (
+            "PlaceA2BEasyTaskDefinition",
+            "place_a2b_easy",
+            "place_a2b_easy.yaml",
+        ),
+        (
+            "PlaceA2BHardTaskDefinition",
+            "place_a2b_hard",
+            "place_a2b_hard.yaml",
+        ),
+    ],
+)
+def test_place_a2b_task_definition_registers_namespace_and_config(
+    task_class_name: str,
+    expected_namespace: str,
+    expected_config_suffix: str,
+) -> None:
+    from robo_orchard_sim.benchmark.manipulation.place_a2b import (
         place_a2b_env,
     )
 
-    assert (
-        place_a2b_env.PlaceA2BEasyTaskDefinition.namespace == "place_a2b_easy"
-    )
-    assert (
-        place_a2b_env.PlaceA2BHardTaskDefinition.namespace == "place_a2b_hard"
-    )
-    assert place_a2b_env.PlaceA2BEasyTaskDefinition.config_path.endswith(
-        "place_a2b_easy.yaml"
-    )
-    assert place_a2b_env.PlaceA2BHardTaskDefinition.config_path.endswith(
-        "place_a2b_hard.yaml"
-    )
+    task_class = getattr(place_a2b_env, task_class_name)
+    assert task_class.namespace == expected_namespace
+    assert task_class.config_path.endswith(expected_config_suffix)
 
 
 def test_resolve_task_params_reads_yaml_task_section(

@@ -1,0 +1,26 @@
+policy: groot
+# both sim + model containers run with --network=host -> same loopback.
+host: 127.0.0.1
+port: 8000
+timeout_ms: 15000
+open_loop_horizon: 30
+# null -> use the task instruction; set a string to override it.
+instruction: null
+logging_tag: null
+api_token: null
+language_key: annotation.task_index
+# GR00T video key -> canonical camera slot (AnyMove dual-arm / dualarm_piper).
+video_map:
+  static_camera: base
+  left_hand_camera: left_wrist
+  right_hand_camera: right_wrist
+# canonical manipulator slot -> GR00T arm/gripper keys (absolute targets).
+arms:
+  - manipulator_slot: left_arm
+    arm_key: left_joint_pos
+    gripper_key: left_gripper_pos
+    arm_relative: false
+  - manipulator_slot: right_arm
+    arm_key: right_joint_pos
+    gripper_key: right_gripper_pos
+    arm_relative: false

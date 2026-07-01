@@ -1,0 +1,24 @@
+scene:
+  type: room_table
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: franka_panda
+  initial_pos: [0.0, 0.0, 0.0]
+  init_joint_noise_std: 0.05
+
+layout: spatial_pick_easy.json
+
+instruction:
+  template: spatial_pick_default
+  template_mode: fixed
+  actor_description_mode: raw
+
+asset_configs:
+  pick:
+    filter:
+      tags: [is_graspable]

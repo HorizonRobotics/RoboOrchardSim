@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from robo_orchard_core.viz.jupyter.virtual_display import IpyVirtualDisplay
 
-from robo_orchard_sim.sim.context import SimulationContext
+from robo_orchard_sim.ext.sim.context import SimulationContext
 
 
 class IsaacIpyVirtualDisplay(IpyVirtualDisplay):

@@ -41,9 +41,9 @@ class AssetMeta:
     description: str
 
     # Attributes (optional — may be None for old assets)
-    color: str | None
-    shape: str | None
-    material: str | None
+    color: frozenset[str] | None
+    shape: frozenset[str] | None
+    material: frozenset[str] | None
 
     # Physics
     real_height: float
@@ -66,6 +66,15 @@ class AssetMeta:
     # Provenance
     version: str = ""
     generate_time: str = ""
+
+    # AABB in asset local frame (meters). None for assets that pre-date
+    # registry-tracked AABB; downstream consumers must handle None.
+    aabb_x_min: float | None = None
+    aabb_x_max: float | None = None
+    aabb_y_min: float | None = None
+    aabb_y_max: float | None = None
+    aabb_z_min: float | None = None
+    aabb_z_max: float | None = None
 
     @property
     def size_bucket(self) -> str:
@@ -108,6 +117,12 @@ class AssetFilter:
         # Accept list/tuple/set for convenience; normalize to frozenset.
         if not isinstance(self.tags, frozenset):
             object.__setattr__(self, "tags", frozenset(self.tags))
+        if self.color is not None:
+            object.__setattr__(self, "color", self.color.strip().lower())
+        if self.shape is not None:
+            object.__setattr__(self, "shape", self.shape.strip().lower())
+        if self.material is not None:
+            object.__setattr__(self, "material", self.material.strip().lower())
 
     def __repr__(self) -> str:
         """Compact repr — only show non-default fields."""
@@ -141,11 +156,17 @@ class AssetFilter:
             return False
         if self.category is not None and meta.category != self.category:
             return False
-        if self.color is not None and meta.color != self.color:
+        if self.color is not None and (
+            meta.color is None or self.color not in meta.color
+        ):
             return False
-        if self.shape is not None and meta.shape != self.shape:
+        if self.shape is not None and (
+            meta.shape is None or self.shape not in meta.shape
+        ):
             return False
-        if self.material is not None and meta.material != self.material:
+        if self.material is not None and (
+            meta.material is None or self.material not in meta.material
+        ):
             return False
         if (
             self.size_bucket is not None

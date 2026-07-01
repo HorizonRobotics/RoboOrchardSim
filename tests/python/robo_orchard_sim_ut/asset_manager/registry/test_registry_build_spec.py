@@ -31,7 +31,11 @@ def test_build_spec_defaults_from_meta(mini_asset_root: Path):
     assert spec.uuid == meta.uuid
     assert spec.category == meta.category
     assert spec.actor_type == "target"
-    assert spec.attributes == ()
+    assert spec.attributes == {
+        "color": tuple(sorted(meta.color or ())),
+        "shape": tuple(sorted(meta.shape or ())),
+        "material": tuple(sorted(meta.material or ())),
+    }
     assert spec.usd_path == meta.usd_path
     assert spec.caption_path == meta.caption_path
     assert spec.interaction_path == meta.interaction_path
@@ -40,6 +44,21 @@ def test_build_spec_defaults_from_meta(mini_asset_root: Path):
     assert spec.mass == meta.real_mass
     assert spec.initial_pos is None
     assert spec.initial_rot is None
+
+
+def test_build_spec_copies_instruction_attributes_from_meta(
+    mini_asset_root: Path,
+):
+    reg = AssetRegistry(str(mini_asset_root))
+    meta = reg.get_by_asset_id("apple_001")
+
+    spec = reg.build_spec(meta, role="target")
+
+    assert spec.attributes == {
+        "color": tuple(sorted(meta.color or ())),
+        "shape": tuple(sorted(meta.shape or ())),
+        "material": tuple(sorted(meta.material or ())),
+    }
 
 
 def test_build_spec_name_override(mini_asset_root: Path):

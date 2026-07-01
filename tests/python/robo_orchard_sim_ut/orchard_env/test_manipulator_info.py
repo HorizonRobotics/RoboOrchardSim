@@ -28,8 +28,16 @@ from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     ResolvedManipulatorProfile,
     RobotInfoCfg,
 )
-from robo_orchard_sim.tasks.trajs_gen.base_executor import BaseExecutorCfg
-from robo_orchard_sim.tasks.trajs_gen.manipulator_resolver import (
+from robo_orchard_sim.orchard_env.embodiments.franka_panda import (
+    FrankaPandaEmbodiment,
+)
+from robo_orchard_sim.orchard_env.embodiments.panda_droid import (
+    PandaDroidEmbodiment,
+)
+from robo_orchard_sim.task_components.trajs_gen.base_executor import (
+    BaseExecutorCfg,
+)
+from robo_orchard_sim.task_components.trajs_gen.manipulator_resolver import (
     ManipulatorBindingContext,
 )
 
@@ -119,6 +127,75 @@ def test_robot_info_cfg_dualarm_piper_left_arm_profile_has_correct_anatomy():
         "left_joint7",
         "left_joint8",
     )
+
+
+def test_robot_info_cfg_franka_panda_arm_profile_uses_panda_anatomy():
+    embodiment = FrankaPandaEmbodiment(enable_cameras=False)
+
+    robot_info = embodiment.get_robot_info_cfg("main_arm")
+
+    assert isinstance(robot_info.manipulator_profile, ManipulatorProfile)
+    assert robot_info.manipulator_profile.ee_body_name == "panda_hand"
+    assert robot_info.manipulator_profile.gripper_joint_names == (
+        "panda_finger_joint1",
+        "panda_finger_joint2",
+    )
+
+
+def test_robot_info_cfg_franka_panda_returns_franka_robot_name():
+    embodiment = FrankaPandaEmbodiment(enable_cameras=False)
+
+    robot_info = embodiment.get_robot_info_cfg("main_arm")
+
+    assert robot_info.robot_name == "robots/franka_panda"
+
+
+def test_robot_info_cfg_franka_panda_planner_profile_uses_legacy_links():
+    embodiment = FrankaPandaEmbodiment(enable_cameras=False)
+
+    robot_info = embodiment.get_robot_info_cfg("main_arm")
+    kinematics = robot_info.planner.robot.kinematics
+
+    assert kinematics.base_link == "panda_link0"
+    assert kinematics.ee_link == "panda_hand"
+    assert kinematics.lock_joints == {
+        "panda_finger_joint1": 0.08,
+        "panda_finger_joint2": 0.08,
+    }
+
+
+def test_robot_info_cfg_panda_droid_arm_profile_uses_robotiq_anatomy():
+    embodiment = PandaDroidEmbodiment(enable_cameras=False)
+
+    robot_info = embodiment.get_robot_info_cfg("main_arm")
+
+    assert isinstance(robot_info.manipulator_profile, ManipulatorProfile)
+    assert robot_info.manipulator_profile.ee_body_name == "base_link"
+    assert robot_info.manipulator_profile.gripper_joint_names == (
+        "finger_joint",
+    )
+
+
+def test_robot_info_cfg_panda_droid_returns_droid_robot_name():
+    embodiment = PandaDroidEmbodiment(enable_cameras=False)
+
+    robot_info = embodiment.get_robot_info_cfg("main_arm")
+
+    assert robot_info.robot_name == "robots/panda_droid"
+
+
+def test_robot_info_cfg_panda_droid_planner_profile_uses_usd_links():
+    embodiment = PandaDroidEmbodiment(enable_cameras=False)
+
+    robot_info = embodiment.get_robot_info_cfg("main_arm")
+    kinematics = robot_info.planner.robot.kinematics
+
+    assert kinematics.base_link == "panda_link0"
+    assert kinematics.ee_link == "panda_hand"
+    assert kinematics.lock_joints == {
+        "panda_finger_joint1": 0.08,
+        "panda_finger_joint2": 0.08,
+    }
 
 
 def test_resolved_manipulator_profile_from_articulation_returns_ids():

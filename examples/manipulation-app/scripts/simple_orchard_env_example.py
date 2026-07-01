@@ -49,6 +49,9 @@ the library directory; subsequent runs reuse it.
 
 from __future__ import annotations
 
+num_episodes = 5
+steps_per_episode = 50
+
 from robo_orchard_sim.launcher import SimpleIsaacAppLauncher
 
 launcher = SimpleIsaacAppLauncher(
@@ -68,10 +71,10 @@ from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
     AssetResolver,
     AssetResolverError,
 )
-from robo_orchard_sim.envs.env_base import IsaacEnvContextManager
-from robo_orchard_sim.task_suite.registry import (
+from robo_orchard_sim.benchmark.registry import (
     build_task,
 )
+from robo_orchard_sim.ext.envs.env_base import IsaacEnvContextManager
 
 _ASSET_ROOT_ENV = "ORCHARD_ASSET_LIBRARY"
 
@@ -202,15 +205,20 @@ def main() -> None:
         disable_exit_on_stop=False,
     )
     with env_manager as env:
-        _ = env.reset()
-        print("Runtime reset done.")
-        print(f"Available entities: {list(env.scene.keys())}")
-
-        for i in range(5):
+        for r in range(num_episodes):
             if not sim_app.is_running():
                 break
-            _ = env.step()
-            print(f"Step {i + 1} done.")
+            _ = env.reset()
+            print(f"Runtime reset {r + 1}/{num_episodes} done.")
+            if r == 0:
+                print(f"Available entities: {list(env.scene.keys())}")
+            if env.pool_alias_state is not None:
+                print(f"Pool actives: {env.pool_alias_state.aliases}")
+            for i in range(steps_per_episode):
+                if not sim_app.is_running():
+                    break
+                _ = env.step()
+                print(f"  Step {i + 1} done.")
 
     print("Example finished successfully.")
 

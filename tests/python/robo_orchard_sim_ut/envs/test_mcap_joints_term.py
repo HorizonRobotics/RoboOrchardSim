@@ -90,15 +90,16 @@ def _load_joints_term_module(monkeypatch: pytest.MonkeyPatch):
     module_name = "tested_mcap_joints_term"
     repo_root = Path(__file__).resolve().parents[4]
     file_path = (
-        repo_root / "robo_orchard_sim/envs/managers/record/mcap/joints_term.py"
+        repo_root
+        / "robo_orchard_sim/ext/envs/managers/record/mcap/joints_term.py"
     )
 
     package_names = [
         "robo_orchard_sim",
-        "robo_orchard_sim.envs",
-        "robo_orchard_sim.envs.managers",
-        "robo_orchard_sim.envs.managers.record",
-        "robo_orchard_sim.envs.managers.record.mcap",
+        "robo_orchard_sim.ext.envs",
+        "robo_orchard_sim.ext.envs.managers",
+        "robo_orchard_sim.ext.envs.managers.record",
+        "robo_orchard_sim.ext.envs.managers.record.mcap",
         "robo_orchard_sim.utils",
     ]
     for name in package_names:
@@ -106,18 +107,19 @@ def _load_joints_term_module(monkeypatch: pytest.MonkeyPatch):
         package.__path__ = []
         monkeypatch.setitem(sys.modules, name, package)
 
-    env_base = types.ModuleType("robo_orchard_sim.envs.env_base")
+    env_base = types.ModuleType("robo_orchard_sim.ext.envs.env_base")
     env_base.IsaacEnvType_co = object
     monkeypatch.setitem(sys.modules, env_base.__name__, env_base)
 
-    record_module = types.ModuleType("robo_orchard_sim.envs.managers.record")
+    record_module_name = "robo_orchard_sim.ext.envs.managers.record"
+    record_module = types.ModuleType(record_module_name)
     record_module.__path__ = []
     record_module.RecordTermBase = _StubRecordTermBase
     record_module.RecordTermBaseCfg = _StubRecordTermBaseCfg
     monkeypatch.setitem(sys.modules, record_module.__name__, record_module)
 
     message_module = types.ModuleType(
-        "robo_orchard_sim.envs.managers.record.mcap.message"
+        "robo_orchard_sim.ext.envs.managers.record.mcap.message"
     )
     message_module.Message = _StubMessage
     monkeypatch.setitem(sys.modules, message_module.__name__, message_module)
@@ -356,3 +358,14 @@ def test_mcap_joints_term_with_joint_ids_returns_selected_joint_positions(
 
     [message] = messages["/joint_states"]
     assert [state.position for state in message.data.states] == [2.0, 5.0]
+
+
+def test_mcap_joints_term_with_empty_joint_positions_skips_recording(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    messages = _record_messages(
+        monkeypatch,
+        obs={"joint_pos": _FakeTensor(np.array([]))},
+    )
+
+    assert messages == {}

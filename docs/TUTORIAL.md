@@ -24,14 +24,14 @@ From a user point of view, a runnable `env_task` needs four pieces:
 
 The reference files are:
 
-- task entry: [place_a2b_env.py](../robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py)
-- task registration: [registration.py](../robo_orchard_sim/task_suite/registration.py)
-- runtime bootstrap: [registry.py](../robo_orchard_sim/task_suite/registry.py)
+- task entry: [place_a2b_env.py](../robo_orchard_sim/benchmark/manipulation/place_a2b/place_a2b_env.py)
+- task registration: [registration.py](../robo_orchard_sim/benchmark/registration.py)
+- runtime bootstrap: [registry.py](../robo_orchard_sim/benchmark/registry.py)
 - evaluator entry: [eval_policy.py](../examples/manipulation-app/scripts/eval_policy.py)
 
 ## Part 1: Define a New `env_task`
 
-Start by adding a new task definition under `robo_orchard_sim/task_suite/...`. The repository already does this for `place_a2b`, which is registered with `@register_task` and builds an `OrchardEnv` explicitly in [place_a2b_env.py](../robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py).
+Start by adding a new task definition under `robo_orchard_sim/benchmark/...`. The repository already does this for `place_a2b`, which is registered with `@register_task` and builds an `OrchardEnv` explicitly in [place_a2b_env.py](../robo_orchard_sim/benchmark/manipulation/place_a2b/place_a2b_env.py).
 
 ### Step 1: Create a `TaskDefinition`
 
@@ -39,8 +39,8 @@ Your task definition is the user-facing entry point. It gives the task a name an
 
 ```python
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
-from robo_orchard_sim.task_suite.base import TaskDefinition
-from robo_orchard_sim.task_suite.registration import register_task
+from robo_orchard_sim.benchmark.base import TaskDefinition
+from robo_orchard_sim.benchmark.registration import register_task
 
 
 @register_task
@@ -65,7 +65,7 @@ What matters here:
 - `resolve_scene()` and `resolve_embodiment()` are helper methods you can call inside `build()`
 - `config_path` can point to a YAML file that provides `scene`, `embodiment`, and optional `instruction` config
 - the task object you construct inside `build()` must be a `TaskBase` with task-specific assets and logic
-- `@register_task` adds the class to the task registry in [registration.py](../robo_orchard_sim/task_suite/registration.py)
+- `@register_task` adds the class to the task registry in [registration.py](../robo_orchard_sim/benchmark/registration.py)
 - `scene` supports either a registered string name or a `SceneBase` instance; `embodiment` supports either a registered string name or an `EmbodimentBase` instance
 
 Note: `TaskDefinition` currently parses `instruction` config, but the current
@@ -103,11 +103,11 @@ An `OrchardEnv` is built from:
 - `embodiment`: robot definition
 - `task`: task-specific assets, reset logic, and validator
 
-The reference composition is in [place_a2b_env.py](../robo_orchard_sim/task_suite/manipulation/place_a2b/place_a2b_env.py). For your first custom task, the safest path is to reuse an existing scene and embodiment, and only change the task-specific assets and validator logic.
+The reference composition is in [place_a2b_env.py](../robo_orchard_sim/benchmark/manipulation/place_a2b/place_a2b_env.py). For your first custom task, the safest path is to reuse an existing scene and embodiment, and only change the task-specific assets and validator logic.
 
 ### Step 3: Implement Reset and Validation Logic
 
-The task object is where evaluation becomes meaningful. In the `place_a2b` example, [place_a2b_task.py](../robo_orchard_sim/orchard_env/tasks/place_a2b_task.py) defines:
+The task object is where evaluation becomes meaningful. In the `place_a2b` example, [place_a2b_task.py](../robo_orchard_sim/orchard_env/task_templates/place_a2b_task.py) defines:
 
 - `get_event_cfg()`: how objects are reset at episode start
 - `build_validator()`: how success and progress are measured
@@ -141,11 +141,11 @@ If `build_validator()` is missing or too weak, the evaluator can still run, but 
 
 Defining the class is not enough. The evaluator resolves tasks by name at runtime, so your module must also be imported during bootstrap.
 
-Update [_bootstrap_task_definitions()](../robo_orchard_sim/task_suite/registry.py) in [registry.py](../robo_orchard_sim/task_suite/registry.py):
+Update [_bootstrap_task_definitions()](../robo_orchard_sim/benchmark/registry.py) in [registry.py](../robo_orchard_sim/benchmark/registry.py):
 
 ```python
 def _bootstrap_task_definitions() -> None:
-    from robo_orchard_sim.task_suite.manipulation import (
+    from robo_orchard_sim.benchmark.manipulation import (
         my_task as _my_task,
         place_a2b as _place_a2b,
     )
@@ -326,7 +326,7 @@ The main field you must change is `task_name`. It must match the `namespace` you
 
 ### Step 2: Run the Evaluation Loop
 
-The evaluator implementation is in [evaluator.py](../robo_orchard_sim/evaluator/evaluator.py). At runtime it will:
+The evaluator implementation is in [evaluator.py](../robo_orchard_sim/pipeline/evaluator/evaluator.py). At runtime it will:
 
 1. resolve your task by `task_name`
 2. build the `OrchardEnv`
@@ -336,7 +336,7 @@ The evaluator implementation is in [evaluator.py](../robo_orchard_sim/evaluator/
 6. call the task validator every step
 7. aggregate the final `EvaluationResult`
 
-The per-episode loop in [_run_episode()](../robo_orchard_sim/evaluator/evaluator.py) stops when one of these happens:
+The per-episode loop in [_run_episode()](../robo_orchard_sim/pipeline/evaluator/evaluator.py) stops when one of these happens:
 
 - validator reports success
 - environment terminates
@@ -365,7 +365,7 @@ By default, the example script uses `DummyPolicyCfg`, so this is best treated as
 
 ### Step 4: Read the Output
 
-The script writes a serialized `EvaluationResult` JSON. The evaluator computes these top-level fields in [evaluate()](../robo_orchard_sim/evaluator/evaluator.py):
+The script writes a serialized `EvaluationResult` JSON. The evaluator computes these top-level fields in [evaluate()](../robo_orchard_sim/pipeline/evaluator/evaluator.py):
 
 - `episode_num`
 - `seed_start`

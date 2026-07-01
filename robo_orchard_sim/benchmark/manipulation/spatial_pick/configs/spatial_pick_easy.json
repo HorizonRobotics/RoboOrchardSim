@@ -1,0 +1,206 @@
+{
+    "task_instruction": "Pick up the tomato to the left of the apple.",
+    "tree": {
+        "table": [
+            [
+                "apple",
+                "on"
+            ],
+            [
+                "tomato_target",
+                "on"
+            ],
+            [
+                "tomato_distractor00",
+                "on"
+            ]
+        ]
+    },
+    "relation": {
+        "initial_constraints": [
+            {
+                "relation": "left_of",
+                "subject": "tomato_target",
+                "anchor": "apple",
+                "constraint_role": "initial"
+            }
+        ],
+        "goal_constraints": [],
+        "avoid_initial_constraints": [],
+        "distractor_constraints": [
+            {
+                "relation": "right_of",
+                "subject": "tomato_distractor00",
+                "anchor": "apple",
+                "constraint_role": "distractor"
+            }
+        ],
+        "branch_conditions": [],
+        "target_selection": {
+            "target": "tomato_target",
+            "candidate_set": [
+                "tomato_target",
+                "tomato_distractor00"
+            ],
+            "selection_predicates": [
+                0
+            ]
+        },
+        "distractor_objs": [
+            {
+                "name": "tomato_distractor00",
+                "semantic_name": "tomato",
+                "stats_key": "tomato",
+                "role": "movable",
+                "instance_role": "distractor"
+            }
+        ],
+        "symbolic_goals": [],
+        "goal_regions": [],
+        "spatial_constraints": [
+            {
+                "relation": "left_of",
+                "subject": "tomato_target",
+                "anchor": "apple"
+            }
+        ]
+    },
+    "objs_desc": {
+        "apple": "apple",
+        "tomato_target": "tomato",
+        "tomato_distractor00": "tomato"
+    },
+    "objs_mapping": {
+        "table": "context",
+        "apple": "manipulated",
+        "tomato_target": "manipulated",
+        "tomato_distractor00": "distractor"
+    },
+    "assets": {
+        "apple": "",
+        "tomato_target": "",
+        "tomato_distractor00": ""
+    },
+    "quality": {},
+    "position": {
+        "ref": {
+            "category": "apple",
+            "position": [
+                0.5737993794602593,
+                -0.2329787096428705,
+                0.0
+            ],
+            "rotation": [
+                0.022486979647867937,
+                0.0,
+                0.0,
+                0.9997471359030324
+            ]
+        },
+        "src": {
+            "category": "tomato",
+            "position": [
+                0.6077649249574043,
+                0.1413595899383291,
+                0.0
+            ],
+            "rotation": [
+                0.8322151720985144,
+                0.0,
+                0.0,
+                0.5544527999109032
+            ]
+        },
+        "distractor_0": {
+            "category": "tomato",
+            "position": [
+                0.49767263688984464,
+                -0.3761622244495437,
+                0.0
+            ],
+            "rotation": [
+                0.9584943818195067,
+                0.0,
+                0.0,
+                -0.2851114168539059
+            ]
+        }
+    },
+    "frame_convention": {
+        "position_frame": "arm_world",
+        "relation_frame": "arm_world",
+        "arm_base_pose_world": {
+            "position": [
+                0.0,
+                0.0,
+                0.0
+            ],
+            "rotation": [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+            ]
+        },
+        "arm_world_axes": "+X arm_forward, +Y arm_left, +Z up"
+    },
+    "layout_contract": {
+        "objects": [
+            {
+                "name": "apple",
+                "semantic_name": "apple",
+                "stats_key": "apple",
+                "role": "movable",
+                "instance_role": "anchor"
+            },
+            {
+                "name": "tomato_target",
+                "semantic_name": "tomato",
+                "stats_key": "tomato",
+                "role": "movable",
+                "instance_role": "target"
+            }
+        ],
+        "distractor_objs": [
+            {
+                "name": "tomato_distractor00",
+                "semantic_name": "tomato",
+                "stats_key": "tomato",
+                "role": "movable",
+                "instance_role": "distractor"
+            }
+        ],
+        "initial_predicates": [
+            {
+                "predicate": "left_of",
+                "role": "initial_condition",
+                "source_task_type": "perceive",
+                "subject": "tomato_target",
+                "anchor": "apple",
+                "frame": "arm_world",
+                "geometry_level": "xy_geometric",
+                "layout_effect": "must_satisfy_initial"
+            }
+        ],
+        "goal_predicates": [],
+        "avoid_initial_predicates": [],
+        "branch_conditions": [],
+        "symbolic_goals": [],
+        "target_selection": {
+            "target": "tomato_target",
+            "candidate_set": [
+                "tomato_target",
+                "tomato_distractor00"
+            ],
+            "selection_predicates": [
+                0
+            ]
+        },
+        "action_targets": [
+            {
+                "action": "Pick",
+                "object": "tomato_target"
+            }
+        ]
+    }
+}

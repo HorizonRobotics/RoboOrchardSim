@@ -22,16 +22,18 @@ import torch
 from robo_orchard_sim.controllers.curobo_planner.curobo import (
     ArticulationJointCuroboTrajPlannerCfg,
     CSpaceCfg,
-    IKSolverCfg,
-    MotionGenCfg,
-    MotionGenPlanConfig,
     RobotCfg,
     RobotKinematicsCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import ORCHARD_ASSET
+from robo_orchard_sim.ext.models.assets.asset_cfg import ORCHARD_ASSET
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     ManipulatorProfile,
     RobotInfoCfg,
+)
+from robo_orchard_sim.orchard_env.embodiments.planner_cfg import (
+    DEFAULT_IK_SOLVER_CFG,
+    DEFAULT_MOTION_GEN_CFG,
+    DEFAULT_MOTION_GEN_PLAN_CFG,
 )
 
 _PIPER_GRIPPER_OPEN_VAL = [0.05, -0.05]
@@ -96,47 +98,9 @@ _PIPER_PLANNER = ArticulationJointCuroboTrajPlannerCfg(
             ),
         )
     ),
-    motion_gen=MotionGenCfg(
-        interpolation_dt=1 / 30,
-        collision_activation_distance=0.02,
-        interpolation_steps=5000,
-        num_ik_seeds=30,
-        num_trajopt_seeds=12,
-        grad_trajopt_iters=50,
-        evaluate_interpolated_trajectory=True,
-        trajopt_tsteps=32,
-        use_cuda_graph=True,
-        num_graph_seeds=12,
-        self_collision_check=True,
-        maximum_trajectory_time=15,
-        jerk_scale=1.0,
-        finetune_dt_scale=0.98,
-        collision_cache=dict(
-            obb=30,
-            mesh=10,
-        ),
-    ),
-    motion_gen_plan=MotionGenPlanConfig(
-        enable_graph=False,
-        enable_opt=True,
-        use_nn_ik_seed=True,
-        need_graph_success=True,
-        max_attempts=4,
-        timeout=10.0,
-        enable_graph_attempt=2,
-        partial_ik_opt=True,
-        success_ratio=1.0,
-        fail_on_invalid_query=True,
-        enable_finetune_trajopt=True,
-        parallel_finetune=True,
-    ),
-    ik_solver=IKSolverCfg(
-        num_seeds=50,
-        use_cuda_graph=True,
-        self_collision_check=False,
-        self_collision_opt=False,
-        cuda_grasp_batch_size=1280,
-    ),
+    motion_gen=DEFAULT_MOTION_GEN_CFG,
+    motion_gen_plan=DEFAULT_MOTION_GEN_PLAN_CFG,
+    ik_solver=DEFAULT_IK_SOLVER_CFG,
 )
 
 

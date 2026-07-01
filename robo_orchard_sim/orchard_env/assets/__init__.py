@@ -25,11 +25,13 @@ from robo_orchard_sim.orchard_env.assets.object_spec import (
     ObjectSpec,
     RigidObjectSpec,
 )
+from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
 
 __all__ = [
     "ArticulationSpec",
     "AssetSpec",
     "CustomAssetSpec",
     "ObjectSpec",
+    "PoolSpec",
     "RigidObjectSpec",
 ]

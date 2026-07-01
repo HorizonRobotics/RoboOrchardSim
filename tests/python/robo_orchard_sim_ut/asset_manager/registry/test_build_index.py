@@ -16,6 +16,7 @@
 
 """Tests for build_asset_index (library API and CLI entry point)."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,7 @@ from robo_orchard_sim.asset_manager.registry.build_index import (
 )
 from robo_orchard_sim.asset_manager.registry.errors import (
     DuplicateAssetIdError,
+    MissingAabbError,
 )
 
 # ---------------------------------------------------------------------------
@@ -109,6 +111,35 @@ def test_parquet_caption_path_defaults_to_asset_local_json(
     assert row.caption_path == str(expected)
 
 
+def test_parquet_caption_path_follows_urdf_link(tmp_path: Path, make_urdf):
+    """URDF <caption_candidates>./X.json</> -> caption_path under asset_dir."""
+    import json
+
+    asset_dir = tmp_path / "food" / "fruits" / "apple_001"
+    asset_dir.mkdir(parents=True)
+    urdf_text = make_urdf(
+        uuid="u-apple-link-001",
+        domain="food",
+        super_category="fruits",
+        category="apple",
+        caption_link="./caption_candidates_updated.json",
+    )
+    # make_urdf hardcodes the asset name "fork_001"; rewrite to apple_001
+    urdf_text = urdf_text.replace("fork_001", "apple_001")
+    (asset_dir / "apple_001.urdf").write_text(urdf_text)
+    (asset_dir / "apple_001.usd").write_text("fake-usd")
+    (asset_dir / "interaction.json").write_text(
+        json.dumps({"interaction": {}})
+    )
+
+    build_asset_index(str(tmp_path))
+    table = pq.read_table(tmp_path / "asset_index.parquet")
+    df = table.to_pandas()
+    row = df[df.asset_id == "apple_001"].iloc[0]
+    expected = asset_dir / "caption_candidates_updated.json"
+    assert row.caption_path == str(expected)
+
+
 def test_box_001_has_both_tags(mini_asset_root: Path):
     build_asset_index(str(mini_asset_root))
     table = pq.read_table(mini_asset_root / "asset_index.parquet")
@@ -169,8 +200,8 @@ def test_default_cache_index_path_resolves_relative(
 
 
 def test_duplicate_asset_id_raises(tmp_path: Path, mini_asset_root: Path):
-    # Create a second apple_001 in a different subpath
-    dup_dir = mini_asset_root / "duplicates/apple_001"
+    # Create a second apple_001 in a different super_category subpath
+    dup_dir = mini_asset_root / "food/duplicates/apple_001"
     dup_dir.mkdir(parents=True)
     src = mini_asset_root / "food/fruits/apple_001"
     for f in src.iterdir():
@@ -212,7 +243,7 @@ def test_cli_runs_on_mini_asset_root(mini_asset_root: Path):
 
 
 def test_cli_nonzero_on_duplicate(mini_asset_root: Path):
-    dup = mini_asset_root / "dups/apple_001"
+    dup = mini_asset_root / "food/dups/apple_001"
     dup.mkdir(parents=True)
     src = mini_asset_root / "food/fruits/apple_001"
     for f in src.iterdir():
@@ -233,3 +264,97 @@ def test_cli_nonzero_on_duplicate(mini_asset_root: Path):
         f"stderr={result.stderr}"
     )
     assert "Duplicate asset_id" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# v5 schema: flattened AABB columns + strict mode
+# ---------------------------------------------------------------------------
+
+
+def _interaction_json() -> str:
+    return json.dumps({"interaction": {"passive": {"pick": {"body": []}}}})
+
+
+def test_build_writes_aabb_columns_matching_urdf_values(
+    tmp_path: Path, make_urdf
+):
+    """URDF with <aabb> -> parquet has correct aabb_* values."""
+    root = tmp_path / "lib"
+    asset_dir = root / "kitchen_supplies" / "tableware" / "fork_001"
+    asset_dir.mkdir(parents=True)
+    (asset_dir / "fork_001.urdf").write_text(
+        make_urdf(
+            aabb_min=(-0.05, -0.10, -0.01),
+            aabb_max=(0.05, 0.10, 0.02),
+        )
+    )
+    (asset_dir / "interaction.json").write_text(_interaction_json())
+
+    report = build_asset_index(str(root))
+    assert report.total_indexed == 1
+    table = pq.read_table(report.output_path)
+    row = table.to_pylist()[0]
+    expected = {
+        "aabb_x_min": -0.05,
+        "aabb_x_max": 0.05,
+        "aabb_y_min": -0.10,
+        "aabb_y_max": 0.10,
+        "aabb_z_min": -0.01,
+        "aabb_z_max": 0.02,
+    }
+    actual = {k: row[k] for k in expected}
+    assert actual == pytest.approx(expected)
+
+
+def test_build_strict_raises_on_missing_aabb(tmp_path: Path, make_urdf):
+    """URDF without <aabb> in strict mode -> MissingAabbError."""
+    root = tmp_path / "lib"
+    asset_dir = root / "kitchen_supplies" / "tableware" / "fork_001"
+    asset_dir.mkdir(parents=True)
+    # No aabb_* kwargs -> make_urdf produces a URDF without <aabb>
+    (asset_dir / "fork_001.urdf").write_text(make_urdf())
+    (asset_dir / "interaction.json").write_text(_interaction_json())
+
+    with pytest.raises(MissingAabbError) as exc:
+        build_asset_index(str(root), strict=True)
+    assert "fork_001" in str(exc.value)
+
+
+@pytest.fixture
+def _non_strict_aabbless_report(tmp_path: Path, make_urdf):
+    """Build an index over one URDF without <aabb> in non-strict mode."""
+    root = tmp_path / "lib"
+    asset_dir = root / "kitchen_supplies" / "tableware" / "fork_001"
+    asset_dir.mkdir(parents=True)
+    (asset_dir / "fork_001.urdf").write_text(make_urdf())
+    (asset_dir / "interaction.json").write_text(_interaction_json())
+    report = build_asset_index(str(root))  # strict defaults to False
+    table = pq.read_table(report.output_path)
+    return report, table.to_pylist()[0]
+
+
+def test_build_non_strict_missing_aabb_writes_null_columns(
+    _non_strict_aabbless_report,
+):
+    """URDF without <aabb> in non-strict mode -> aabb_* columns are None."""
+    _report, row = _non_strict_aabbless_report
+    null_aabb_cols = {
+        k: row[k]
+        for k in [
+            "aabb_x_min",
+            "aabb_x_max",
+            "aabb_y_min",
+            "aabb_y_max",
+            "aabb_z_min",
+            "aabb_z_max",
+        ]
+    }
+    assert null_aabb_cols == dict.fromkeys(null_aabb_cols, None)
+
+
+def test_build_non_strict_missing_aabb_emits_warning(
+    _non_strict_aabbless_report,
+):
+    """URDF without <aabb> in non-strict mode -> warning is emitted."""
+    report, _row = _non_strict_aabbless_report
+    assert any("aabb" in w.lower() for w in report.warnings)

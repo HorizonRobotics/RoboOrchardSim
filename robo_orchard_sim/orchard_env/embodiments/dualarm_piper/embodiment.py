@@ -27,40 +27,47 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.contracts.policy_binding import PolicyBindingSchema
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.envs.managers.actions.articulation.joint_position import (  # noqa: E501
+from robo_orchard_sim.ext.envs.managers.actions.articulation.joint_position import (  # noqa: E501
     ArticulationJointPositionActionTermCfg,
 )
-from robo_orchard_sim.envs.managers.events.default_reset import (
+from robo_orchard_sim.ext.envs.managers.events.default_reset import (
     DefaultResetTermCfg,
 )
-from robo_orchard_sim.envs.managers.events.joint_state_reset import (
+from robo_orchard_sim.ext.envs.managers.events.joint_state_reset import (
     JointStateResetTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.asset_obs import (
+from robo_orchard_sim.ext.envs.managers.observations.asset_obs import (
     AssetObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.camera import (
+from robo_orchard_sim.ext.envs.managers.observations.camera import (
     CameraObservationTermCfg,
 )
-from robo_orchard_sim.envs.managers.observations.transform_frame import (
+from robo_orchard_sim.ext.envs.managers.observations.last_action import (
+    LastActionObservationTermCfg,
+)
+from robo_orchard_sim.ext.envs.managers.observations.transform_frame import (
     FrameTransformTermCfg,
 )
-from robo_orchard_sim.envs.managers.record import RecordTermBaseCfg
-from robo_orchard_sim.envs.managers.record.mcap import (
+from robo_orchard_sim.ext.envs.managers.record import RecordTermBaseCfg
+from robo_orchard_sim.ext.envs.managers.record.mcap import (
     McapImageTermCfg,
     McapJointsTermCfg,
     McapTFTermCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.cfg import (
     DUALARM_PIPER_CFG,
 )
 from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.profile import (
     DUALARM_PIPER_ROBOT_INFO_CFGS,
+)
+from robo_orchard_sim.orchard_env.embodiments.dualarm_piper.schema import (
+    build_dualarm_piper_policy_binding_schema,
 )
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
@@ -289,6 +296,10 @@ class DualArmPiperEmbodiment(EmbodimentBase):
             for name, robot_info in DUALARM_PIPER_ROBOT_INFO_CFGS.items()
         }
 
+    def get_policy_binding_schema(self) -> PolicyBindingSchema:
+        """Return the canonical policy binding schema for this embodiment."""
+        return build_dualarm_piper_policy_binding_schema(self.name)
+
     def get_observation_cfg(self) -> ObservationManagerCfg:
         """Return robot state and frame-transform observation groups."""
         robot_scene_name = self.scene_name
@@ -350,6 +361,22 @@ class DualArmPiperEmbodiment(EmbodimentBase):
                         ),
                         property_source="joint",
                         property_name="effort",
+                    ),
+                }
+            ),
+            "/last_action": ObservationGroupCfg(
+                terms={
+                    "left_robot_joint_position": LastActionObservationTermCfg(
+                        action_name="left_robot_joint_position",
+                    ),
+                    "left_robot_gripper_control": LastActionObservationTermCfg(
+                        action_name="left_robot_gripper_control",
+                    ),
+                    "right_robot_joint_position": LastActionObservationTermCfg(
+                        action_name="right_robot_joint_position",
+                    ),
+                    "right_robot_gripper_control": LastActionObservationTermCfg(  # noqa: E501
+                        action_name="right_robot_gripper_control",
                     ),
                 }
             ),
@@ -502,6 +529,26 @@ class DualArmPiperEmbodiment(EmbodimentBase):
                 velocity_key="/robot/right_joint_velocity",
                 effort_key="/robot/right_joint_effort",
                 joint_name_prefix="right_joint",
+            ),
+            "left_arm_action_joint": McapJointsTermCfg(
+                topic="/action/robot_state/left_joint/joint_states",
+                fps=ACTION_FPS,
+                position_key="/last_action/left_robot_joint_position",
+            ),
+            "left_arm_action_gripper_joint": McapJointsTermCfg(
+                topic="/action/robot_state/left_gripper/joint_states",
+                fps=ACTION_FPS,
+                position_key="/last_action/left_robot_gripper_control",
+            ),
+            "right_arm_action_joint": McapJointsTermCfg(
+                topic="/action/robot_state/right_joint/joint_states",
+                fps=ACTION_FPS,
+                position_key="/last_action/right_robot_joint_position",
+            ),
+            "right_arm_action_gripper_joint": McapJointsTermCfg(
+                topic="/action/robot_state/right_gripper/joint_states",
+                fps=ACTION_FPS,
+                position_key="/last_action/right_robot_gripper_control",
             ),
             **self._generate_arm_tf_record_terms(arm_prefix="left"),
             **self._generate_arm_tf_record_terms(arm_prefix="right"),

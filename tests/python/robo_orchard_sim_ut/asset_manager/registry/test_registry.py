@@ -138,7 +138,7 @@ def test_get_meta_by_uuid(mini_asset_root: Path):
     reg = AssetRegistry(str(mini_asset_root))
     meta = reg.get_meta("u-apple-001")
     assert meta.asset_id == "apple_001"
-    assert meta.color == "red"
+    assert meta.color == frozenset({"red"})
     assert "graspable" in meta.tags
 
 
@@ -221,9 +221,75 @@ def test_unknown_asset_id_raises_with_suggestions(mini_asset_root: Path):
 def test_query_no_filter_returns_all_sorted(mini_asset_root: Path):
     reg = AssetRegistry(str(mini_asset_root))
     metas = reg.query(AssetFilter())
-    ids = [m.asset_id for m in metas]
-    assert ids == sorted(ids)
-    assert len(ids) == 6
+    uuids = [m.uuid for m in metas]
+    assert uuids == sorted(uuids)
+    assert len(uuids) == 6
+
+
+def test_query_sorted_by_uuid_when_asset_id_diverges(tmp_path: Path):
+    """Regression: query result sorts by uuid, not asset_id.
+
+    Built with divergent uuid/asset_id orderings so sort-by-asset_id and
+    sort-by-uuid produce different sequences; verifies query honors uuid.
+    """
+    import json
+    from textwrap import dedent
+
+    def _urdf(name: str, uuid: str, category: str) -> str:
+        return dedent(f"""\
+            <?xml version='1.0' encoding='utf-8'?>
+            <robot name="{name}">
+              <link name="{name}">
+                <inertial>
+                  <mass value="0.15"/>
+                  <origin xyz="0 0 0"/>
+                  <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0"
+                           iyz="0.0" izz="1.0"/>
+                </inertial>
+                <extra_info>
+                  <uuid>{uuid}</uuid>
+                  <domain>food</domain>
+                  <super_category>fruits</super_category>
+                  <category>{category}</category>
+                  <name>{category}</name>
+                  <color>red</color>
+                  <shape>sphere</shape>
+                  <material>organic</material>
+                  <description>test</description>
+                  <min_height>0.05</min_height>
+                  <max_height>0.10</max_height>
+                  <real_height>0.08</real_height>
+                  <min_mass>0.10</min_mass>
+                  <max_mass>0.20</max_mass>
+                  <version>v0.1.0</version>
+                  <generate_time>20260519000000</generate_time>
+                  <tags></tags>
+                </extra_info>
+              </link>
+            </robot>""")
+
+    def _write(rel: str, name: str, uuid: str, category: str) -> None:
+        d = tmp_path / rel
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.urdf").write_text(_urdf(name, uuid, category))
+        (d / f"{name}.usd").write_text("fake")
+        (d / "interaction.json").write_text(json.dumps({"interaction": {}}))
+
+    # asset_id alphabetical: [apple_001, zebra_001]
+    # uuid alphabetical:     [aaa-zebra, zzz-apple]  -> reversed
+    _write("food/fruits/apple_001", "apple_001", "zzz-apple", "apple")
+    _write("food/fruits/zebra_001", "zebra_001", "aaa-zebra", "zebra")
+
+    reg = AssetRegistry(str(tmp_path))
+    metas = reg.query(AssetFilter())
+
+    uuids = [m.uuid for m in metas]
+    asset_ids = [m.asset_id for m in metas]
+
+    # By uuid: aaa-zebra comes first
+    assert uuids == ["aaa-zebra", "zzz-apple"]
+    # Sort-by-asset_id would give [apple_001, zebra_001] — the OPPOSITE order
+    assert asset_ids == ["zebra_001", "apple_001"]
 
 
 def test_query_by_tag_graspable(mini_asset_root: Path):
@@ -285,3 +351,48 @@ def test_query_with_exclude(mini_asset_root: Path):
         AssetFilter(category="apple", exclude=frozenset({"u-apple-001"}))
     )
     assert [m.asset_id for m in metas] == ["apple_002"]
+
+
+def test_registry_rebuilds_when_asset_set_changes(mini_asset_root):
+    """Adding an asset after the index is built triggers an auto-rebuild."""
+    import shutil
+
+    reg = AssetRegistry(str(mini_asset_root))
+    before = len(reg)
+    assert not reg.has("u-apple-999")
+
+    # Clone an existing asset into a new dir with a distinct uuid/asset_id.
+    src = mini_asset_root / "food/fruits/apple_001"
+    dst = mini_asset_root / "food/fruits/apple_999"
+    shutil.copytree(src, dst)
+    (dst / "apple_001.urdf").rename(dst / "apple_999.urdf")
+    (dst / "apple_001.usd").rename(dst / "apple_999.usd")
+    urdf = dst / "apple_999.urdf"
+    urdf.write_text(
+        urdf.read_text()
+        .replace("u-apple-001", "u-apple-999")
+        .replace("apple_001", "apple_999")
+    )
+
+    # auto_build_index=True (default): stale fingerprint -> rebuild -> visible.
+    reg2 = AssetRegistry(str(mini_asset_root))
+    assert len(reg2) == before + 1
+    assert reg2.has("u-apple-999")
+
+
+def test_registry_warns_but_keeps_stale_index_without_autobuild(
+    mini_asset_root, caplog
+):
+    """auto_build_index=False: stale set warns, new asset stays invisible."""
+    import logging
+    import shutil
+
+    AssetRegistry(str(mini_asset_root))  # build initial index
+    src = mini_asset_root / "food/fruits/apple_001"
+    dst = mini_asset_root / "food/fruits/apple_999"
+    shutil.copytree(src, dst)
+
+    with caplog.at_level(logging.WARNING):
+        reg = AssetRegistry(str(mini_asset_root), auto_build_index=False)
+    assert not reg.has("u-apple-999")
+    assert any("stale" in r.message.lower() for r in caplog.records)

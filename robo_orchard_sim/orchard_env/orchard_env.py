@@ -20,15 +20,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from robo_orchard_sim.envs.manager_based_env import (
+    from robo_orchard_sim.ext.envs.manager_based_env import (
         IsaacManagerBasedEnvCfg,
     )
-    from robo_orchard_sim.envs.managers.record import RecordControllerCfg
+    from robo_orchard_sim.ext.envs.managers.record import RecordControllerCfg
     from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
         EmbodimentBase,
     )
+    from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
     from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
-    from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
+    from robo_orchard_sim.orchard_env.task_templates.task_base import TaskBase
 
 
 class OrchardEnv:
@@ -41,6 +42,7 @@ class OrchardEnv:
         embodiment: EmbodimentBase,
         task: TaskBase,
         scene: SceneBase | None = None,
+        layout_builder: LayoutBuilder | None = None,
     ):
         if scene is None:
             from robo_orchard_sim.orchard_env.scene.plane_table_scene import (  # noqa: E501
@@ -51,7 +53,8 @@ class OrchardEnv:
         self.scene = scene
         self.embodiment = embodiment
         self.task = task
-        from robo_orchard_sim.envs.managers.record import (
+        self.layout_builder = layout_builder
+        from robo_orchard_sim.ext.envs.managers.record import (
             NoOpRecordControllerCfg,
         )
 
@@ -60,13 +63,22 @@ class OrchardEnv:
             NoOpRecordControllerCfg()
         )
 
+    @property
+    def num_episodes(self) -> int | None:
+        """Episode count when driven by a layout builder; otherwise None."""
+        return (
+            self.layout_builder.num_episodes
+            if self.layout_builder is not None
+            else None
+        )
+
     def configure_recording(
         self,
         file_path: str | None = None,
         controller: RecordControllerCfg | None = None,
     ) -> "OrchardEnv":
         """Enable recording with optional file path and controller."""
-        from robo_orchard_sim.envs.managers.record import (
+        from robo_orchard_sim.ext.envs.managers.record import (
             EpisodeRecordControllerCfg,
         )
 
@@ -77,7 +89,7 @@ class OrchardEnv:
 
     def disable_recording(self) -> "OrchardEnv":
         """Disable recording while keeping the current file path."""
-        from robo_orchard_sim.envs.managers.record import (
+        from robo_orchard_sim.ext.envs.managers.record import (
             NoOpRecordControllerCfg,
         )
 
@@ -94,6 +106,7 @@ class OrchardEnv:
             scene=self.scene,
             embodiment=self.embodiment,
             task=self.task,
+            layout_builder=self.layout_builder,
             record_file_path=self._record_file_path,
             record_controller=self._record_controller,
         ).build()

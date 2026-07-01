@@ -23,20 +23,20 @@ from robo_orchard_core.envs.managers.events.event_manager import (
     EventManagerCfg,
 )
 
-import robo_orchard_sim.envs.managers.events.pose_reset as pose_reset_mod
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+import robo_orchard_sim.ext.envs.managers.events.pose_reset as pose_reset_mod
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.envs import (
+from robo_orchard_sim.ext.envs import (
     IsaacEnvContextManager,
     IsaacManagerBasedEnv,
     IsaacManagerBasedEnvCfg,
 )
-from robo_orchard_sim.envs.managers.events.pose_reset import (
+from robo_orchard_sim.ext.envs.managers.events.pose_reset import (
     PoseResetTerm,
     PoseResetTermCfg,
 )
-from robo_orchard_sim.models.scenes.table_scene import TableSceneCfg
+from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
 from robo_orchard_sim.utils.usd import get_prim_aabb
 
 
@@ -109,6 +109,7 @@ def _make_logic_term(
     term._prefer_stack = prefer_stack
     term._asset_xy_extents = {}
     term._asset_z_half_extents = {}
+    term._asset_z_min = {}
     term._assets = []
     return term
 

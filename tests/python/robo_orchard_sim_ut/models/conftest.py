@@ -16,28 +16,28 @@
 import pytest
 from robo_orchard_core.utils.config import Config
 
-from robo_orchard_sim.cfg_wrappers.assets_cfg import RigidObjectCfg
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
-from robo_orchard_sim.cfg_wrappers.managers.manager_term_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import RigidObjectCfg
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import ViewerCfg
+from robo_orchard_sim.ext.cfg_wrappers.managers.manager_term_cfg import (
     ManagerTermBaseCfg,
 )
-from robo_orchard_sim.cfg_wrappers.managers.scene_entity_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.schemas.schemas_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.simulation_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import (
     PhysxCfg,
     SimulationCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import (
     FisheyeCameraCfg,
     PinholeCameraCfg,
     UsdFileCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import NV_ISAAC_DIR
-from robo_orchard_sim.models.scenes.table_scene import (
+from robo_orchard_sim.ext.models.assets.asset_cfg import NV_ISAAC_DIR
+from robo_orchard_sim.ext.models.scenes.table_scene import (
     GroupAssetCfg,
     TableSceneCfg,
 )

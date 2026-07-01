@@ -17,7 +17,9 @@
 """Tests for the asset_manager.splits subsystem.
 
 Covers both the AssetSplits dataclass (construction, invariants,
-immutability) and the load_asset_splits YAML loader.
+immutability) and the load_asset_splits YAML loader. Splits YAML entries
+are uuid-authoritative ``{uuid, asset_id}`` mappings (asset_id optional,
+human-reference only); uuid is the key used to populate AssetSplits.
 """
 
 from __future__ import annotations
@@ -28,17 +30,26 @@ from pathlib import Path
 import pytest
 
 from robo_orchard_sim.asset_manager.splits.errors import (
-    DuplicateAssetIdInSplitError,
+    DuplicateUuidInSplitError,
     EmptySeenSplitError,
     InvalidSplitsYamlError,
     OverlappingSplitsError,
-    UnknownAssetIdError,
+    UnknownUuidError,
     UnsupportedSchemaVersionError,
 )
 from robo_orchard_sim.asset_manager.splits.splits import (
     AssetSplits,
     load_asset_splits,
 )
+
+
+def _e(uuid: str, asset_id: str | None = None) -> dict:
+    """Build a single split entry mapping."""
+    entry = {"uuid": uuid}
+    if asset_id is not None:
+        entry["asset_id"] = asset_id
+    return entry
+
 
 # ---------------------------------------------------------------------------
 # AssetSplits dataclass
@@ -117,7 +128,7 @@ class TestAssetSplitsProperties:
 
 
 # ---------------------------------------------------------------------------
-# load_asset_splits YAML loader
+# load_asset_splits YAML loader (uuid-authoritative {uuid, asset_id} entries)
 # ---------------------------------------------------------------------------
 
 
@@ -127,7 +138,10 @@ class TestLoadValid:
             {
                 "schema_version": 1,
                 "name": "mini",
-                "seen": ["apple_001", "orange_001"],
+                "seen": [
+                    _e("u-apple-001", "apple_001"),
+                    _e("u-orange-001", "orange_001"),
+                ],
             }
         )
         splits = load_asset_splits(path, mini_registry)
@@ -141,15 +155,29 @@ class TestLoadValid:
             {
                 "schema_version": 1,
                 "name": "full",
-                "seen": ["apple_001", "apple_002", "orange_001"],
-                "unseen_category": ["plate_001"],
-                "unseen_instance": ["carrot_001"],
+                "seen": [
+                    _e("u-apple-001", "apple_001"),
+                    _e("u-apple-002", "apple_002"),
+                ],
+                "unseen_category": [_e("u-orange-001", "orange_001")],
+                "unseen_instance": [_e("u-carrot-001", "carrot_001")],
             }
         )
         splits = load_asset_splits(path, mini_registry)
-        assert len(splits.seen) == 3
-        assert splits.unseen_category == frozenset({"u-plate-001"})
+        assert splits.seen == frozenset({"u-apple-001", "u-apple-002"})
+        assert splits.unseen_category == frozenset({"u-orange-001"})
         assert splits.unseen_instance == frozenset({"u-carrot-001"})
+
+    def test_asset_id_optional(self, mini_registry, write_yaml):
+        path = write_yaml(
+            {
+                "schema_version": 1,
+                "name": "no_aid",
+                "seen": [_e("u-apple-001"), _e("u-orange-001")],
+            }
+        )
+        splits = load_asset_splits(path, mini_registry)
+        assert splits.seen == frozenset({"u-apple-001", "u-orange-001"})
 
 
 class TestLoadFileErrors:
@@ -170,7 +198,7 @@ class TestLoadSchemaErrors:
             {
                 "schema_version": 1,
                 "name": "bad",
-                "seen": ["apple_001"],
+                "seen": [_e("u-apple-001", "apple_001")],
                 "schema_ver": 1,
             }
         )
@@ -181,7 +209,11 @@ class TestLoadSchemaErrors:
         self, mini_registry, write_yaml
     ):
         path = write_yaml(
-            {"schema_version": 99, "name": "bad", "seen": ["apple_001"]}
+            {
+                "schema_version": 99,
+                "name": "bad",
+                "seen": [_e("u-apple-001", "apple_001")],
+            }
         )
         with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
             load_asset_splits(path, mini_registry)
@@ -189,59 +221,104 @@ class TestLoadSchemaErrors:
         assert exc_info.value.expected == 1
 
     def test_missing_required_key_raises(self, mini_registry, write_yaml):
-        path = write_yaml({"schema_version": 1, "seen": ["apple_001"]})
+        path = write_yaml(
+            {"schema_version": 1, "seen": [_e("u-apple-001", "apple_001")]}
+        )
         with pytest.raises(InvalidSplitsYamlError, match="name"):
             load_asset_splits(path, mini_registry)
 
 
+class TestLoadEntryShapeErrors:
+    def test_entry_not_a_mapping_raises(self, mini_registry, write_yaml):
+        path = write_yaml(
+            {"schema_version": 1, "name": "bad", "seen": ["apple_001"]}
+        )
+        with pytest.raises(InvalidSplitsYamlError, match="mapping"):
+            load_asset_splits(path, mini_registry)
+
+    def test_entry_missing_uuid_raises(self, mini_registry, write_yaml):
+        path = write_yaml(
+            {
+                "schema_version": 1,
+                "name": "bad",
+                "seen": [{"asset_id": "apple_001"}],
+            }
+        )
+        with pytest.raises(InvalidSplitsYamlError, match="uuid"):
+            load_asset_splits(path, mini_registry)
+
+    def test_entry_unknown_subkey_raises(self, mini_registry, write_yaml):
+        path = write_yaml(
+            {
+                "schema_version": 1,
+                "name": "bad",
+                "seen": [{"uuid": "u-apple-001", "color": "red"}],
+            }
+        )
+        with pytest.raises(InvalidSplitsYamlError, match="color"):
+            load_asset_splits(path, mini_registry)
+
+
 class TestLoadDataErrors:
-    def test_duplicate_asset_id_in_list_raises(
-        self, mini_registry, write_yaml
-    ):
+    def test_duplicate_uuid_in_list_raises(self, mini_registry, write_yaml):
         path = write_yaml(
             {
                 "schema_version": 1,
                 "name": "dup",
-                "seen": ["apple_001", "apple_001"],
+                "seen": [
+                    _e("u-apple-001", "apple_001"),
+                    _e("u-apple-001", "apple_001"),
+                ],
             }
         )
-        with pytest.raises(DuplicateAssetIdInSplitError) as exc_info:
+        with pytest.raises(DuplicateUuidInSplitError) as exc_info:
             load_asset_splits(path, mini_registry)
         assert exc_info.value.split_name == "seen"
-        assert exc_info.value.asset_id == "apple_001"
+        assert exc_info.value.uuid == "u-apple-001"
 
-    def test_unknown_asset_id_strict_collects_all(
-        self, mini_registry, write_yaml
-    ):
+    def test_unknown_uuid_strict_collects_all(self, mini_registry, write_yaml):
         path = write_yaml(
             {
                 "schema_version": 1,
                 "name": "unk",
-                "seen": ["apple_001", "nonexistent_x"],
-                "unseen_category": ["nonexistent_y"],
+                "seen": [_e("u-apple-001"), _e("u-nope-x")],
+                "unseen_category": [_e("u-nope-y")],
             }
         )
-        with pytest.raises(UnknownAssetIdError) as exc_info:
+        with pytest.raises(UnknownUuidError) as exc_info:
             load_asset_splits(path, mini_registry)
-        assert set(exc_info.value.unknown_ids) == {
-            "nonexistent_x",
-            "nonexistent_y",
-        }
+        assert set(exc_info.value.unknown_uuids) == {"u-nope-x", "u-nope-y"}
 
-    def test_unknown_asset_id_nonstrict_skips_and_warns(
+    def test_unknown_uuid_nonstrict_skips_and_warns(
         self, mini_registry, write_yaml, caplog
     ):
         path = write_yaml(
             {
                 "schema_version": 1,
                 "name": "lenient",
-                "seen": ["apple_001", "nonexistent_x"],
+                "seen": [_e("u-apple-001"), _e("u-nope-x")],
             }
         )
         with caplog.at_level(logging.WARNING):
             splits = load_asset_splits(path, mini_registry, strict=False)
         assert splits.seen == frozenset({"u-apple-001"})
-        assert "nonexistent_x" in caplog.text
+        assert "u-nope-x" in caplog.text
+
+    def test_stale_asset_id_warns_but_loads_from_uuid(
+        self, mini_registry, write_yaml, caplog
+    ):
+        # uuid is valid; asset_id is stale (does not match the uuid).
+        path = write_yaml(
+            {
+                "schema_version": 1,
+                "name": "stale",
+                "seen": [_e("u-apple-001", "renamed_old_apple")],
+            }
+        )
+        with caplog.at_level(logging.WARNING):
+            splits = load_asset_splits(path, mini_registry)
+        assert splits.seen == frozenset({"u-apple-001"})
+        assert "renamed_old_apple" in caplog.text
 
 
 class TestLoadInvariantErrors:
@@ -255,8 +332,11 @@ class TestLoadInvariantErrors:
             {
                 "schema_version": 1,
                 "name": "overlap",
-                "seen": ["apple_001", "orange_001"],
-                "unseen_category": ["apple_001"],
+                "seen": [
+                    _e("u-apple-001", "apple_001"),
+                    _e("u-orange-001", "orange_001"),
+                ],
+                "unseen_category": [_e("u-apple-001", "apple_001")],
             }
         )
         with pytest.raises(OverlappingSplitsError):

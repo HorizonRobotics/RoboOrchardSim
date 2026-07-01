@@ -28,22 +28,23 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
     ObservationManagerCfg,
 )
 
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
-from robo_orchard_sim.cfg_wrappers.sim.simulation_cfg import SimulationCfg
-from robo_orchard_sim.envs.manager_based_env import IsaacManagerBasedEnvCfg
-from robo_orchard_sim.envs.managers.record import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import ViewerCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import SimulationCfg
+from robo_orchard_sim.ext.envs.manager_based_env import IsaacManagerBasedEnvCfg
+from robo_orchard_sim.ext.envs.managers.record import (
     NoOpRecordControllerCfg,
     RecordControllerCfg,
     RecordManagerCfg,
     RecordTermBaseCfg,
 )
-from robo_orchard_sim.models.assets.asset_cfg import GroupAssetCfg
-from robo_orchard_sim.models.scenes.asset_scene import AssetSceneCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
+from robo_orchard_sim.ext.models.scenes.asset_scene import AssetSceneCfg
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
     EmbodimentBase,
 )
+from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
 from robo_orchard_sim.orchard_env.scene.scene_base import SceneBase
-from robo_orchard_sim.orchard_env.tasks.task_base import TaskBase
+from robo_orchard_sim.orchard_env.task_templates.task_base import TaskBase
 
 
 class EnvBuilder:
@@ -54,12 +55,14 @@ class EnvBuilder:
         scene: SceneBase,
         embodiment: EmbodimentBase,
         task: TaskBase,
+        layout_builder: LayoutBuilder | None = None,
         record_file_path: str = "logs/records",
         record_controller: RecordControllerCfg | None = None,
     ):
         self.scene = scene
         self.embodiment = embodiment
         self.task = task
+        self.layout_builder = layout_builder
         self.record_file_path = record_file_path
         self.record_controller = record_controller or NoOpRecordControllerCfg()
 
@@ -92,10 +95,13 @@ class EnvBuilder:
             self.embodiment.get_action_cfg(),
             self.task.get_action_cfg(),
         )
+        task_event_cfg = self.task.get_event_cfg()
+        if self.layout_builder is not None:
+            task_event_cfg = self.layout_builder.apply_to(task_event_cfg)
         env_cfg.events = self._merge_event_cfg(
             self.scene.get_event_cfg(),
             self.embodiment.get_event_cfg(),
-            self.task.get_event_cfg(),
+            task_event_cfg,
         )
         env_cfg.records = self._build_record_cfg(
             self.scene.get_record_terms(),
@@ -144,10 +150,33 @@ class EnvBuilder:
                             "assets."
                         )
                     merged[namespace][asset_name] = asset_cfg
+        merged = self._maybe_inject_inactive_pool_storage(merged)
         return {
             namespace: GroupAssetCfg(**group_assets)
             for namespace, group_assets in merged.items()
         }
+
+    @staticmethod
+    def _maybe_inject_inactive_pool_storage(
+        merged: dict[str, dict],
+    ) -> dict[str, dict]:
+        """Insert the inactive-pool storage shelf when any role is pooled."""
+        any_pool = any(
+            "_pool_" in name for group in merged.values() for name in group
+        )
+        if not any_pool:
+            return merged
+        from robo_orchard_sim.orchard_env.env_builder.inactive_pool_storage import (  # noqa: E501
+            INACTIVE_POOL_STORAGE_NAME,
+            make_inactive_pool_storage_cfg,
+        )
+
+        merged.setdefault("objects", {})
+        if INACTIVE_POOL_STORAGE_NAME not in merged["objects"]:
+            merged["objects"][INACTIVE_POOL_STORAGE_NAME] = (
+                make_inactive_pool_storage_cfg()
+            )
+        return merged
 
     def _merge_observation_cfg(
         self,

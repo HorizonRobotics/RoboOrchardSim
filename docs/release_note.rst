@@ -4,6 +4,68 @@ Release Notes
 This document provides an overview of the main changes in this release.
 
 
+Version 1.0.0
+=============
+
+Highlights
+----------
+
+* Published the first stable release of ``robo_orchard_sim``.
+* Reorganized the package into clearer benchmark, pipeline, policy, asset, and
+  Isaac extension boundaries.
+* Added a configuration-driven evaluation workflow with open-source HoloBrain
+  policy integration.
+* Expanded the benchmark and asset systems for layout-driven tasks and
+  reproducible asset selection.
+
+
+Naming and Package Changes
+--------------------------
+
+* Moved Isaac-facing wrappers from ``cfg_wrappers``, ``envs``, ``models``, and
+  ``sim`` into the ``robo_orchard_sim.ext`` namespace.
+* Renamed ``task_suite`` to ``benchmark`` and ``tasks`` to
+  ``task_components``.
+* Moved evaluation APIs from ``evaluator`` to ``pipeline.evaluator``.
+* Added focused top-level modules for ``asset_manager``, ``benchmark``,
+  ``contracts``, ``pipeline``, ``policy``, and ``task_components``.
+
+
+Evaluation Workflow
+-------------------
+
+* Added a unified YAML evaluation configuration for policy settings, shared
+  defaults, task lists, asset splits, and batch plans.
+* Added single-task and multi-task evaluation with consistent seed handling,
+  recording, result output, and summary generation.
+* Added HoloBrain policy configuration, observation and action adaptation, and
+  integration with the evaluation entry point. HoloBrain is the policy
+  integration included in this open-source release.
+
+
+Benchmark and Asset Support
+---------------------------
+
+* Added semantic pick, spatial pick, spatial place, and place-a2b benchmark
+  configurations built through the benchmark registry.
+* Added layout-driven task construction and per-episode asset pools.
+* Added asset registry, resolver, immutable snapshots, and UUID-based splits
+  for reproducible asset filtering and sampling.
+
+
+Migration Notes
+---------------
+
+* Update imports to the new ``ext``, ``benchmark``, ``pipeline``, and
+  ``task_components`` namespaces.
+* Update task definitions to use the YAML and layout-driven configuration
+  flow.
+* Update asset split entries to use registry UUIDs.
+* Run evaluations through
+  ``examples/manipulation-app/scripts/eval_policy.py`` with a unified
+  evaluation configuration.
+
+
 Version 0.1.0
 =============
 
@@ -30,12 +92,12 @@ New Features
 Data Synthesis
 ~~~~~~~~~~~~~~
 
-* Added the ``robo_orchard_sim/tasks/trajs_gen`` atomic action framework, which
+* Added the ``robo_orchard_sim/task_components/trajs_gen`` atomic action framework, which
   provides ``AtomicActionManager``, ``BaseExecutor``, and executors such as
   ``PickExecutor``, ``PlaceExecutor``, ``MoveExecutor``, ``GripperExecutor``,
   and ``BackToDefaultExecutor`` for generating pick-and-place trajectories.
 * Added a default atomic action plan in
-  ``robo_orchard_sim/task_suite/manipulation/place_a2b/action_plan.py`` that
+  ``robo_orchard_sim/benchmark/manipulation/place_a2b/action_plan.py`` that
   binds executors to the left and right arms according to task state.
 * Added
   ``examples/manipulation-app/scripts/collect_data_example.py``, which can

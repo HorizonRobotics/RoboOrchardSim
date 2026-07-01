@@ -1,0 +1,5 @@
+# Set model_dir here or export ROBO_ORCHARD_HOLOBRAIN_MODEL_DIR.
+model_dir: null
+inference_prefix: isaac_pick_place
+valid_action_step: 64
+logging_tag: holobrain_example

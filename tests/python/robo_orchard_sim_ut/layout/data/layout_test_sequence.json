@@ -1,0 +1,16 @@
+[
+  {
+    "natural_language": "Pick apple, place right of banana",
+    "position": {
+      "src":  {"category": "apple",  "position": [0.05, 0.10, 0.83], "rotation": [-0.666, 0.0, 0.0, 0.746]},
+      "dest": {"category": "banana", "position": [-0.25, -0.42, 0.88], "rotation": [-0.305, 0.0, 0.0, 0.952]}
+    }
+  },
+  {
+    "natural_language": "Pick orange, place right of plate",
+    "position": {
+      "src":  {"category": "orange", "position": [0.08, 0.12, 0.83], "rotation": [1.0, 0.0, 0.0, 0.0]},
+      "dest": {"category": "plate",  "position": [-0.20, -0.40, 0.88], "rotation": [1.0, 0.0, 0.0, 0.0]}
+    }
+  }
+]

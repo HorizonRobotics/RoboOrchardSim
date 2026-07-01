@@ -24,157 +24,79 @@ Key features:
 
 ### 1. Installation
 
-Installation consists of four steps:
+Installation has two steps:
 
-1. **Prepare assets** — download simulation data from Hugging Face
-2. **Set up environment** — pull/build the Docker image, or install prerequisites locally
-3. **Launch container** — start with GPU and X11 forwarding, then register the Vulkan ICD
-4. **Install package** — install `robo_orchard_sim` in editable mode with the repository bootstrap flow
+1. **Prepare assets** — download the simulation assets and configure their
+   paths.
+2. **Setup Environment** — use a local Python virtual environment or the
+   recommended Docker image.
 
-#### Prepare Assets
+#### Step 1: Prepare Assets
 
-Download simulation assets from Hugging Face repository
-`HorizonRobotics/sim_task_suite_assets` to a host directory:
+Download the `instructmove_v1` branch of
+`HorizonRobotics/robo_orchard_sim_assets` from Hugging Face:
 
 ```bash
-export ASSETS_DIR=/absolute/path/to/sim_task_suite_assets
-mkdir -p ${ASSETS_DIR}
-python3 -m pip install -U "huggingface_hub[cli]"
-# Login first
-huggingface-cli login
-huggingface-cli download HorizonRobotics/sim_task_suite_assets \
+export ORCHARD_ASSET=/absolute/path/to/robo_orchard_sim_assets
+mkdir -p "${ORCHARD_ASSET}"
+python3 -m pip install -U huggingface_hub
+hf download HorizonRobotics/robo_orchard_sim_assets \
   --repo-type dataset \
-  --local-dir ${ASSETS_DIR}
+  --revision instructmove_v1 \
+  --local-dir "${ORCHARD_ASSET}"
 ```
 
-#### Choose One Setup Path
-
-Use either **Prerequisites (local installation)** or **Docker**
-depending on your environment.
-
-#### Prerequisites (Local Installation)
-
-- Python 3.10
-- Access to the package sources required by `isaacsim`, `isaaclab`, and
-  `robo_orchard_core`
-
-#### Docker
-
-This directory contains the Dockerfile and usage notes for the
-`robo_orchard_sim` image.
-
-##### Software Stack
-
-- Ubuntu 22.04
-- CUDA 11.8
-- Python 3.10
-- GCC 11.4
-- PyTorch 2.5.1 + cu118
-- Isaac Sim 4.5.0
-- Isaac Lab 2.0.2
-- cuRobo
-
-##### Option 1 (Recommended): Pull From Docker Hub
-
-Pull the prebuilt image from Docker Hub:
+Configure the runtime asset paths:
 
 ```bash
-docker pull horizonrobotics/robo_orchard_sim:cuda11.8-ubuntu22.04-py3.10-isaacsim4.5.0-isaaclab2.0.2-curobo-gui
+export ASSETS_DIR="${ORCHARD_ASSET}/OBJECTS"
+export NV_ASSET_ROOT_DIR="${ORCHARD_ASSET}/NVIDIA/Assets/Isaac/4.1"
 ```
 
-##### Option 2: Load From TAR
+> `NV_ASSET_ROOT_DIR` above matches the NVIDIA asset layout in the downloaded
+> dataset. Adjust it if the NVIDIA assets are stored in a different directory.
 
-If you receive a prebuilt TAR package, load it into the local Docker daemon:
+> `ORCHARD_ASSET` and `NV_ASSET_ROOT_DIR` should be set before you run any
+> program.
 
-```bash
-docker load -i robo_orchard_sim_cuda11.8_ubuntu22.04_py3.10_isaacsim4.5.0_isaaclab2.0.2_curobo_gui.tar
-```
+#### Step 2: Setup Environment
 
-##### Run With GUI
+Choose either the local virtual environment or Docker installation path.
 
-On a machine with an NVIDIA driver and X11 display available:
+##### Option 1: Local Virtual Environment
 
-Set the required environment variables and run the provided script:
+Local installation requires Python 3.10, an NVIDIA driver compatible with
+Isaac Sim 4.5.0, and access to the package indexes used by `isaacsim`,
+`isaaclab`, and `robo_orchard_core`.
 
-```bash
-export CONTAINER_NAME=<your_container_name>
-export HOST_WORKSPACE=<path/to/your/workspace>
-export ASSETS_DIR=<path/to/sim_task_suite_assets>  # set in "Prepare Assets" above
-bash run_container.sh
-```
-
-After entering the container, validate the environment.
-**From this point onward, all commands in this section should be executed
-inside the container.**
+From the repository root:
 
 ```bash
-python3 -c "import isaacsim; print('isaacsim ok')"
-```
-
-###### Register Vulkan ICD
-
-```bash
-mkdir -p /usr/share/vulkan/icd.d
-cat > /usr/share/vulkan/icd.d/nvidia_icd.json << 'EOF'
-{
-    "file_format_version" : "1.0.0",
-    "ICD": {
-        "library_path": "libGLX_nvidia.so.0",
-        "api_version" : "1.3.194"
-    }
-}
-EOF
-```
-
-###### Optional: VSCode/Cursor Compatibility
-
-If you want to attach VSCode/Cursor to the running container, add these
-compatibility fixes once inside the container as `root`:
-
-```bash
-ln -sf /usr/lib/os-release /etc/os-release
-
-cat >/usr/local/bin/base64 <<'EOF'
-#!/bin/sh
-if [ "$1" = "-D" ]; then
-  shift
-  exec /usr/bin/base64 -d "$@"
-fi
-exec /usr/bin/base64 "$@"
-EOF
-
-chmod +x /usr/local/bin/base64
-```
-
-
-##### Notes
-
-- This image is intended for `robo_orchard_sim` distribution, not as a generic
-  public base image.
-- The image includes Isaac Sim, Isaac Lab, and cuRobo, so users must follow the
-  applicable NVIDIA software terms.
-
-After cloning the repository, install the package from the repository root
-with the repository `Makefile`:
-
-```bash
-git clone <your-repo-url> robo_orchard_sim
+git clone <repo_url>
 cd robo_orchard_sim
-make install-editable
+python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+make install-editable \
+  PIP_ARGS="--extra-index-url https://pypi.nvidia.com"
 ```
 
-The `make install-editable` target first bootstraps the runtime dependency
-combination required by this repository: it installs `robo_orchard_sim` with
-normal dependency resolution first, then reapplies the explicit versions from
-[`scm/install_constraints.txt`](scm/install_constraints.txt) so that
-`robo_orchard_schemas==0.2.0` and `protobuf==5.29.5` are present in the final
-runtime environment.
+The editable installation reads `pyproject.toml` and installs Isaac Sim 4.5.0
+and Isaac Lab 2.0.2 automatically.
 
-If you need a non-editable install, use:
+For a non-editable installation, use `make install` with the same package
+index:
 
 ```bash
-make install
+make install PIP_ARGS="--extra-index-url https://pypi.nvidia.com"
 ```
+
+##### Option 2: Docker (Recommended)
+
+The prebuilt Docker image includes the tested Isaac Sim, Isaac Lab, PyTorch,
+CUDA, and cuRobo stack. See the
+[Docker installation and usage guide](docker/README.md) for image setup,
+asset mounts, GPU and X11 configuration, and container launch instructions.
 
 ### 2. Development Workflow
 
@@ -187,8 +109,7 @@ make dev-env
 Common local development commands:
 
 ```bash
-make check-lint
-make type-check
+make auto-format
 make test
 ```
 
@@ -277,17 +198,28 @@ python3 examples/manipulation-app/scripts/data_synthesis_example.py \
 
 #### Run `eval_policy.py`
 
-You can override the evaluation seed, number of episodes, maximum steps, and
-output path:
+`eval_policy.py` runs multi-task policy evaluation. The entire run —
+policy, per-task settings, splits, batch plans — is described by one
+eval-config YAML; the CLI only carries runtime knobs (output dir, GPUs,
+recording).
 
 ```bash
 python3 examples/manipulation-app/scripts/eval_policy.py \
-  --task-name place_a2b \
-  --seed 0 \
-  --episode-num 3 \
-  --max-steps 10 \
-  --output eval_result/isaac_eval/eval_result.json
+  --eval-config examples/manipulation-app/configs/eval_example.yaml \
+  --output-dir XXXXX \
+  --gpus 0,1,2,3 \
+  [--enable-recording]
 ```
+
+- `--eval-config`: eval-config YAML (`policy` / `defaults` / `tasks`).
+- `--output-dir`: top-level output directory; each task writes to
+  `<output-dir>/<task>/`, summary to `<output-dir>/summary.json`.
+- `--gpus`: comma-separated GPU ids; tasks run one per GPU and queue
+  when they exceed cards. Defaults to `CUDA_VISIBLE_DEVICES` or `0`.
+- `--enable-recording`: turn on MCAP recording for every task.
+
+See `examples/manipulation-app/configs/eval_example.yaml` for the YAML
+schema.
 
 ## License
 

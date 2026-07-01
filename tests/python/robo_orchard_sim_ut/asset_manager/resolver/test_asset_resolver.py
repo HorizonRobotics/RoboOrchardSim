@@ -23,11 +23,14 @@ The resolver is task-agnostic: it transforms ``dict[role, config]`` into
 """
 
 from __future__ import annotations
+from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
     AssetResolutionError,
+    AssetResolver,
 )
 
 
@@ -340,16 +343,43 @@ class TestConfigShapeValidation:
         assert exc_info.value.role == "distractors"
         assert "mode" in str(exc_info.value.cause)
 
-    def test_resolve_target_missing_filter_wrapped(self, mini_resolver):
+    def test_resolve_target_missing_filter_treated_as_match_all(
+        self, mini_resolver
+    ):
+        """Missing `filter` key == empty == match-all (Option 2 ergonomics)."""
         configs = {
             "pick": {
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].name == "pick_object"
+
+    def test_resolve_target_null_filter_treated_as_match_all(
+        self, mini_resolver
+    ):
+        """`filter: null` (YAML) == empty == match-all."""
+        configs = {
+            "pick": {
+                "filter": None,
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].name == "pick_object"
+
+    def test_resolve_target_non_dict_filter_raises(self, mini_resolver):
+        """Non-dict filter (e.g. string) is still a hard error."""
+        configs = {
+            "pick": {
+                "filter": "graspable",
                 "prim_name": "pick_object",
             },
         }
         with pytest.raises(AssetResolutionError) as exc_info:
             mini_resolver.resolve(configs)
         assert exc_info.value.role == "pick"
-        assert isinstance(exc_info.value.cause, KeyError)
+        assert isinstance(exc_info.value.cause, TypeError)
 
     def test_resolve_target_missing_prim_name_wrapped(self, mini_resolver):
         configs = {
@@ -379,3 +409,366 @@ class TestConfigShapeValidation:
             mini_resolver.resolve(configs)
         assert exc_info.value.role == "distractors"
         assert isinstance(exc_info.value.cause, KeyError)
+
+
+class TestPoolSize:
+    """pool_size branching in target and distractor resolution."""
+
+    def test_resolve_target_pool_returns_pool_spec(self, mini_resolver):
+        """Target entry with pool_size>1 returns PoolSpec wrapping members."""
+        from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
+
+        out = mini_resolver.resolve(
+            {
+                "pick": {
+                    "filter": {"super_category": "fruits"},
+                    "prim_name": "pick_object",
+                    "pool_size": 3,
+                },
+            }
+        )
+        assert isinstance(out["pick"], PoolSpec)
+        assert out["pick"].role_id == "pick_object"
+        assert {m.name for m in out["pick"].members} == {
+            f"pick_object_pool_{i}" for i in range(3)
+        }
+
+    def test_resolve_distractor_pool_returns_pool_spec(self, mini_resolver):
+        """Distractor entry with pool_size returns PoolSpec."""
+        from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
+
+        out = mini_resolver.resolve(
+            {
+                "pick": {
+                    "filter": {
+                        "super_category": "fruits",
+                        "category": "apple",
+                    },
+                    "prim_name": "pick_object",
+                },
+                "distractors": {
+                    "anchor": "pick",
+                    "match": ["super_category"],
+                    "min_count": 1,
+                    "max_count": 1,
+                    "pool_size": 2,
+                    "prim_name_prefix": "distractor",
+                },
+            }
+        )
+        pool = out["distractors"]
+        assert isinstance(pool, PoolSpec)
+        assert pool.role_id == "distractor"
+        assert pool.active_count == 1
+        assert {m.name for m in pool.members} == {
+            "distractor_pool_0",
+            "distractor_pool_1",
+        }
+
+    def test_distractor_pool_size_with_zero_max_count_raises(
+        self, mini_resolver
+    ):
+        """pool_size>0 + max_count=0 must reject — would leave stray actors."""
+        with pytest.raises(AssetResolutionError, match="pool_size"):
+            mini_resolver.resolve(
+                {
+                    "pick": {
+                        "filter": {"category": "apple"},
+                        "prim_name": "pick_object",
+                    },
+                    "distractors": {
+                        "anchor": "pick",
+                        "match": ["super_category"],
+                        "min_count": 0,
+                        "max_count": 0,
+                        "pool_size": 2,
+                        "prim_name_prefix": "d",
+                    },
+                }
+            )
+
+    def test_resolve_pools_are_uuid_disjoint(self, mini_registry):
+        """Cross-pool UUID disjointness holds across multiple seeds."""
+        cfg = {
+            "pick": {
+                "filter": {"super_category": "fruits"},
+                "prim_name": "pick_object",
+                "pool_size": 2,
+            },
+            "distractors": {
+                "anchor": "pick",
+                "match": ["super_category"],
+                "min_count": 1,
+                "max_count": 1,
+                "pool_size": 1,
+                "prim_name_prefix": "distractor",
+            },
+        }
+
+        class FakeSpec:
+            def __init__(self, *, name, usd_path="", **_):
+                self.name = name
+                self.usd_path = usd_path
+
+        def _fake_build_spec(meta, *, name=None, **_):
+            return FakeSpec(name=name or meta.asset_id, usd_path=meta.usd_path)
+
+        for seed in range(20):
+            with patch.object(
+                mini_registry, "build_spec", side_effect=_fake_build_spec
+            ):
+                out = AssetResolver(
+                    registry=mini_registry,
+                    rng=np.random.default_rng(seed),
+                ).resolve(cfg)
+                pick_uuids = {m.usd_path for m in out["pick"].members}
+                dist_uuids = {s.usd_path for s in out["distractors"]}
+                assert pick_uuids.isdisjoint(dist_uuids), f"seed {seed}"
+
+
+class TestResolveByUuid:
+    """`uuid` entry key pins a target to a specific registry asset."""
+
+    def test_resolve_by_uuid_pins_specific_asset(self, mini_resolver):
+        configs = {
+            "pick": {
+                "uuid": "u-banana-001",
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].name == "pick_object"
+        assert result["pick"].usd_path.endswith("banana_001.usd")
+
+    def test_resolve_by_uuid_filter_optional(self, mini_resolver):
+        """`filter` is optional when `uuid` is given."""
+        configs = {
+            "pick": {
+                "uuid": "u-orange-001",
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].usd_path.endswith("orange_001.usd")
+
+    def test_resolve_by_uuid_with_consistent_filter_ok(self, mini_resolver):
+        configs = {
+            "pick": {
+                "uuid": "u-apple-001",
+                "filter": {"category": "apple", "color": "red"},
+                "prim_name": "pick_object",
+            },
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].usd_path.endswith("apple_001.usd")
+
+    def test_resolve_by_uuid_with_conflicting_filter_warns_but_resolves(
+        self, mini_resolver, caplog
+    ):
+        """Uuid takes precedence; mismatched filter only emits a warning."""
+        import logging
+
+        configs = {
+            "pick": {
+                "uuid": "u-apple-001",
+                "filter": {"category": "orange"},
+                "prim_name": "pick_object",
+            },
+        }
+        with caplog.at_level(logging.WARNING):
+            result = mini_resolver.resolve(configs)
+        assert result["pick"].usd_path.endswith("apple_001.usd")
+        assert any(
+            "u-apple-001" in r.message and r.levelno == logging.WARNING
+            for r in caplog.records
+        )
+
+    def test_resolve_by_uuid_with_conflicting_filter_no_warn_on_match(
+        self, mini_resolver, caplog
+    ):
+        """No warning when uuid matches the filter."""
+        import logging
+
+        configs = {
+            "pick": {
+                "uuid": "u-apple-001",
+                "filter": {"category": "apple"},
+                "prim_name": "pick_object",
+            },
+        }
+        with caplog.at_level(logging.WARNING):
+            mini_resolver.resolve(configs)
+        assert not any("u-apple-001" in r.message for r in caplog.records)
+
+    def test_resolve_by_uuid_unknown_raises(self, mini_resolver):
+        configs = {
+            "pick": {
+                "uuid": "u-not-real",
+                "prim_name": "pick_object",
+            },
+        }
+        with pytest.raises(AssetResolutionError) as exc_info:
+            mini_resolver.resolve(configs)
+        assert exc_info.value.role == "pick"
+        assert "u-not-real" in str(exc_info.value.cause)
+
+    def test_resolve_by_uuid_inside_split_ok(
+        self, mini_resolver_with_splits, mini_registry
+    ):
+        apple_001_uuid = mini_registry.resolve_asset_id("apple_001")
+        configs = {
+            "pick": {
+                "uuid": apple_001_uuid,
+                "prim_name": "pick_object",
+                "split": "seen",
+            },
+        }
+        result = mini_resolver_with_splits.resolve(configs)
+        assert result["pick"].usd_path.endswith("apple_001.usd")
+
+    def test_resolve_by_uuid_outside_split_warns_but_resolves(
+        self, mini_resolver_with_splits, mini_registry, caplog
+    ):
+        """Uuid takes precedence; mismatched split only emits a warning."""
+        import logging
+
+        plate_uuid = mini_registry.resolve_asset_id("plate_001")
+        configs = {
+            "pick": {
+                "uuid": plate_uuid,
+                "prim_name": "pick_object",
+                "split": "seen",
+            },
+        }
+        with caplog.at_level(logging.WARNING):
+            result = mini_resolver_with_splits.resolve(configs)
+        assert result["pick"].usd_path.endswith("plate_001.usd")
+        assert any(
+            plate_uuid in r.message and r.levelno == logging.WARNING
+            for r in caplog.records
+        )
+
+    def test_resolve_by_uuid_still_requires_prim_name(self, mini_resolver):
+        configs = {
+            "pick": {
+                "uuid": "u-apple-001",
+            },
+        }
+        with pytest.raises(AssetResolutionError) as exc_info:
+            mini_resolver.resolve(configs)
+        assert exc_info.value.role == "pick"
+        assert isinstance(exc_info.value.cause, KeyError)
+
+
+class TestResolveByUsdPath:
+    def test_usd_path_pins_target_and_keeps_prim_name(self, mini_resolver):
+        configs = {
+            "pick": {
+                "usd_path": "/assets/mug/variants/variants.usd",
+                "prim_name": "pick_object",
+            }
+        }
+        result = mini_resolver.resolve(configs)
+        assert result["pick"].name == "pick_object"
+
+    def test_usd_path_conflicts_with_uuid_raises(self, mini_resolver):
+        configs = {
+            "pick": {
+                "usd_path": "/assets/mug/variants/variants.usd",
+                "uuid": "deadbeef",
+                "prim_name": "pick_object",
+            }
+        }
+        with pytest.raises(AssetResolutionError):
+            mini_resolver.resolve(configs)
+
+    def test_usd_path_conflicts_with_filter_raises(self, mini_resolver):
+        configs = {
+            "pick": {
+                "usd_path": "/assets/mug/variants/variants.usd",
+                "filter": {"tags": ["graspable"]},
+                "prim_name": "pick_object",
+            }
+        }
+        with pytest.raises(AssetResolutionError):
+            mini_resolver.resolve(configs)
+
+
+class TestActiveSnapshot:
+    """active_snapshot restricts resolved assets to the snapshot uuid set."""
+
+    @staticmethod
+    def _build_spec_passthrough(meta, **_kw):
+        return meta
+
+    def test_resolve_active_snapshot_restricts_pool_to_snapshot(
+        self, mini_registry
+    ):
+        with patch.object(
+            mini_registry,
+            "build_spec",
+            side_effect=self._build_spec_passthrough,
+        ):
+            resolver = AssetResolver(
+                registry=mini_registry,
+                active_snapshot=frozenset({"u-apple-001"}),
+                rng=np.random.default_rng(42),
+            )
+            result = resolver.resolve(
+                {"pick": {"filter": {}, "prim_name": "x"}}
+            )
+        assert result["pick"].usd_path.endswith("apple_001.usd")
+
+    def test_resolve_active_snapshot_intersects_split_returns_overlap(
+        self, mini_registry
+    ):
+        from robo_orchard_sim.asset_manager.splits.splits import AssetSplits
+
+        splits = AssetSplits(
+            name="t",
+            seen=frozenset({"u-apple-001", "u-apple-002", "u-orange-001"}),
+        )
+        with patch.object(
+            mini_registry,
+            "build_spec",
+            side_effect=self._build_spec_passthrough,
+        ):
+            resolver = AssetResolver(
+                registry=mini_registry,
+                splits=splits,
+                active_snapshot=frozenset({"u-apple-002", "u-box-001"}),
+                rng=np.random.default_rng(42),
+            )
+            result = resolver.resolve(
+                {"pick": {"filter": {}, "prim_name": "x", "split": "seen"}}
+            )
+        # seen ∩ snapshot = {u-apple-002}
+        assert result["pick"].usd_path.endswith("apple_002.usd")
+
+    def test_resolve_active_snapshot_disjoint_from_split_raises(
+        self, mini_registry
+    ):
+        from robo_orchard_sim.asset_manager.splits.splits import AssetSplits
+
+        splits = AssetSplits(name="t", seen=frozenset({"u-apple-001"}))
+        with patch.object(
+            mini_registry,
+            "build_spec",
+            side_effect=self._build_spec_passthrough,
+        ):
+            resolver = AssetResolver(
+                registry=mini_registry,
+                splits=splits,
+                active_snapshot=frozenset({"u-orange-001"}),
+                rng=np.random.default_rng(42),
+            )
+            with pytest.raises(AssetResolutionError, match="snapshot"):
+                resolver.resolve(
+                    {
+                        "pick": {
+                            "filter": {},
+                            "prim_name": "x",
+                            "split": "seen",
+                        }
+                    }
+                )

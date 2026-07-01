@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 import datetime as dt
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,8 +24,8 @@ import pytest
 import torch
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from robo_orchard_sim.envs.manager_based_env import IsaacManagerBasedEnv
-from robo_orchard_sim.envs.managers.record import (
+from robo_orchard_sim.ext.envs.manager_based_env import IsaacManagerBasedEnv
+from robo_orchard_sim.ext.envs.managers.record import (
     NoOpRecordControllerCfg,
     RecordControlDecision,
     RecordController,
@@ -133,12 +134,12 @@ def _disable_mcap_writer_io(monkeypatch) -> None:
         self._running = False
 
     monkeypatch.setattr(
-        "robo_orchard_sim.envs.managers.record.record_manager."
+        "robo_orchard_sim.ext.envs.managers.record.record_manager."
         "McapRecorder.start",
         _fake_start,
     )
     monkeypatch.setattr(
-        "robo_orchard_sim.envs.managers.record.record_manager."
+        "robo_orchard_sim.ext.envs.managers.record.record_manager."
         "McapRecorder.end",
         _fake_end,
     )
@@ -191,6 +192,15 @@ def _make_root_state(
 def _make_pose_only_root_state() -> torch.Tensor:
     root_state_w = torch.zeros((1, 7), dtype=torch.float32)
     root_state_w[:, 3] = 1.0
+    return root_state_w
+
+
+def _make_rot_root_state(theta_deg: float) -> torch.Tensor:
+    """Root state with a pose rotated ``theta_deg`` about z (wxyz quat)."""
+    half = math.radians(theta_deg) / 2.0
+    root_state_w = torch.zeros((1, 13), dtype=torch.float32)
+    root_state_w[:, 3] = math.cos(half)
+    root_state_w[:, 6] = math.sin(half)
     return root_state_w
 
 
@@ -393,7 +403,7 @@ class TestRecordManagerLifecycle:
             {"episode/custom": "episode"},
         ]
 
-    def test_stationary_controller_before_assets_are_static_waits_to_record(
+    def test_stationary_controller_moving_pose_resets_streak_to_record(
         self, tmp_path
     ):
         start_time = dt.datetime(2026, 1, 1, 12, 0, 0)
@@ -407,31 +417,31 @@ class TestRecordManagerLifecycle:
             controller=StationaryEpisodeRecordControllerCfg(
                 min_wait_step=0,
                 max_wait_step=100,
+                streak=2,
             ),
         )
-        env.scene = {
-            "moving": _StubAsset(
-                root_state_w=_make_root_state(
-                    lin_vel=(0.03, 0.0, 0.0),
-                    ang_vel=(0.11, 0.0, 0.0),
-                )
-            )
-        }
+        moving = _StubAsset(root_state_w=_make_rot_root_state(0.0))
+        env.scene = {"moving": moving}
 
         manager.record_post_reset({"obs": {"value": 0}}, start_time)
 
+        # Pose changes for the first two steps (moving): streak never builds.
+        moving.data.root_state_w = _make_rot_root_state(5.0)
         env.step_count = 1
         manager.record_step({"obs": {"value": 1}})
-        assert term.calls == []
-
-        env.scene["moving"].data.root_state_w = _make_root_state(
-            lin_vel=(0.01, 0.0, 0.0),
-            ang_vel=(0.09, 0.0, 0.0),
-        )
+        moving.data.root_state_w = _make_rot_root_state(10.0)
         env.step_count = 2
         manager.record_step({"obs": {"value": 2}})
+        assert term.calls == []
 
-        assert [call.data for call in term.calls] == [{"obs/value": 2}]
+        # Pose now frozen at 10 deg: streak accumulates and records.
+        env.step_count = 3
+        manager.record_step({"obs": {"value": 3}})
+        assert term.calls == []
+        env.step_count = 4
+        manager.record_step({"obs": {"value": 4}})
+
+        assert [call.data for call in term.calls] == [{"obs/value": 4}]
         assert manager.running is True
 
         manager.record_pre_reset()
@@ -451,26 +461,29 @@ class TestRecordManagerLifecycle:
             controller=StationaryEpisodeRecordControllerCfg(
                 min_wait_step=0,
                 max_wait_step=100,
+                streak=2,
             ),
         )
         env.scene = {
             "camera": _StubAsset(),
-            "object": _StubAsset(
-                root_state_w=_make_root_state(
-                    lin_vel=(0.01, 0.0, 0.0),
-                    ang_vel=(0.09, 0.0, 0.0),
-                )
-            ),
+            "object": _StubAsset(root_state_w=_make_root_state()),
         }
 
         manager.record_post_reset(
             {"obs": {"value": 0}},
             dt.datetime(2026, 1, 1, 12, 0, 0),
         )
-        env.step_count = 1
-        manager.record_step({"obs": {"value": 1}})
+        # Only the object has a pose; the motion-less camera is ignored, so
+        # the object's frozen pose drives the streak to record at 1 + streak.
+        for step in (1, 2):
+            env.step_count = step
+            manager.record_step({"obs": {"value": step}})
+        assert term.calls == []
 
-        assert [call.data for call in term.calls] == [{"obs/value": 1}]
+        env.step_count = 3
+        manager.record_step({"obs": {"value": 3}})
+
+        assert [call.data for call in term.calls] == [{"obs/value": 3}]
 
     def test_stationary_controller_before_min_wait_step_waits_to_record(
         self, tmp_path
@@ -483,32 +496,29 @@ class TestRecordManagerLifecycle:
                 key="obs/value",
             ),
             controller=StationaryEpisodeRecordControllerCfg(
+                min_wait_step=5,
                 max_wait_step=100,
+                streak=2,
             ),
         )
-        env.scene = {
-            "object": _StubAsset(
-                root_state_w=_make_root_state(
-                    lin_vel=(0.0, 0.0, 0.0),
-                    ang_vel=(0.0, 0.0, 0.0),
-                )
-            )
-        }
+        env.scene = {"object": _StubAsset(root_state_w=_make_root_state())}
 
         manager.record_post_reset(
             {"obs": {"value": 0}},
             dt.datetime(2026, 1, 1, 12, 0, 0),
         )
-        for step in range(1, 10):
+        # Pose is frozen, so the streak is satisfied well before min_wait_step;
+        # recording is still held back until step_count reaches min_wait_step.
+        for step in range(1, 5):
             env.step_count = step
             manager.record_step({"obs": {"value": step}})
 
         assert term.calls == []
 
-        env.step_count = 10
-        manager.record_step({"obs": {"value": 10}})
+        env.step_count = 5
+        manager.record_step({"obs": {"value": 5}})
 
-        assert [call.data for call in term.calls] == [{"obs/value": 10}]
+        assert [call.data for call in term.calls] == [{"obs/value": 5}]
 
     def test_stationary_controller_at_max_wait_step_starts_recording(
         self, tmp_path
@@ -523,27 +533,26 @@ class TestRecordManagerLifecycle:
             controller=StationaryEpisodeRecordControllerCfg(
                 min_wait_step=0,
                 max_wait_step=3,
+                streak=1,
             ),
         )
-        env.scene = {
-            "moving": _StubAsset(
-                root_state_w=_make_root_state(
-                    lin_vel=(0.03, 0.0, 0.0),
-                    ang_vel=(0.11, 0.0, 0.0),
-                )
-            )
-        }
+        moving = _StubAsset(root_state_w=_make_rot_root_state(0.0))
+        env.scene = {"moving": moving}
 
         manager.record_post_reset(
             {"obs": {"value": 0}},
             dt.datetime(2026, 1, 1, 12, 0, 0),
         )
         for step in (1, 2):
+            # Pose actually changes each step so the streak never builds.
+            moving.data.root_state_w = _make_rot_root_state(5.0 * step)
             env.step_count = step
             manager.record_step({"obs": {"value": step}})
 
         assert term.calls == []
 
+        # max_wait_step reached; recording starts even though pose still moves.
+        moving.data.root_state_w = _make_rot_root_state(15.0)
         env.step_count = 3
         manager.record_step({"obs": {"value": 3}})
 
@@ -562,6 +571,7 @@ class TestRecordManagerLifecycle:
             controller=StationaryEpisodeRecordControllerCfg(
                 min_wait_step=0,
                 max_wait_step=2,
+                streak=1,
             ),
         )
         env.scene = {"camera": _StubAsset()}
@@ -592,26 +602,28 @@ class TestRecordManagerLifecycle:
             controller=StationaryEpisodeRecordControllerCfg(
                 min_wait_step=0,
                 max_wait_step=100,
+                streak=2,
             ),
         )
         env.scene = {
             "terrain": None,
-            "object": _StubAsset(
-                root_state_w=_make_root_state(
-                    lin_vel=(0.01, 0.0, 0.0),
-                    ang_vel=(0.09, 0.0, 0.0),
-                )
-            ),
+            "object": _StubAsset(root_state_w=_make_root_state()),
         }
 
         manager.record_post_reset(
             {"obs": {"value": 0}},
             dt.datetime(2026, 1, 1, 12, 0, 0),
         )
-        env.step_count = 1
-        manager.record_step({"obs": {"value": 1}})
+        # The None entry is skipped; the object's frozen pose drives settling.
+        for step in (1, 2):
+            env.step_count = step
+            manager.record_step({"obs": {"value": step}})
+        assert term.calls == []
 
-        assert [call.data for call in term.calls] == [{"obs/value": 1}]
+        env.step_count = 3
+        manager.record_step({"obs": {"value": 3}})
+
+        assert [call.data for call in term.calls] == [{"obs/value": 3}]
 
     def test_stationary_controller_with_pose_only_scene_entries_ignores_them(
         self, tmp_path
@@ -626,26 +638,28 @@ class TestRecordManagerLifecycle:
             controller=StationaryEpisodeRecordControllerCfg(
                 min_wait_step=0,
                 max_wait_step=100,
+                streak=2,
             ),
         )
         env.scene = {
             "pose_only": _StubAsset(root_state_w=_make_pose_only_root_state()),
-            "object": _StubAsset(
-                root_state_w=_make_root_state(
-                    lin_vel=(0.01, 0.0, 0.0),
-                    ang_vel=(0.09, 0.0, 0.0),
-                )
-            ),
+            "object": _StubAsset(root_state_w=_make_root_state()),
         }
 
         manager.record_post_reset(
             {"obs": {"value": 0}},
             dt.datetime(2026, 1, 1, 12, 0, 0),
         )
-        env.step_count = 1
-        manager.record_step({"obs": {"value": 1}})
+        # The pose-only (<13-wide) entry is skipped; the object drives it.
+        for step in (1, 2):
+            env.step_count = step
+            manager.record_step({"obs": {"value": step}})
+        assert term.calls == []
 
-        assert [call.data for call in term.calls] == [{"obs/value": 1}]
+        env.step_count = 3
+        manager.record_step({"obs": {"value": 3}})
+
+        assert [call.data for call in term.calls] == [{"obs/value": 3}]
 
 
 class TestEnvRecordHooks:
@@ -698,7 +712,7 @@ class TestEnvRecordHooks:
             return None
 
         monkeypatch.setattr(
-            "robo_orchard_sim.envs.manager_based_env.IsaacEnv.reset",
+            "robo_orchard_sim.ext.envs.manager_based_env.IsaacEnv.reset",
             _fake_reset,
         )
 
@@ -719,7 +733,7 @@ class TestEnvRecordHooks:
             return None
 
         monkeypatch.setattr(
-            "robo_orchard_sim.envs.manager_based_env.IsaacEnv.reset",
+            "robo_orchard_sim.ext.envs.manager_based_env.IsaacEnv.reset",
             _fake_reset,
         )
 
@@ -741,7 +755,7 @@ class TestEnvRecordHooks:
             return None
 
         monkeypatch.setattr(
-            "robo_orchard_sim.envs.manager_based_env.IsaacEnv.reset",
+            "robo_orchard_sim.ext.envs.manager_based_env.IsaacEnv.reset",
             _fake_reset,
         )
 
@@ -763,7 +777,7 @@ class TestEnvRecordHooks:
             return None
 
         monkeypatch.setattr(
-            "robo_orchard_sim.envs.manager_based_env.IsaacEnv.reset",
+            "robo_orchard_sim.ext.envs.manager_based_env.IsaacEnv.reset",
             _fake_reset,
         )
 

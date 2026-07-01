@@ -41,6 +41,10 @@ class DuplicateAssetIdError(AssetRegistryError):
         super().__init__(f"Duplicate asset_id '{asset_id}' found at: {joined}")
 
 
+class MissingAabbError(AssetRegistryError, ValueError):
+    """Raised by build_asset_index(strict=True) when a URDF lacks <aabb>."""
+
+
 class UnknownAssetError(AssetRegistryError):
     """Raised when a uuid or asset_id is not in the registry."""
 
@@ -74,7 +78,9 @@ class InsufficientPoolError(AssetRegistryError):
         self.requested = requested
         super().__init__(
             f"only {available} asset(s) match (requested {requested}, "
-            f"mode={mode})"
+            f"mode={mode}). Options: (1) reduce pool_size / count to "
+            f"<= {available}, (2) widen the asset filter, "
+            f"(3) extend the asset library."
         )
 
 

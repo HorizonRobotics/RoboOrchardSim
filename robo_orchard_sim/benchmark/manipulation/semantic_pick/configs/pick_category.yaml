@@ -1,0 +1,71 @@
+scene:
+  type: room_table
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: dualarm_piperx
+  initial_pos: [0.0, 0.3, 0.0]
+  init_joint_noise_std: 0.05
+  init_joint_pos:
+    left_joint1: -0.319669
+    left_joint2: 0.898663
+    left_joint3: -1.405843
+    left_joint4: 1.392390
+    left_joint5: 0.030785
+    left_joint6: 0.05
+    left_joint7: 0.05
+    left_joint8: -0.05
+    right_joint1: 0.319669
+    right_joint2: 0.898663
+    right_joint3: -1.405843
+    right_joint4: 1.392390
+    right_joint5: 0.030785
+    right_joint6: 0.05
+    right_joint7: 0.05
+    right_joint8: -0.05
+
+instruction:
+  template: pick_default
+  template_mode: variants  # valid values: fixed | variants
+  actor_description_mode: seen  # valid values: raw | seen | unseen
+
+task:
+  params:
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.25, 0.55]
+        y: [-0.35, 0.35]
+        z: [0.02, 0.02]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [-3.141592653589793, 3.141592653589793]
+    light_reset:
+      enabled: false
+      preset: default_distant_light
+    texture_reset:
+      enabled: false
+      preset: default_table_texture
+
+
+asset_configs:
+  pick:
+    prim_name: pick_object
+    split: seen
+    filter:
+      tags: [is_graspable]
+
+  distractors:
+    anchor: pick
+    differ: [category]
+    split: seen
+    min_count: 1
+    max_count: 5
+    prim_name_prefix: distractor
+    filter:
+      tags: [is_graspable]

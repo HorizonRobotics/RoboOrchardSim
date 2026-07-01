@@ -68,9 +68,9 @@ def test_parse_full_urdf():
     assert p.super_category == "fruits"
     assert p.category == "lemon"
     assert p.name == "yellow lemon"
-    assert p.color == "yellow"
-    assert p.shape == "ellipsoid"
-    assert p.material == "organic"
+    assert p.color == frozenset({"yellow"})
+    assert p.shape == frozenset({"ellipsoid"})
+    assert p.material == frozenset({"organic"})
     assert p.description == "realistic yellow lemon"
     assert p.real_height == pytest.approx(0.0846)
     assert p.min_height == pytest.approx(0.05)
@@ -164,3 +164,104 @@ def test_parse_tags_missing_warns():
     p = parse_urdf_extra_info(urdf)
     assert p.tags == frozenset()
     assert any("tags" in w for w in p.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Multi-value color/shape/material parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_color_multi_token_case_and_whitespace():
+    urdf = FULL_URDF.replace(
+        "<color>yellow</color>", "<color>Beige, Black</color>"
+    )
+    p = parse_urdf_extra_info(urdf)
+    assert p.color == frozenset({"beige", "black"})
+
+
+def test_parse_color_trailing_comma_tolerated():
+    urdf = FULL_URDF.replace("<color>yellow</color>", "<color>red,</color>")
+    p = parse_urdf_extra_info(urdf)
+    assert p.color == frozenset({"red"})
+
+
+def test_parse_color_all_empty_tokens_returns_none_with_warning():
+    urdf = FULL_URDF.replace("<color>yellow</color>", "<color>,, ,</color>")
+    p = parse_urdf_extra_info(urdf)
+    assert p.color is None
+    assert any("color" in w for w in p.warnings)
+
+
+def test_parse_color_empty_element_returns_none_with_warning():
+    urdf = FULL_URDF.replace("<color>yellow</color>", "<color></color>")
+    p = parse_urdf_extra_info(urdf)
+    assert p.color is None
+    assert any("color" in w for w in p.warnings)
+
+
+def test_parse_shape_and_material_also_multi_value():
+    urdf = FULL_URDF.replace(
+        "<shape>ellipsoid</shape>", "<shape>Ellipsoid, Tapered</shape>"
+    ).replace(
+        "<material>organic</material>",
+        "<material>plastic , metal</material>",
+    )
+    p = parse_urdf_extra_info(urdf)
+    assert p.shape == frozenset({"ellipsoid", "tapered"})
+    assert p.material == frozenset({"plastic", "metal"})
+
+
+# ---------------------------------------------------------------------------
+# <aabb> extra_info parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_aabb_present_returns_min_max_tuples(make_urdf):
+    """URDF with <aabb> -> ParsedUrdf.aabb_min/max are 3-tuples."""
+    text = make_urdf(
+        aabb_min=(-0.05, -0.10, -0.01),
+        aabb_max=(0.05, 0.10, 0.02),
+    )
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.aabb_min == pytest.approx((-0.05, -0.10, -0.01), abs=1e-6)
+    assert parsed.aabb_max == pytest.approx((0.05, 0.10, 0.02), abs=1e-6)
+
+
+def test_parse_aabb_absent_returns_none(make_urdf):
+    """URDF without <aabb> -> aabb_min/max are None, no warning."""
+    text = make_urdf()  # no aabb_min/aabb_max -> no <aabb> block
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.aabb_min is None
+    assert parsed.aabb_max is None
+    assert not any("aabb" in w.lower() for w in parsed.warnings)
+
+
+def test_parse_aabb_malformed_logs_warning(make_urdf):
+    """A <min> with only 2 coords -> aabb_min/max stay None + warning."""
+    text = make_urdf().replace(
+        "</extra_info>",
+        "<aabb><min>0 0</min><max>1 1 1</max></aabb></extra_info>",
+    )
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.aabb_min is None
+    assert parsed.aabb_max is None
+    assert any("aabb" in w.lower() for w in parsed.warnings)
+
+
+def test_parse_caption_link_present(make_urdf):
+    """URDF with <caption_candidates> -> caption_link holds the text."""
+    text = make_urdf(caption_link="./caption_candidates_updated.json")
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.caption_link == "./caption_candidates_updated.json"
+
+
+def test_parse_caption_link_absent(make_urdf):
+    """URDF without <caption_candidates> -> caption_link is None."""
+    text = make_urdf()
+    parsed = parse_urdf_extra_info(text)
+    assert parsed is not None
+    assert parsed.caption_link is None

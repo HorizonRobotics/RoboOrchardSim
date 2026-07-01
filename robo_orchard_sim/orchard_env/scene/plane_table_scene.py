@@ -20,27 +20,27 @@ import os
 
 from robo_orchard_core.utils.logging import LoggerManager
 
-from robo_orchard_sim.cfg_wrappers.envs.env_cfg import ViewerCfg
-from robo_orchard_sim.cfg_wrappers.materials import PreviewSurfaceCfg
-from robo_orchard_sim.cfg_wrappers.sim.schemas import (
+from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import ViewerCfg
+from robo_orchard_sim.ext.cfg_wrappers.materials import PreviewSurfaceCfg
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas import (
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.from_files import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.from_files import (
     GroundPlaneCfg,
     UsdFileCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.lights_cfg import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.lights_cfg import (
     DomeLightCfg,
 )
-from robo_orchard_sim.cfg_wrappers.sim.spawners.shapes_cfg import CuboidCfg
-from robo_orchard_sim.models.assets.asset_cfg import (  # noqa: F401
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.shapes_cfg import CuboidCfg
+from robo_orchard_sim.ext.models.assets.asset_cfg import (  # noqa: F401
     NV_ISAAC_DIR,
     ORCHARD_ASSET,
     AssetBaseCfg,
     GroupAssetCfg,
 )
-from robo_orchard_sim.models.assets.rigid_object import RigidObjectCfg
-from robo_orchard_sim.models.assets.xform_asset import (  # noqa: E402
+from robo_orchard_sim.ext.models.assets.rigid_object import RigidObjectCfg
+from robo_orchard_sim.ext.models.assets.xform_asset import (  # noqa: E402
     XFormPrimAsset,
 )
 from robo_orchard_sim.orchard_env.assets import AssetSpec

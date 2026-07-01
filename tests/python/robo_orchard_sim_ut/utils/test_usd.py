@@ -20,7 +20,7 @@ import tempfile
 
 import pytest
 
-from robo_orchard_sim.models.assets.asset_cfg import NV_ISAACLAB_DIR
+from robo_orchard_sim.ext.models.assets.asset_cfg import NV_ISAACLAB_DIR
 from robo_orchard_sim.utils.usd import usd_to_urdf
 
 
