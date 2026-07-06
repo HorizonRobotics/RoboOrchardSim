@@ -128,7 +128,7 @@ def _build_spatial_layout_context(
 class SpatialPickTaskDefinitionBase(TaskDefinition):
     """Layout-driven spatial-pick base."""
 
-    NAMED_ROLES: ClassVar[dict[str, str]] = {"src": "pick"}
+    NAMED_ROLES: ClassVar[dict[str, str]] = {"src": "pick", "ref": "anchor"}
     """Upstream JSON role -> task slot. Other roles auto-fill distractor_*."""
 
     @classmethod

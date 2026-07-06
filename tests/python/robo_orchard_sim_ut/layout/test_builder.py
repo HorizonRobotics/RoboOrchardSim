@@ -107,77 +107,105 @@ def test_empty_layout_sequence_raises():
         LayoutBuilder.build(seq, _resolver(), {"src": "pick"})
 
 
-def test_validate_slot_filters_none_returns_empty():
-    out = LayoutBuilder._validate_slot_filters(None, {"pick"})
+def test_validate_slot_overlays_none_returns_empty():
+    out = LayoutBuilder._validate_slot_overlays(None, {"pick"})
     assert out == {}
 
 
-def test_validate_slot_filters_empty_returns_empty():
-    out = LayoutBuilder._validate_slot_filters({}, {"pick"})
+def test_validate_slot_overlays_empty_returns_empty():
+    out = LayoutBuilder._validate_slot_overlays({}, {"pick"})
     assert out == {}
 
 
-def test_validate_slot_filters_basic_overlay_extracts_filter():
+def test_validate_slot_overlays_filter_only():
     overlay = {"pick": {"filter": {"tags": ["is_graspable"]}}}
-    out = LayoutBuilder._validate_slot_filters(overlay, {"pick"})
-    assert out == {"pick": {"tags": ["is_graspable"]}}
+    out = LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
+    assert out == {
+        "pick": {"filter": {"tags": ["is_graspable"]}, "split": None}
+    }
 
 
-def test_validate_slot_filters_unknown_slot_raises():
+def test_validate_slot_overlays_split_only():
+    overlay = {"pick": {"split": "seen"}}
+    out = LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
+    assert out == {"pick": {"filter": {}, "split": "seen"}}
+
+
+def test_validate_slot_overlays_filter_and_split():
+    overlay = {"pick": {"filter": {"tags": ["is_graspable"]}, "split": "seen"}}
+    out = LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
+    assert out == {
+        "pick": {"filter": {"tags": ["is_graspable"]}, "split": "seen"}
+    }
+
+
+def test_validate_slot_overlays_distractors_key_allowed():
+    overlay = {"distractors": {"split": "unseen_category"}}
+    out = LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
+    assert out == {"distractors": {"filter": {}, "split": "unseen_category"}}
+
+
+def test_validate_slot_overlays_unknown_key_raises():
     overlay = {"not_a_slot": {"filter": {"tags": ["is_graspable"]}}}
-    with pytest.raises(LayoutValidationError, match="unknown slot"):
-        LayoutBuilder._validate_slot_filters(overlay, {"pick"})
+    with pytest.raises(LayoutValidationError, match="unknown role class"):
+        LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
 
 
-def test_validate_slot_filters_entry_has_non_filter_key_raises():
+def test_validate_slot_overlays_distractor_n_rejected_with_hint():
+    overlay = {"distractor_0": {"filter": {"tags": ["is_graspable"]}}}
+    with pytest.raises(LayoutValidationError, match="'distractors'"):
+        LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
+
+
+def test_validate_slot_overlays_extra_entry_key_raises():
     overlay = {"pick": {"filter": {}, "prim_name": "x"}}
     with pytest.raises(LayoutValidationError, match="prim_name"):
-        LayoutBuilder._validate_slot_filters(overlay, {"pick"})
+        LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
 
 
-def test_validate_slot_filters_entry_missing_filter_key_raises():
+def test_validate_slot_overlays_empty_entry_raises():
     overlay = {"pick": {}}
-    with pytest.raises(LayoutValidationError, match="must contain 'filter'"):
-        LayoutBuilder._validate_slot_filters(overlay, {"pick"})
+    with pytest.raises(LayoutValidationError, match="'filter' and/or 'split'"):
+        LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
 
 
-def test_validate_slot_filters_category_inside_filter_raises():
+def test_validate_slot_overlays_category_inside_filter_raises():
     overlay = {"pick": {"filter": {"category": "peach"}}}
     with pytest.raises(LayoutValidationError, match="category"):
-        LayoutBuilder._validate_slot_filters(overlay, {"pick"})
+        LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
 
 
-def test_validate_slot_filters_distractor_slot_name_allowed():
-    overlay = {"distractor_0": {"filter": {"tags": ["is_graspable"]}}}
-    out = LayoutBuilder._validate_slot_filters(
-        overlay, {"pick", "distractor_0"}
-    )
-    assert out == {"distractor_0": {"tags": ["is_graspable"]}}
-
-
-def test_validate_slot_filters_filter_not_mapping_raises():
+def test_validate_slot_overlays_filter_not_mapping_raises():
     overlay = {"pick": {"filter": ["is_graspable"]}}
     with pytest.raises(
         LayoutValidationError, match="filter must be a mapping"
     ):
-        LayoutBuilder._validate_slot_filters(overlay, {"pick"})
+        LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
 
 
-def test_validate_slot_filters_entry_not_mapping_raises():
+def test_validate_slot_overlays_entry_not_mapping_raises():
     overlay = {"pick": "is_graspable"}
     with pytest.raises(LayoutValidationError, match="must be a mapping"):
-        LayoutBuilder._validate_slot_filters(overlay, {"pick"})  # type: ignore[arg-type]
+        LayoutBuilder._validate_slot_overlays(overlay, {"pick"})  # type: ignore[arg-type]
 
 
-def test_validate_slot_filters_multi_slot_overlay():
+def test_validate_slot_overlays_split_not_string_raises():
+    overlay = {"pick": {"split": ["seen"]}}
+    with pytest.raises(
+        LayoutValidationError, match="split must be a non-empty string"
+    ):
+        LayoutBuilder._validate_slot_overlays(overlay, {"pick"})
+
+
+def test_validate_slot_overlays_multi_key():
     overlay = {
         "pick": {"filter": {"tags": ["is_graspable"]}},
-        "place": {"filter": {"color": "red"}},
+        "place": {"filter": {"color": "red"}, "split": "seen"},
     }
-    out = LayoutBuilder._validate_slot_filters(overlay, {"pick", "place"})
+    out = LayoutBuilder._validate_slot_overlays(overlay, {"pick", "place"})
     assert out == {
-        "pick": {"tags": ["is_graspable"]},
-        "place": {"color": "red"},
+        "pick": {"filter": {"tags": ["is_graspable"]}, "split": None},
+        "place": {"filter": {"color": "red"}, "split": "seen"},
     }
 
 
@@ -248,10 +276,102 @@ def test_slot_filters_applies_to_each_pool_member():
 
 def test_slot_filters_unknown_slot_raises_via_build():
     seq = _seq({"src": "bread"})
-    with pytest.raises(LayoutValidationError, match="unknown slot"):
+    with pytest.raises(LayoutValidationError, match="unknown role class"):
         LayoutBuilder.build(
             seq,
             _resolver(),
             {"src": "pick"},
             slot_filters={"nonexistent": {"filter": {"tags": ["x"]}}},
+        )
+
+
+def test_build_split_forwarded_to_resolver_entry():
+    seq = _seq({"src": "bread"})
+    resolver = _resolver()
+    LayoutBuilder.build(
+        seq,
+        resolver,
+        {"src": "pick"},
+        slot_filters={
+            "pick": {"filter": {"tags": ["is_graspable"]}, "split": "seen"}
+        },
+    )
+    asset_configs = resolver.resolve.call_args[0][0]
+    assert asset_configs["pick"]["split"] == "seen"
+    assert asset_configs["pick"]["filter"] == {
+        "category": "bread",
+        "tags": ["is_graspable"],
+    }
+
+
+def test_build_no_split_key_when_overlay_has_none():
+    seq = _seq({"src": "bread"})
+    resolver = _resolver()
+    LayoutBuilder.build(
+        seq,
+        resolver,
+        {"src": "pick"},
+        slot_filters={"pick": {"filter": {"tags": ["is_graspable"]}}},
+    )
+    asset_configs = resolver.resolve.call_args[0][0]
+    assert "split" not in asset_configs["pick"]
+
+
+def test_build_distractors_overlay_broadcasts_to_all_auto_slots():
+    seq = _seq({"src": "bread", "ref": "gum", "extra": "mug"})
+    resolver = _resolver()
+    LayoutBuilder.build(
+        seq,
+        resolver,
+        {"src": "pick"},
+        slot_filters={
+            "distractors": {
+                "filter": {"tags": ["is_graspable"]},
+                "split": "seen",
+            }
+        },
+    )
+    asset_configs = resolver.resolve.call_args[0][0]
+    for slot in ("distractor_0", "distractor_1"):
+        assert asset_configs[slot]["filter"]["tags"] == ["is_graspable"]
+        assert asset_configs[slot]["split"] == "seen"
+    assert "split" not in asset_configs["pick"]
+
+
+def test_build_distractors_overlay_unused_when_no_auto_slots():
+    seq = _seq({"src": "bread"})
+    resolver = _resolver()
+    LayoutBuilder.build(
+        seq,
+        resolver,
+        {"src": "pick"},
+        slot_filters={"distractors": {"split": "seen"}},
+    )
+    asset_configs = resolver.resolve.call_args[0][0]
+    assert set(asset_configs) == {"pick"}
+    assert "split" not in asset_configs["pick"]
+
+
+def test_build_distractors_overlay_does_not_touch_named_slots():
+    seq = _seq({"src": "bread", "ref": "gum"})
+    resolver = _resolver()
+    LayoutBuilder.build(
+        seq,
+        resolver,
+        {"src": "pick", "ref": "anchor"},
+        slot_filters={"distractors": {"split": "seen"}},
+    )
+    asset_configs = resolver.resolve.call_args[0][0]
+    assert set(asset_configs) == {"pick", "anchor"}
+    assert "split" not in asset_configs["anchor"]
+
+
+def test_build_distractor_n_overlay_key_rejected():
+    seq = _seq({"src": "bread", "ref": "gum"})
+    with pytest.raises(LayoutValidationError, match="'distractors'"):
+        LayoutBuilder.build(
+            seq,
+            _resolver(),
+            {"src": "pick"},
+            slot_filters={"distractor_0": {"filter": {"tags": ["x"]}}},
         )
