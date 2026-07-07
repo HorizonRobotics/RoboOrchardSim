@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     )
 
 _DUALARM_PIPER_ROBOT_NAMES = {"dualarm_piper", "dualarm_piperx"}
+_PANDA_ROBOT_NAMES = {"franka_panda", "panda_droid"}
 
 
 def build_task_atomic_action_plan(
@@ -51,7 +52,7 @@ def build_task_atomic_action_plan(
     robot_name = cast(Any, orchard_env.embodiment).name
     if robot_name in _DUALARM_PIPER_ROBOT_NAMES:
         return _build_dualarm_piper_action_plan(orchard_env)
-    if robot_name == "franka_panda":
+    if robot_name in _PANDA_ROBOT_NAMES:
         return _build_franka_panda_action_plan(orchard_env)
 
     robot_infos = orchard_env.embodiment.get_robot_info_cfgs()

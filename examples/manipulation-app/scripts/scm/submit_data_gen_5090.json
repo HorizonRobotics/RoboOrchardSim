@@ -12,7 +12,9 @@
         "export PYTHONPATH=${WORKING_PATH}:$PYTHONPATH",
         "echo $PYTHONPATH",
         "export NV_ASSET_ROOT_DIR=/horizon-bucket/robot_lab/assets/NVIDIA/Assets/Isaac/4.1",
-        "echo $NV_ASSET_ROOT_DIR"
+        "echo $NV_ASSET_ROOT_DIR",
+        "export ORCHARD_ASSET=/horizon-bucket/robot_lab/assets/ROBO_ORCHARD_SIM",
+        "echo $ORCHARD_ASSET"
     ],
     "python_launcher": "accelerate",
     "to_upload": [
