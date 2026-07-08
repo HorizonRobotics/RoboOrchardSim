@@ -43,6 +43,8 @@ class OpenPiModelConfig(BaseModel):
     max_token_len: int = 128
     paligemma_variant: str | None = None
     action_expert_variant: str | None = None
+    # None uses the openpi default; DROID ckpts need 15.
+    action_horizon: int | None = None
 
     @model_validator(mode="after")
     def _validate_variants(self) -> "OpenPiModelConfig":
@@ -67,6 +69,11 @@ class OpenPiInferenceConfig(BaseModel):
     use_delta_joint_actions: bool = False
     norm_stats_name: str
     default_prompt: str | None = None
+    # Binarize the gripper action at 0.5 before decoding (DROID convention).
+    gripper_binarize: bool = False
+    # Client-side letterbox to 224 before send; null defers to the model-side
+    # (pil) ResizeImages.
+    client_resize: Literal["cv2", "pil"] | None = None
 
 
 def build_openpi_model_config(model_cfg: OpenPiModelConfig) -> Any:
@@ -77,12 +84,15 @@ def build_openpi_model_config(model_cfg: OpenPiModelConfig) -> Any:
 
         return pi0_fast.Pi0FASTConfig()
 
-    return pi0_config.Pi0Config(
+    kwargs: dict[str, Any] = dict(
         pi05=model_cfg.model_type == "pi05",
         max_token_len=model_cfg.max_token_len,
         paligemma_variant=model_cfg.paligemma_variant,
         action_expert_variant=model_cfg.action_expert_variant,
     )
+    if model_cfg.action_horizon is not None:
+        kwargs["action_horizon"] = model_cfg.action_horizon
+    return pi0_config.Pi0Config(**kwargs)
 
 
 def build_openpi_transform_pipeline(
@@ -93,6 +103,7 @@ def build_openpi_transform_pipeline(
         "dualarm_piper",
         "dualarm_piperx",
         "franka_panda",
+        "panda_droid",
     ],
 ) -> OpenPiTransformPipeline:
     """Create OpenPI transforms for policy inference."""
@@ -120,9 +131,10 @@ def _delta_action_mask_args(
         "dualarm_piper",
         "dualarm_piperx",
         "franka_panda",
+        "panda_droid",
     ],
 ) -> tuple[int, ...]:
-    if embodiment == "franka_panda":
+    if embodiment in {"franka_panda", "panda_droid"}:
         return (7, -1)
     if embodiment in {"dualarm_piper", "dualarm_piperx"}:
         return (6, -1, 6, -1)

@@ -1,0 +1,40 @@
+# OpenPi config for DROID pi05 checkpoints.
+# Select the checkpoint via ROBO_ORCHARD_OPENPI_MODEL_DIR.
+model:
+  model_type: pi05
+  max_token_len: 128
+  paligemma_variant: gemma_2b       # merged full weights (not LoRA)
+  action_expert_variant: gemma_300m
+  action_horizon: 15                # DROID chunk size
+inference:
+  use_delta_joint_actions: true
+  norm_stats_name: droid
+  default_prompt: null
+  gripper_binarize: true            # DROID binary gripper
+  client_resize: cv2                # cv2 letterbox to 224
+model_dir: /horizon-bucket/robot_lab/users/chaodong.huang-labs/public_models/pi05_droid_jointpos  # override via ROBO_ORCHARD_OPENPI_MODEL_DIR
+valid_action_step: 15
+logging_tag: openpi_droid
+enable_intrinsic_remap: false
+cameras:
+  left_wrist_0_rgb:
+    target_size: [392, 252]
+    target_intrinsic:
+      - [290.0, 0.0, 196.0, 0.0]
+      - [0.0, 310.0, 126.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+  right_wrist_0_rgb:
+    target_size: [392, 252]
+    target_intrinsic:
+      - [290.0, 0.0, 196.0, 0.0]
+      - [0.0, 310.0, 126.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]
+  base_0_rgb:
+    target_size: [392, 252]
+    target_intrinsic:
+      - [290.0, 0.0, 196.0, 0.0]
+      - [0.0, 310.0, 126.0, 0.0]
+      - [0.0, 0.0, 1.0, 0.0]
+      - [0.0, 0.0, 0.0, 1.0]

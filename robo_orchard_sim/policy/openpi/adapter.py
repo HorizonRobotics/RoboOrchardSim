@@ -49,6 +49,11 @@ _OPENPI_MODEL_CAMERA_SLOTS_BY_EMBODIMENT = {
         "right_wrist_0_rgb": "ext2_camera",
         "base_0_rgb": "ext1_camera",
     },
+    "panda_droid": {
+        # base + wrist only; the unset right_wrist_0 slot is zeroed and masked.
+        "left_wrist_0_rgb": "wrist_camera",
+        "base_0_rgb": "ext1_camera",
+    },
     "dualarm_piper": {
         "left_wrist_0_rgb": "left_wrist",
         "right_wrist_0_rgb": "right_wrist",
@@ -61,9 +66,9 @@ _OPENPI_MODEL_CAMERA_SLOTS_BY_EMBODIMENT = {
     },
 }
 OPENPI_IMAGE_KEYS = (
+    "base_0_rgb",
     "left_wrist_0_rgb",
     "right_wrist_0_rgb",
-    "base_0_rgb",
 )
 DEFAULT_CAMERAS = {
     model_image_key: {
@@ -101,8 +106,12 @@ class OpenPiAdapter:
         embodiment_type: str,
         cameras: dict[str, Any] | None = None,
         enable_intrinsic_remap: bool = True,
+        gripper_binarize: bool = False,
+        client_resize: str | None = None,
     ) -> None:
         self._embodiment_type = embodiment_type
+        self._gripper_binarize = gripper_binarize
+        self._client_resize = client_resize
         try:
             self._model_camera_slots = (
                 _OPENPI_MODEL_CAMERA_SLOTS_BY_EMBODIMENT[embodiment_type]
@@ -135,6 +144,13 @@ class OpenPiAdapter:
             if self._enable_intrinsic_remap
             else images
         )
+        if self._client_resize is not None:
+            images_for_model = {
+                key: self._resize_with_pad(
+                    image, 224, 224, method=self._client_resize
+                )
+                for key, image in images_for_model.items()
+            }
         hist_joint_state = self._build_hist_joint_state(joint_state)
         return {
             "image": self._build_openpi_images(images_for_model),
@@ -330,8 +346,39 @@ class OpenPiAdapter:
     def _as_rgb_uint8(image: np.ndarray) -> np.ndarray:
         image = np.asarray(image)
         if np.issubdtype(image.dtype, np.floating):
-            image = image.astype(np.uint8)
+            # Scale only unit-range floats; [0, 255] floats are cast as-is.
+            if image.size == 0 or image.max() <= 1.0:
+                image = image * 255
+            image = np.clip(image, 0, 255).astype(np.uint8)
         return image
+
+    @staticmethod
+    def _resize_with_pad(
+        image: np.ndarray,
+        target_h: int,
+        target_w: int,
+        *,
+        method: str = "cv2",
+    ) -> np.ndarray:
+        """Aspect-preserving letterbox to target size, via cv2 or pil."""
+        image = OpenPiAdapter._as_rgb_uint8(image)
+        if method == "pil":
+            from openpi_client import image_tools
+
+            return image_tools.resize_with_pad(image, target_h, target_w)
+        if method != "cv2":
+            raise ValueError(f"Unknown client_resize method: {method!r}")
+        h, w = image.shape[:2]
+        scale = min(target_w / w, target_h / h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        resized = cv2.resize(
+            image, (new_w, new_h), interpolation=cv2.INTER_LINEAR
+        )
+        canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+        y_off = (target_h - new_h) // 2
+        x_off = (target_w - new_w) // 2
+        canvas[y_off : y_off + new_h, x_off : x_off + new_w] = resized
+        return canvas
 
     @staticmethod
     def _build_hist_joint_state(joint_state: np.ndarray) -> np.ndarray:
@@ -423,6 +470,9 @@ class OpenPiAdapter:
                         step_idx,
                         cursor : cursor + manipulator.gripper_policy_dim,
                     ]
+                    if self._gripper_binarize:
+                        # DROID binary gripper: snap at 0.5 (full open/close).
+                        gripper = (gripper > 0.5).to(gripper.dtype)
                     commands.append(
                         UnifiedJointCommand(
                             values=policy_to_gripper_positions_torch(

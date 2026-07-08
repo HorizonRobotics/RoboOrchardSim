@@ -239,6 +239,8 @@ class OpenPiPolicy(PolicyMixin[CanonicalPolicyInput, OpenPiAction]):
             embodiment_type=embodiment_type,
             cameras=self.cfg.cameras,
             enable_intrinsic_remap=self.cfg.enable_intrinsic_remap,
+            gripper_binarize=self.cfg.inference.gripper_binarize,
+            client_resize=self.cfg.inference.client_resize,
         )
 
     def _ensure_adapter(self, obs: CanonicalPolicyInput) -> OpenPiAdapter:

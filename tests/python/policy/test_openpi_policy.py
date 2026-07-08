@@ -655,6 +655,33 @@ def test_openpi_adapter_missing_manipulator_slot_raises_value_error() -> None:
         adapter.build_model_input(obs)
 
 
+def test_openpi_adapter_as_rgb_uint8_given_uint8_returns_unchanged() -> None:
+    image = np.full((2, 2, 3), 200, dtype=np.uint8)
+
+    out = OpenPiAdapter._as_rgb_uint8(image)
+
+    assert out.dtype == np.uint8
+    assert np.array_equal(out, image)
+
+
+def test_openpi_adapter_as_rgb_uint8_given_unit_float_scales_to_255() -> None:
+    image = np.full((2, 2, 3), 0.5, dtype=np.float32)
+
+    out = OpenPiAdapter._as_rgb_uint8(image)
+
+    assert out.dtype == np.uint8
+    assert np.all(out == 127)
+
+
+def test_openpi_adapter_as_rgb_uint8_given_255_range_float_casts() -> None:
+    image = np.full((2, 2, 3), 200.0, dtype=np.float32)
+
+    out = OpenPiAdapter._as_rgb_uint8(image)
+
+    assert out.dtype == np.uint8
+    assert np.all(out == 200)
+
+
 def test_openpi_policy_act_given_cached_actions_reuses_inference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
