@@ -352,9 +352,11 @@ def _registered_default_yaml(task: str) -> str | None:
 def _rewrite_split(yaml_path: str, split_type: str, dest: Path) -> str:
     """Load `yaml_path`, override every asset_configs[*].split, save to dest.
 
-    Every slot under `asset_configs` gets its `split` set to `split_type`.
-    Instruction fields (e.g. actor_description_mode) are intentionally left
-    untouched — they control language, not the dataset split.
+    Only slots that already declare a `split` key get overridden — slots
+    without an explicit `split` are left alone (adding one would silently
+    change their semantics). Raises if no slot ends up touched.
+    Instruction fields (e.g. actor_description_mode) are intentionally
+    left untouched — they control language, not the dataset split.
 
     The rewritten yaml is what actually gets run; `batch_evaluation` copies
     it into each config's output dir, so no extra durable copy is needed
@@ -370,12 +372,23 @@ def _rewrite_split(yaml_path: str, split_type: str, dest: Path) -> str:
             f"cannot apply split_type={split_type!r}: {src} has no "
             f"`asset_configs` section to rewrite"
         )
+    touched = 0
     for key, slot in asset_configs.items():
         if not isinstance(slot, dict):
             raise SystemExit(
                 f"asset_configs[{key!r}] must be a mapping in {src}"
             )
+        if "split" not in slot:
+            continue
         slot["split"] = split_type
+        touched += 1
+    if touched == 0:
+        raise SystemExit(
+            f"cannot apply split_type={split_type!r}: no slot under "
+            f"`asset_configs` in {src} declares a `split` field. "
+            "Add `split: <value>` to at least one slot, or drop "
+            "`split_type` from the eval config."
+        )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(
         yaml.safe_dump(loaded, sort_keys=False, allow_unicode=True),

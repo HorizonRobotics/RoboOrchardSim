@@ -70,6 +70,7 @@ tasks:
     splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
   # Franka splits setting
+  # You should use franka embodiment for place_a2b_hard task.
   # place_a2b_hard_franka:
   #   task_type: place_a2b_hard
   #   split_type: unseen_instance
