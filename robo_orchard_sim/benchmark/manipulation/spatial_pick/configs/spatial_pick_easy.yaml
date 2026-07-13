@@ -25,9 +25,9 @@ asset_configs:
   pick:
     filter:
       tags: [is_graspable]
-    # split: seen
-  # anchor:
-  #   filter: {tags: [is_graspable]}
-  # distractors:
-  #   filter: {tags: [is_graspable]}
-  #   split: seen
+    split: unseen_instance
+  anchor:
+    filter: {tags: [is_graspable]}
+  distractors:
+    filter: {tags: [is_graspable]}
+    split: unseen_instance
