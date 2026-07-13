@@ -37,6 +37,8 @@ class ManipulatorBinding(BaseModel):
 
     joint_position_obs_key: str
     gripper_position_obs_key: str | None = None
+    ee_pose_obs_key: str | None = None
+    base_pose_obs_key: str | None = None
     arm_joint_name_specs: tuple[str, ...]
     gripper_joint_name_specs: tuple[str, ...] = ()
     gripper_policy_representation: Literal["first_joint", "all_joints"] = (

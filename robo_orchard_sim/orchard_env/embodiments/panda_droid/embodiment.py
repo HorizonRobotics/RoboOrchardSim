@@ -287,6 +287,14 @@ class PandaDroidEmbodiment(EmbodimentBase):
                         property_source="root",
                         property_name="pose",
                     ),
+                    "ee_link": AssetObservationTermCfg(
+                        asset_cfg=SceneEntityCfg(
+                            name=robot_scene_name,
+                            body_names=["base_link"],
+                        ),
+                        property_source="body",
+                        property_name="pose",
+                    ),
                     "joint_position": AssetObservationTermCfg(
                         asset_cfg=SceneEntityCfg(
                             name=robot_scene_name,

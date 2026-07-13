@@ -58,10 +58,14 @@ def build_panda_droid_policy_binding_schema(
         manipulator_slots={
             "single_arm": ManipulatorBinding(
                 joint_position_obs_key="joint_position",
+                ee_pose_obs_key="ee_link",
+                base_pose_obs_key="base_link",
                 arm_joint_name_specs=("panda_joint[1-7]",),
                 gripper_joint_name_specs=("finger_joint",),
                 gripper_policy_representation="first_joint",
                 gripper_decode_coupling="symmetric",
+                # DROID gripper convention is [0, 1]; finger_joint spans
+                # [0, pi/4] rad, so scale raw radians by 4/pi.
                 gripper_policy_scale=4.0 / math.pi,
             )
         },
