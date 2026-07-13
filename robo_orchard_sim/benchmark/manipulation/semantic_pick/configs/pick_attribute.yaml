@@ -61,7 +61,7 @@ asset_configs:
     prim_name: pick_object
 
   distractors:
-    split: unseen_instance
+    # split: unseen_instance
     anchor: pick
     match: [category]
     differ: [*attr]

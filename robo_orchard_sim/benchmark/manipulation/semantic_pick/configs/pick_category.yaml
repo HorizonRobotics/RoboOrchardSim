@@ -63,7 +63,7 @@ asset_configs:
   distractors:
     anchor: pick
     differ: [category]
-    split: seen
+    # split: seen
     min_count: 1
     max_count: 5
     prim_name_prefix: distractor
