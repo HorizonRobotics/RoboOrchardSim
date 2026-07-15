@@ -79,11 +79,7 @@ tasks:
 
   # Tasks that need multiple yamls (e.g. spatial_pick_easy) point to a batch
   # plan JSON. `yaml` and `batch_plan` are mutually exclusive.
-  # spatial_pick_easy_seen:
+  # spatial_pick_easy:
   #   task_type: spatial_pick_easy
   #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/franka_task_split.yaml
-  #   batch_plan: ${ORCHARD_ASSET}/configs/tasks/spatial_pick/sch/spatial_pick_seen_sch.json
-  # spatial_pick_easy_OOD:
-  #   task_type: spatial_pick_easy
-  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/franka_task_split.yaml
-  #   batch_plan: ${ORCHARD_ASSET}/configs/tasks/spatial_pick/sch/spatial_pick_OOD_eval_sch.json
+  #   batch_plan: ${ORCHARD_ASSET}/configs/tasks/spatial_pick_0708/sch/spatial_pick_OOD_eval_sch.json
