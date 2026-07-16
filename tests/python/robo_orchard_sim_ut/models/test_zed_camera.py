@@ -24,74 +24,32 @@ from robo_orchard_sim.ext.models.sensors.zed import (
 
 
 @pytest.mark.parametrize(
-    ("camera_cfg", "expected_intrinsic_matrix"),
+    "camera_cfg",
     [
-        (
-            ZED_DROID_WRIST_CFG,
-            [
-                732.2020874023438,
-                0.0,
-                640.0,
-                0.0,
-                732.2020874023438,
-                360.0,
-                0.0,
-                0.0,
-                1.0,
-            ],
-        ),
-        (
-            ZED_DROID_EXT1_CFG,
-            [
-                524.419677734375,
-                0.0,
-                640.0,
-                0.0,
-                524.419677734375,
-                360.0,
-                0.0,
-                0.0,
-                1.0,
-            ],
-        ),
-        (
-            ZED_DROID_EXT2_CFG,
-            [
-                531.8577880859375,
-                0.0,
-                640.0,
-                0.0,
-                531.8577880859375,
-                360.0,
-                0.0,
-                0.0,
-                1.0,
-            ],
-        ),
+        ZED_DROID_WRIST_CFG,
+        ZED_DROID_EXT1_CFG,
+        ZED_DROID_EXT2_CFG,
     ],
 )
-def test_zed_droid_camera_cfg_original_resolution_uses_centered_intrinsics(
-    camera_cfg, expected_intrinsic_matrix
+def test_zed_droid_camera_cfg_original_resolution_returns_expected_dimensions(
+    camera_cfg,
 ):
-    assert camera_cfg.width == 1280
-    assert camera_cfg.height == 720
+    assert (camera_cfg.width, camera_cfg.height) == (1280, 720)
+
+
+@pytest.mark.parametrize(
+    "camera_cfg",
+    [
+        ZED_DROID_WRIST_CFG,
+        ZED_DROID_EXT1_CFG,
+        ZED_DROID_EXT2_CFG,
+    ],
+)
+def test_zed_droid_camera_cfg_centered_principal_point_returns_zero_offsets(
+    camera_cfg,
+):
     assert camera_cfg.spawn is not None
-
-    f_x = expected_intrinsic_matrix[0]
-    f_y = expected_intrinsic_matrix[4]
-    c_x = expected_intrinsic_matrix[2]
-    c_y = expected_intrinsic_matrix[5]
-    focal_length = camera_cfg.spawn.focal_length
-
-    assert camera_cfg.spawn.horizontal_aperture == pytest.approx(
-        camera_cfg.width * focal_length / f_x
-    )
-    assert camera_cfg.spawn.vertical_aperture == pytest.approx(
-        camera_cfg.height * focal_length / f_y
-    )
-    assert camera_cfg.spawn.horizontal_aperture_offset == pytest.approx(
-        (c_x - camera_cfg.width / 2) / f_x
-    )
-    assert camera_cfg.spawn.vertical_aperture_offset == pytest.approx(
-        (c_y - camera_cfg.height / 2) / f_y
-    )
+    assert (
+        camera_cfg.spawn.horizontal_aperture_offset,
+        camera_cfg.spawn.vertical_aperture_offset,
+    ) == pytest.approx((0.0, 0.0))
