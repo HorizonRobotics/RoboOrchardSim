@@ -1,0 +1,26 @@
+policy: groot
+# DROID-finetuned panda_droid GR00T server: 2 cams at T=1, joint-driven.
+host: 127.0.0.1
+port: 5555
+timeout_ms: 15000
+# receding horizon: execute 15 of the 40-step chunk, then re-query (15 Hz).
+open_loop_horizon: 15
+# null -> use the task instruction (rendered from the task yaml).
+instruction: null
+logging_tag: null
+api_token: null
+language_key: annotation.language.language_instruction
+# eef_9d input state uses the DROID cartesian_position frame (panda flange,
+# 0.0189m behind the gripper base_link along its local z).
+eef_ee_to_tcp_offset: [0.0, 0.0, -0.0189]
+video_map:
+  exterior_image_1_left: ext1_camera
+  wrist_image_left: wrist_camera
+# The server tags joint_position RELATIVE but returns absolute targets, so
+# arm_relative=false. eef_key is set only to build the required eef_9d state.
+arms:
+  - manipulator_slot: single_arm
+    arm_key: joint_position
+    gripper_key: gripper_position
+    eef_key: eef_9d
+    arm_relative: false

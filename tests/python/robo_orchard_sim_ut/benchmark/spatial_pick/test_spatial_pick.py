@@ -172,7 +172,7 @@ def test_build_multi_category_pick_yields_pool_spec(tmp_path):
     resolver = _make_resolver(
         {
             "pick": {"garlic": _DUMMY("g"), "potato": _DUMMY("p")},
-            "distractor_0": {"thermos": _DUMMY("t")},
+            "anchor": {"thermos": _DUMMY("t")},
         }
     )
     with _patched_build() as orch:
@@ -203,7 +203,7 @@ def test_build_single_category_pick_yields_object_spec(tmp_path):
     resolver = _make_resolver(
         {
             "pick": {"garlic": _DUMMY("g")},
-            "distractor_0": {"thermos": _DUMMY("t")},
+            "anchor": {"thermos": _DUMMY("t")},
         }
     )
     with _patched_build() as orch:
@@ -237,7 +237,7 @@ def test_build_layout_mode_preserves_light_and_texture_task_params(tmp_path):
     resolver = _make_resolver(
         {
             "pick": {"garlic": _DUMMY("g")},
-            "distractor_0": {"thermos": _DUMMY("t")},
+            "anchor": {"thermos": _DUMMY("t")},
         }
     )
     with _patched_build() as orch:
@@ -272,7 +272,7 @@ def test_build_rejects_invalid_yaml(
     resolver = _make_resolver(
         {
             "pick": {"garlic": _DUMMY("g")},
-            "distractor_0": {"thermos": _DUMMY("t")},
+            "anchor": {"thermos": _DUMMY("t")},
         }
     )
     with pytest.raises(exc_type, match=match):
@@ -287,7 +287,7 @@ def test_build_asset_configs_overlay_forwards_tags(tmp_path):
     resolver = _make_resolver(
         {
             "pick": {"garlic": _DUMMY("g")},
-            "distractor_0": {"thermos": _DUMMY("t")},
+            "anchor": {"thermos": _DUMMY("t")},
         }
     )
     yaml_path = _write_yaml(
@@ -306,7 +306,7 @@ def test_build_asset_configs_overlay_forwards_tags(tmp_path):
     asset_configs = resolver.resolve.call_args[0][0]
     assert asset_configs["pick"]["filter"]["tags"] == ["is_graspable"]
     assert asset_configs["pick"]["filter"]["category"] == "garlic"
-    assert asset_configs["distractor_0"]["filter"] == {"category": "thermos"}
+    assert asset_configs["anchor"]["filter"] == {"category": "thermos"}
 
 
 def test_build_instruction_context_spatial_relation_renders_instruction(
@@ -328,7 +328,7 @@ def test_build_instruction_context_spatial_relation_renders_instruction(
     resolver = _make_resolver(
         {
             "pick": {"tomato": tomato},
-            "distractor_0": {"apple": apple},
+            "anchor": {"apple": apple},
         }
     )
     yaml_path = _write_yaml(
@@ -365,3 +365,36 @@ def test_build_instruction_context_spatial_relation_renders_instruction(
     )
 
     assert instruction == "Pick up the tomato to the left of the apple."
+
+
+def test_build_yaml_split_reaches_resolver_entries(tmp_path):
+    """asset_configs split values flow through build into resolver entries."""
+    _write_json(tmp_path, [_entry("garlic", "thermos")])
+    resolver = _make_resolver(
+        {
+            "pick": {"garlic": _DUMMY("g")},
+            "anchor": {"thermos": _DUMMY("t")},
+        }
+    )
+    yaml = _write_yaml(
+        tmp_path,
+        extra=(
+            "asset_configs:\n"
+            "  pick:\n"
+            "    filter: {tags: [is_graspable]}\n"
+            "    split: seen\n"
+            "  anchor:\n"
+            "    filter: {tags: [is_graspable]}\n"
+            "  distractors:\n"
+            "    split: seen\n"
+        ),
+    )
+    with _patched_build():
+        SpatialPickTaskDefinitionBase.build(
+            resolver=resolver, config_path=str(yaml)
+        )
+    asset_configs = resolver.resolve.call_args[0][0]
+    assert asset_configs["pick"]["split"] == "seen"
+    assert asset_configs["pick"]["filter"]["tags"] == ["is_graspable"]
+    assert "split" not in asset_configs["anchor"]
+    assert asset_configs["anchor"]["filter"]["tags"] == ["is_graspable"]

@@ -17,6 +17,7 @@
 """Layout consumption: asset resolution + env-level cycling."""
 
 from __future__ import annotations
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -47,6 +48,9 @@ if TYPE_CHECKING:
 
 __all__ = ["LayoutBuilder"]
 
+_DISTRACTOR_N_RE = re.compile(r"^distractor_\d+$")
+_EMPTY_OVERLAY: dict[str, Any] = {"filter": {}, "split": None}
+
 
 @dataclass(frozen=True)
 class LayoutBuilder:
@@ -59,51 +63,75 @@ class LayoutBuilder:
     role_member_by_category: Mapping[str, Mapping[str, str]]
 
     @staticmethod
-    def _validate_slot_filters(
+    def _validate_slot_overlays(
         overlay: Mapping[str, Mapping[str, Any]] | None,
-        valid_slots: set[str],
+        named_slots: set[str],
     ) -> dict[str, dict[str, Any]]:
-        """Validate overlay; return {slot: filter} keyed by task slot."""
+        """Validate overlay; return {role_class: {"filter", "split"}}.
+
+        Keys are task-contract role classes: a named slot (e.g. "pick",
+        "anchor", "place") or the literal "distractors", which broadcasts
+        to every auto-derived distractor slot. Per-instance
+        "distractor_<N>" keys are rejected because their numbering
+        depends on layout-instance role order.
+        """
         if not overlay:
             return {}
+        valid_keys = named_slots | {"distractors"}
         out: dict[str, dict[str, Any]] = {}
-        for slot, entry in overlay.items():
-            if slot not in valid_slots:
+        for key, entry in overlay.items():
+            if key not in valid_keys:
+                hint = (
+                    "; use 'distractors' to constrain all auto-derived "
+                    "distractor slots"
+                    if _DISTRACTOR_N_RE.match(key)
+                    else ""
+                )
                 raise LayoutValidationError(
-                    f"asset_configs[{slot!r}]: unknown slot; valid slots are "
-                    f"{sorted(valid_slots)}"
+                    f"asset_configs[{key!r}]: unknown role class; valid "
+                    f"keys are {sorted(valid_keys)}{hint}"
                 )
             if not isinstance(entry, Mapping):
                 raise LayoutValidationError(
-                    f"asset_configs[{slot!r}] must be a mapping, "
+                    f"asset_configs[{key!r}] must be a mapping, "
                     f"got {type(entry).__name__}"
                 )
-            if "filter" not in entry:
-                raise LayoutValidationError(
-                    f"asset_configs[{slot!r}] must contain 'filter' "
-                    f"(layout mode only honors the filter sub-key)"
-                )
-            extra = set(entry) - {"filter"}
+            extra = set(entry) - {"filter", "split"}
             if extra:
                 raise LayoutValidationError(
-                    f"asset_configs[{slot!r}]: unexpected key(s) "
+                    f"asset_configs[{key!r}]: unexpected key(s) "
                     f"{sorted(extra)}; layout mode only honors 'filter' "
-                    f"(prim_name / pool_size / uuid / split / anchor "
+                    f"and 'split' (prim_name / pool_size / uuid / anchor "
                     f"are auto-derived or N/A)"
                 )
-            if not isinstance(entry["filter"], Mapping):
+            if not entry:
                 raise LayoutValidationError(
-                    f"asset_configs[{slot!r}].filter must be a mapping, "
-                    f"got {type(entry['filter']).__name__}"
+                    f"asset_configs[{key!r}] must contain 'filter' "
+                    f"and/or 'split'"
                 )
-            filter_body = dict(entry["filter"])
-            if "category" in filter_body:
+            filter_body: dict[str, Any] = {}
+            if "filter" in entry:
+                if not isinstance(entry["filter"], Mapping):
+                    raise LayoutValidationError(
+                        f"asset_configs[{key!r}].filter must be a "
+                        f"mapping, got {type(entry['filter']).__name__}"
+                    )
+                filter_body = dict(entry["filter"])
+                if "category" in filter_body:
+                    raise LayoutValidationError(
+                        f"asset_configs[{key!r}].filter: 'category' is "
+                        f"forbidden in layout mode (layout JSON is the "
+                        f"authoritative source)"
+                    )
+            split = entry.get("split")
+            if split is not None and (
+                not isinstance(split, str) or not split.strip()
+            ):
                 raise LayoutValidationError(
-                    f"asset_configs[{slot!r}].filter: 'category' is "
-                    f"forbidden in layout mode (layout JSON is the "
-                    f"authoritative source)"
+                    f"asset_configs[{key!r}].split must be a non-empty "
+                    f"string, got {split!r}"
                 )
-            out[slot] = filter_body
+            out[key] = {"filter": filter_body, "split": split}
         return out
 
     @classmethod
@@ -122,10 +150,12 @@ class LayoutBuilder:
         ``distractor_0``, ``distractor_1``, … . 1 unique category per
         slot → ``ObjectSpec``; ≥2 → ``PoolSpec`` named ``{slot}_pool_{idx}``.
 
-        ``slot_filters`` overlays per-slot filter dicts; layout JSON's
-        ``category`` always wins. ``role_member_by_category`` stays keyed
-        by the upstream JSON role, since ``LayoutResetTerm`` indexes it
-        while iterating ``layout.objects``.
+        ``slot_filters`` overlays per-role-class ``filter``/``split``
+        dicts, keyed by a named slot or the literal ``distractors``
+        (broadcast to all auto-derived slots); layout JSON's ``category``
+        always wins. ``role_member_by_category`` stays keyed by the
+        upstream JSON role, since ``LayoutResetTerm`` indexes it while
+        iterating ``layout.objects``.
         """
         if not layouts.entries:
             raise LayoutValidationError("empty layout sequence")
@@ -157,8 +187,8 @@ class LayoutBuilder:
         for i, role in enumerate(other_roles):
             role_to_slot[role] = f"distractor_{i}"
 
-        valid_slots = set(role_to_slot.values())
-        slot_filter_map = cls._validate_slot_filters(slot_filters, valid_slots)
+        named_slots = set(named_roles.values())
+        overlay_map = cls._validate_slot_overlays(slot_filters, named_slots)
 
         layout_roles = list(role_to_slot.keys())
         seen_per_role: dict[str, list[str]] = {r: [] for r in layout_roles}
@@ -176,14 +206,19 @@ class LayoutBuilder:
         asset_configs: dict[str, dict[str, Any]] = {}
         for layout_role, cats in seen_per_role.items():
             slot = role_to_slot[layout_role]
-            slot_overlay = slot_filter_map.get(slot, {})
+            overlay = overlay_map.get(
+                slot if slot in named_slots else "distractors",
+                _EMPTY_OVERLAY,
+            )
             for i, cat in enumerate(cats):
                 key = _scene_name(slot, i, len(cats))
-                filter_dict: dict[str, Any] = {**slot_overlay, "category": cat}
-                asset_configs[key] = {
-                    "filter": filter_dict,
+                cfg_entry: dict[str, Any] = {
+                    "filter": {**overlay["filter"], "category": cat},
                     "prim_name": key,
                 }
+                if overlay["split"] is not None:
+                    cfg_entry["split"] = overlay["split"]
+                asset_configs[key] = cfg_entry
         resolved = resolver.resolve(asset_configs)
 
         assets: dict[str, ObjectSpec | PoolSpec] = {}

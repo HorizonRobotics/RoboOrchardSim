@@ -33,43 +33,53 @@ tasks:
   # key (e.g. `pick_attribute_color`) is the user-facing instance name used
   # for output paths and logs. Use the same `task_type` under different keys
   # to run one registered task multiple times with different yaml / splits.
+  #
+  # Optional `split_type` overrides every `asset_configs.*.split` in the
+  # task yaml at runtime. Valid values: seen | unseen_instance |
+  # unseen_category. Omit to keep whatever the task yaml declares.
+  # Incompatible with `batch_plan` (that plan already fixes its configs).
   pick_category:
     task_type: pick_category
-    splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v1/pick_category_eval_v1_split.yaml
+    split_type: seen
+    splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
-  # To evaluate pick_category on unseen_instance / unseen_category, copy
-  # robo_orchard_sim/benchmark/manipulation/semantic_pick/configs/pick_category.yaml
-  # and change `asset_configs.pick.split` (and `distractors.split`) from
-  # `seen` to `unseen_instance` or `unseen_category`. Then add an entry
-  # here with a distinct YAML key and `yaml: <path/to/new.yaml>`.
-  # For example:
-  # pick_category_unseen_instance:
-  #   task_type: pick_category
-  #   yaml: <path/to/new.yaml>
-  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v1/pick_category_eval_v1_split.yaml
+  pick_category_unseen_instance:
+    task_type: pick_category
+    split_type: unseen_instance
+    splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
+
+  pick_category_unseen_category:
+    task_type: pick_category
+    split_type: unseen_category
+    splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
   pick_attribute_color:
     task_type: pick_attribute
-    splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v1/pick_attribute_eval_v1_split.yaml
+    split_type: unseen_instance
+    splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
   # Same `task_type` with a different yaml / splits.
   # pick_attribute_shape:
   #   task_type: pick_attribute
   #   yaml: xxxxxx
-  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v1/pick_attribute_eval_v1_split.yaml
+  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
   place_a2b_hard_piperx:
     task_type: place_a2b_hard
-    splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v1/pick_category_eval_v1_split.yaml
+    split_type: unseen_instance
+    splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
   # Franka splits setting
+  # You should use franka embodiment for place_a2b_hard task.
   # place_a2b_hard_franka:
   #   task_type: place_a2b_hard
-  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v1/place_a2b_franka_eval_v1_split.yaml
+  #   split_type: unseen_instance
+  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/franka_task_split.yaml
 
 
   # Tasks that need multiple yamls (e.g. spatial_pick_easy) point to a batch
   # plan JSON. `yaml` and `batch_plan` are mutually exclusive.
   # spatial_pick_easy:
   #   task_type: spatial_pick_easy
-  #   batch_plan: ${ORCHARD_ASSET}/configs/tasks/spatial_pick/sch/spatial_pick_eval.json
+  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/franka_task_split.yaml
+  #   batch_plan: ${ORCHARD_ASSET}/configs/tasks/spatial_pick_0708/sch/spatial_pick_OOD_eval_sch.json

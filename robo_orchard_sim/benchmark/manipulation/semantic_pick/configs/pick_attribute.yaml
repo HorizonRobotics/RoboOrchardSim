@@ -55,13 +55,13 @@ task:
 
 asset_configs:
   pick:
-    split: seen
+    split: unseen_instance
     filter:
       tags: [is_graspable]
     prim_name: pick_object
 
   distractors:
-    split: seen
+    # split: unseen_instance
     anchor: pick
     match: [category]
     differ: [*attr]

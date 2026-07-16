@@ -47,6 +47,7 @@ class GrootArmMapCfg(BaseModel):
     arm_key: str
     gripper_key: str
     arm_relative: bool = False
+    eef_key: str | None = None
 
 
 def _default_arm_cfgs() -> list[GrootArmMapCfg]:
@@ -56,6 +57,7 @@ def _default_arm_cfgs() -> list[GrootArmMapCfg]:
             arm_key=spec.arm_key,
             gripper_key=spec.gripper_key,
             arm_relative=spec.arm_relative,
+            eef_key=spec.eef_key,
         )
         for spec in DEFAULT_ARM_SPECS
     ]
@@ -85,11 +87,17 @@ class GrootPolicy(PolicyMixin[CanonicalPolicyInput, GrootAction]):
                     arm_key=arm.arm_key,
                     gripper_key=arm.gripper_key,
                     arm_relative=arm.arm_relative,
+                    eef_key=arm.eef_key,
                 )
                 for arm in cfg.arms
             ),
             language_key=cfg.language_key,
             default_instruction=cfg.instruction,
+            eef_ee_to_tcp_offset=(
+                tuple(cfg.eef_ee_to_tcp_offset)
+                if cfg.eef_ee_to_tcp_offset is not None
+                else None
+            ),
         )
         self._client = self._create_client(cfg)
         self._cached_actions: list[GrootAction] = []
@@ -192,6 +200,7 @@ class GrootPolicyCfg(PolicyConfig[GrootPolicy]):
     video_map: dict[str, str] = Field(
         default_factory=lambda: dict(DEFAULT_VIDEO_MAP)
     )
+    eef_ee_to_tcp_offset: list[float] | None = None
     arms: list[GrootArmMapCfg] = Field(default_factory=_default_arm_cfgs)
 
     @field_validator("open_loop_horizon")

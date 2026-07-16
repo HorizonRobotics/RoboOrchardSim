@@ -30,7 +30,13 @@ embodiment:
 
 layout: spatial_place_a2b_easy.json
 
+# Layout mode: keys are role classes (pick / place / distractors), never
+# distractor_N instances. Each entry takes filter and/or split; category
+# always comes from the layout JSON. split needs --splits at runtime.
 asset_configs:
   pick:
     filter:
       tags: [is_graspable]
+    # split: seen
+  # distractors:
+  #   split: seen

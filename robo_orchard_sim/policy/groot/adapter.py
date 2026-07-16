@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import robo_orchard_core.utils.math as math_utils
 import torch
 
 from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
@@ -44,6 +45,10 @@ DEFAULT_VIDEO_MAP = {
 }
 DEFAULT_LANGUAGE_KEY = "annotation.human.task_description"
 
+# Neutral end-effector pose: zero position + identity rotation (XYZ + ROT6D).
+_IDENTITY_EEF_9D = np.array([0, 0, 0, 1, 0, 0, 0, 1, 0], dtype=np.float32)
+_IDENTITY_QUAT = torch.tensor([[1.0, 0.0, 0.0, 0.0]])
+
 
 @dataclass(frozen=True)
 class GrootArmSpec:
@@ -53,6 +58,7 @@ class GrootArmSpec:
     arm_key: str
     gripper_key: str
     arm_relative: bool = False
+    eef_key: str | None = None
 
 
 # AnyMove/GR00T returns absolute joint targets.
@@ -71,11 +77,17 @@ class GrootAdapter:
         arm_specs: tuple[GrootArmSpec, ...] | None = None,
         language_key: str = DEFAULT_LANGUAGE_KEY,
         default_instruction: str | None = None,
+        eef_ee_to_tcp_offset: tuple[float, float, float] | None = None,
     ) -> None:
         self._video_map = dict(video_map or DEFAULT_VIDEO_MAP)
         self._arm_specs = tuple(arm_specs or DEFAULT_ARM_SPECS)
         self._language_key = language_key
         self._default_instruction = default_instruction
+        self._eef_tcp_offset = (
+            torch.tensor([list(eef_ee_to_tcp_offset)], dtype=torch.float32)
+            if eef_ee_to_tcp_offset is not None
+            else None
+        )
 
     def build_model_input(self, obs: CanonicalPolicyInput) -> dict[str, Any]:
         """Build the GR00T native ``{video, state, language}`` payload."""
@@ -167,9 +179,9 @@ class GrootAdapter:
                     f"GR00T requires canonical camera slot {slot!r} for "
                     f"video key {groot_key!r}."
                 )
-            rgb_sensor = obs.cameras[slot]["rgb"]
-            frame = rgb_sensor.sensor_data[0].detach().cpu().numpy()
-            video[groot_key] = self._as_rgb_uint8(frame)[None, None, ...]
+            frame = obs.cameras[slot]["rgb"].sensor_data[0].detach().cpu()
+            # [B=1, T=1, H, W, 3]
+            video[groot_key] = self._as_rgb_uint8(frame.numpy())[None, None]
         return video
 
     def _build_state(
@@ -199,7 +211,48 @@ class GrootAdapter:
                     joint_position=joint_position,
                 ).astype(np.float32)
                 state[spec.gripper_key] = gripper[None, None, :]
+            if spec.eef_key is not None:
+                state[spec.eef_key] = self._build_eef(manipulator_obs)[
+                    None, None, :
+                ]
         return state
+
+    def _build_eef(self, manipulator_obs: dict[str, Any]) -> np.ndarray:
+        """Return the 9D end-effector state in the robot base frame.
+
+        The pose is XYZ + first-two-rows ROT6D; falls back to an identity
+        pose when the ee/base poses are unavailable.
+        """
+        ee_pose = manipulator_obs.get("ee_pose")
+        base_pose = manipulator_obs.get("base_pose")
+        if ee_pose is None or base_pose is None:
+            return _IDENTITY_EEF_9D.copy()
+        # Compute on CPU: the poses may be on cuda while the offset/identity
+        # constants are on CPU, and the result is serialized to numpy anyway.
+        ee = (
+            torch.as_tensor(ee_pose, dtype=torch.float32)
+            .reshape(-1, 7)[0:1]
+            .detach()
+            .cpu()
+        )
+        base = (
+            torch.as_tensor(base_pose, dtype=torch.float32)
+            .reshape(-1, 7)[0:1]
+            .detach()
+            .cpu()
+        )
+        ee_pos, ee_quat = ee[:, :3], ee[:, 3:]
+        if self._eef_tcp_offset is not None:
+            ee_pos, ee_quat = math_utils.frame_transform_combine(
+                ee_pos, ee_quat, self._eef_tcp_offset, _IDENTITY_QUAT
+            )
+        pos_b, quat_b = math_utils.frame_transform_subtract(
+            base[:, :3], base[:, 3:], ee_pos, ee_quat
+        )
+        rot = math_utils.quaternion_to_matrix(quat_b[0])
+        eef = torch.cat([pos_b[0], rot[0], rot[1]])
+        eef_np = eef.detach().cpu().numpy().astype(np.float32)
+        return eef_np
 
     @staticmethod
     def _current_arm(

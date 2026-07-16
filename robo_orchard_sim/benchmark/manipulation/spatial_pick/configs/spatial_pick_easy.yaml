@@ -18,7 +18,16 @@ instruction:
   template_mode: fixed
   actor_description_mode: raw
 
+# Layout mode: keys are role classes (pick / anchor / distractors), never
+# distractor_N instances. Each entry takes filter and/or split; category
+# always comes from the layout JSON. split needs --splits at runtime.
 asset_configs:
   pick:
     filter:
       tags: [is_graspable]
+    split: unseen_instance
+  anchor:
+    filter: {tags: [is_graspable]}
+  distractors:
+    filter: {tags: [is_graspable]}
+    split: unseen_instance

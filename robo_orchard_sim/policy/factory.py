@@ -79,6 +79,9 @@ def create_policy_from_model_cfg(
         video_map = _cfg_get(model_cfg, "video_map")
         if video_map is not None:
             groot_kwargs["video_map"] = video_map
+        eef_offset = _cfg_get(model_cfg, "eef_ee_to_tcp_offset")
+        if eef_offset is not None:
+            groot_kwargs["eef_ee_to_tcp_offset"] = list(eef_offset)
         arms = _cfg_get(model_cfg, "arms")
         if arms is not None:
             groot_kwargs["arms"] = [GrootArmMapCfg(**arm) for arm in arms]

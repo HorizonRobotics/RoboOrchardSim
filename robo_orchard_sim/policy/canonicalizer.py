@@ -141,6 +141,10 @@ def canonicalize_observations(
                 slot_obs["gripper_position"] = robot_obs[
                     binding.gripper_position_obs_key
                 ]
+            if binding.ee_pose_obs_key is not None:
+                slot_obs["ee_pose"] = robot_obs[binding.ee_pose_obs_key]
+            if binding.base_pose_obs_key is not None:
+                slot_obs["base_pose"] = robot_obs[binding.base_pose_obs_key]
             manipulators[slot] = slot_obs
 
     return CanonicalPolicyInput(

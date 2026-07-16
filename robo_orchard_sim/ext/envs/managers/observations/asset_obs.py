@@ -135,6 +135,14 @@ class AssetObservationTerm(
 
         def parse_body_prop() -> torch.Tensor:
             slice_idx = (slice(None), self.cfg.asset_cfg.body_ids)
+            if self.cfg.property_name == "pose":
+                return torch.cat(
+                    [
+                        asset.data.body_pos_w[slice_idx],
+                        asset.data.body_quat_w[slice_idx],
+                    ],
+                    dim=-1,
+                )
             if self.cfg.property_name == "position":
                 return asset.data.body_pos_w[slice_idx]
             elif self.cfg.property_name == "orientation":

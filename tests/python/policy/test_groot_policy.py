@@ -106,6 +106,16 @@ def _build_obs(batch_size: int = 1) -> CanonicalPolicyInput:
     )
 
 
+def _obs_with_fill(fill: int) -> CanonicalPolicyInput:
+    obs = _build_obs()
+    rgb = torch.full((1, 2, 2, 3), fill, dtype=torch.uint8)
+    sensor = {"rgb": _Sensor(rgb)}
+    obs.cameras["base"] = sensor
+    obs.cameras["left_wrist"] = sensor
+    obs.cameras["right_wrist"] = sensor
+    return obs
+
+
 def _action_chunk(offset: float = 0.0, horizon: int = 2) -> dict[str, Any]:
     left_arm = np.zeros((1, horizon, 6), dtype=np.float32)
     right_arm = np.zeros((1, horizon, 6), dtype=np.float32)
@@ -377,6 +387,140 @@ def test_groot_policy_multi_env_obs_raises(
 
     with pytest.raises(ValueError, match="single environment"):
         policy.act(_build_obs(batch_size=2))
+
+
+def test_groot_adapter_emits_identity_eef_9d_when_eef_key_set() -> None:
+    adapter = GrootAdapter(
+        arm_specs=(
+            GrootArmSpec(
+                "left_arm", "left_arm", "left_gripper", eef_key="left_eef"
+            ),
+            GrootArmSpec(
+                "right_arm", "right_arm", "right_gripper", eef_key="right_eef"
+            ),
+        )
+    )
+
+    state = adapter.build_model_input(_build_obs())["state"]
+
+    assert "left_eef" in state and "right_eef" in state
+    assert state["left_eef"].shape == (1, 1, 9)
+    assert state["left_eef"].dtype == np.float32
+    np.testing.assert_allclose(
+        state["left_eef"][0, 0],
+        np.array([0, 0, 0, 1, 0, 0, 0, 1, 0], dtype=np.float32),
+    )
+
+
+def _add_ee_frames(
+    obs: CanonicalPolicyInput,
+    *,
+    ee_pose: list[float],
+    base_pose: list[float],
+    slot: str = "left_arm",
+) -> CanonicalPolicyInput:
+    obs.manipulators[slot]["ee_pose"] = torch.tensor(
+        [ee_pose], dtype=torch.float32
+    )
+    obs.manipulators[slot]["base_pose"] = torch.tensor(
+        [base_pose], dtype=torch.float32
+    )
+    return obs
+
+
+def test_groot_adapter_eef_9d_from_ee_and_base_pose() -> None:
+    adapter = GrootAdapter(
+        arm_specs=(
+            GrootArmSpec("left_arm", "left_arm", "left_gripper", eef_key="e"),
+        )
+    )
+    obs = _add_ee_frames(
+        _build_obs(),
+        ee_pose=[0.4, 0.0, 0.3, 1, 0, 0, 0],
+        base_pose=[0.0, 0.0, 0.0, 1, 0, 0, 0],
+    )
+
+    eef = adapter.build_model_input(obs)["state"]["e"][0, 0]
+
+    # base at origin, ee at (0.4,0,0.3) identity -> eef == ee, identity rot6d.
+    np.testing.assert_allclose(
+        eef,
+        np.array([0.4, 0, 0.3, 1, 0, 0, 0, 1, 0], dtype=np.float32),
+        atol=1e-5,
+    )
+
+
+def test_groot_adapter_eef_9d_applies_tcp_offset() -> None:
+    adapter = GrootAdapter(
+        arm_specs=(
+            GrootArmSpec("left_arm", "left_arm", "left_gripper", eef_key="e"),
+        ),
+        eef_ee_to_tcp_offset=(0.0, 0.0, 0.1),
+    )
+    obs = _add_ee_frames(
+        _build_obs(),
+        ee_pose=[0.4, 0.0, 0.3, 1, 0, 0, 0],
+        base_pose=[0.0, 0.0, 0.0, 1, 0, 0, 0],
+    )
+
+    eef = adapter.build_model_input(obs)["state"]["e"][0, 0]
+
+    # +0.1 along the ee's local z shifts the TCP to z=0.4.
+    np.testing.assert_allclose(
+        eef[:3], np.array([0.4, 0, 0.4], dtype=np.float32), atol=1e-5
+    )
+
+
+def test_groot_adapter_eef_9d_rot6d_is_first_two_rows() -> None:
+    adapter = GrootAdapter(
+        arm_specs=(
+            GrootArmSpec("left_arm", "left_arm", "left_gripper", eef_key="e"),
+        )
+    )
+    # 90deg about z (wxyz) -> R first two rows [0,-1,0, 1,0,0].
+    obs = _add_ee_frames(
+        _build_obs(),
+        ee_pose=[0.0, 0.0, 0.0, 0.70710678, 0, 0, 0.70710678],
+        base_pose=[0.0, 0.0, 0.0, 1, 0, 0, 0],
+    )
+
+    eef = adapter.build_model_input(obs)["state"]["e"][0, 0]
+
+    np.testing.assert_allclose(
+        eef[3:], np.array([0, -1, 0, 1, 0, 0], dtype=np.float32), atol=1e-5
+    )
+
+
+def test_groot_adapter_video_single_timestep() -> None:
+    adapter = GrootAdapter()
+
+    video = adapter.build_model_input(_obs_with_fill(7))["video"]
+
+    # [B=1, T=1, H, W, 3] — single frame per camera.
+    assert video["static_camera"].shape == (1, 1, 2, 2, 3)
+    assert video["static_camera"][0, 0, 0, 0, 0] == 7
+
+
+def test_groot_cfg_wires_eef() -> None:
+    policy_cfg = create_policy_from_model_cfg(
+        {
+            "policy": "groot",
+            "eef_ee_to_tcp_offset": [0.0, 0.0, 0.1],
+            "arms": [
+                {
+                    "manipulator_slot": "single_arm",
+                    "arm_key": "joint_position",
+                    "gripper_key": "gripper_position",
+                    "eef_key": "eef_9d",
+                    "arm_relative": False,
+                }
+            ],
+        }
+    )
+
+    assert isinstance(policy_cfg, GrootPolicyCfg)
+    assert policy_cfg.eef_ee_to_tcp_offset == [0.0, 0.0, 0.1]
+    assert policy_cfg.arms[0].eef_key == "eef_9d"
 
 
 def test_create_policy_from_model_cfg_groot_returns_cfg() -> None:

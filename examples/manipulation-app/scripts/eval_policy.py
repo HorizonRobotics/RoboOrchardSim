@@ -41,6 +41,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -70,6 +71,7 @@ _TASK_FIELDS = {
     "yaml",
     "batch_plan",
     "splits",
+    "split_type",
     "snapshot",
     "episode_num",
     "max_steps",
@@ -78,6 +80,7 @@ _TASK_FIELDS = {
 }
 _DEFAULTS_FIELDS = _TASK_FIELDS - {"task_type", "yaml", "batch_plan"}
 _TOP_LEVEL_FIELDS = {"policy", "defaults", "tasks"}
+_VALID_SPLIT_TYPES = ("seen", "unseen_instance", "unseen_category")
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,7 @@ class TaskCfg:
     episode_num: int = 20
     max_steps: int = 1000
     splits: str | None = None
+    split_type: str | None = None
     snapshot: str | None = None
     # Mutually exclusive: yaml is a single task config; batch_plan is a
     # path to an existing batch plan JSON.
@@ -229,6 +233,19 @@ def _parse_task(*, name: str, raw: dict, defaults: dict, src: Path) -> TaskCfg:
             f"task {name!r}: `yaml` and `batch_plan` are mutually exclusive "
             f"({src})"
         )
+    split_type = merged.get("split_type")
+    if split_type is not None:
+        if split_type not in _VALID_SPLIT_TYPES:
+            raise ValueError(
+                f"task {name!r}: `split_type` must be one of "
+                f"{list(_VALID_SPLIT_TYPES)}, got {split_type!r} ({src})"
+            )
+        if merged.get("batch_plan"):
+            raise ValueError(
+                f"task {name!r}: `split_type` is incompatible with "
+                f"`batch_plan`; the batch plan already fixes the per-config "
+                f"splits ({src})"
+            )
     if "asset_root" not in merged or not merged["asset_root"]:
         raise ValueError(
             f"task {name!r}: `asset_root` must be set in defaults or task "
@@ -243,6 +260,7 @@ def _parse_task(*, name: str, raw: dict, defaults: dict, src: Path) -> TaskCfg:
         episode_num=int(merged.get("episode_num", 20)),
         max_steps=int(merged.get("max_steps", 1000)),
         splits=_opt_str(merged.get("splits")),
+        split_type=_opt_str(merged.get("split_type")),
         snapshot=_opt_str(merged.get("snapshot")),
         yaml=_opt_str(merged.get("yaml")),
         batch_plan=_opt_str(merged.get("batch_plan")),
@@ -331,6 +349,54 @@ def _registered_default_yaml(task: str) -> str | None:
     return str(matches[0])
 
 
+def _rewrite_split(yaml_path: str, split_type: str, dest: Path) -> str:
+    """Load `yaml_path`, override every asset_configs[*].split, save to dest.
+
+    Only slots that already declare a `split` key get overridden — slots
+    without an explicit `split` are left alone (adding one would silently
+    change their semantics). Raises if no slot ends up touched.
+    Instruction fields (e.g. actor_description_mode) are intentionally
+    left untouched — they control language, not the dataset split.
+
+    The rewritten yaml is what actually gets run; `batch_evaluation` copies
+    it into each config's output dir, so no extra durable copy is needed
+    here — `dest` is expected to be a scratch path.
+    """
+    src = Path(yaml_path)
+    loaded = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
+    if not isinstance(loaded, dict):
+        raise SystemExit(f"task yaml must be a mapping: {src}")
+    asset_configs = loaded.get("asset_configs")
+    if not isinstance(asset_configs, dict) or not asset_configs:
+        raise SystemExit(
+            f"cannot apply split_type={split_type!r}: {src} has no "
+            f"`asset_configs` section to rewrite"
+        )
+    touched = 0
+    for key, slot in asset_configs.items():
+        if not isinstance(slot, dict):
+            raise SystemExit(
+                f"asset_configs[{key!r}] must be a mapping in {src}"
+            )
+        if "split" not in slot:
+            continue
+        slot["split"] = split_type
+        touched += 1
+    if touched == 0:
+        raise SystemExit(
+            f"cannot apply split_type={split_type!r}: no slot under "
+            f"`asset_configs` in {src} declares a `split` field. "
+            "Add `split: <value>` to at least one slot, or drop "
+            "`split_type` from the eval config."
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
+        yaml.safe_dump(loaded, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return str(dest)
+
+
 def _build_plan(task: TaskCfg):
     """Return a BatchPlan, whether from JSON or synthesized from a yaml."""
     from robo_orchard_sim.pipeline.data_synthesis.batch_synthesis import (
@@ -364,6 +430,16 @@ def _build_plan(task: TaskCfg):
             f"benchmark/**/configs/{task.task_type}.yaml. Make sure "
             f"`task_type` ({task.task_type!r}) matches a registered task, "
             "or set `yaml`/`batch_plan` explicitly."
+        )
+    if task.split_type is not None:
+        # Batch evaluation copies the used yaml into each config's output
+        # dir, so a scratch tmpdir is enough — keep the original filename
+        # so downstream artifacts look the same as an unmodified run.
+        scratch = Path(tempfile.mkdtemp(prefix=f"{task.name}_split_"))
+        yaml_path = _rewrite_split(
+            yaml_path,
+            task.split_type,
+            scratch / Path(yaml_path).name,
         )
     return BatchPlan(
         batch_id=f"{task.name}_{int(time.time())}",

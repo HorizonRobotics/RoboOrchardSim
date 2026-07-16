@@ -73,7 +73,7 @@ asset_configs:
       # material: ceramic
       # size_bucket: medium         # small / medium / large
     prim_name: pick_object          # runtime scene/prim name
-    split: seen                   # seen / unseen_category / unseen_instance
+    split: unseen_instance                   # seen / unseen_category / unseen_instance
 
   place:
     filter:
