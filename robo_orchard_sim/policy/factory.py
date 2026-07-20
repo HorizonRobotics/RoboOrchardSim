@@ -16,6 +16,7 @@
 
 from typing import Any
 
+from robo_orchard_sim.policy.cosmos.policy import CosmosPolicyCfg
 from robo_orchard_sim.policy.dummy.policy import DummyPolicyCfg
 from robo_orchard_sim.policy.groot.policy import GrootArmMapCfg, GrootPolicyCfg
 from robo_orchard_sim.policy.holobrain.policy import HolobrainPolicyCfg
@@ -81,6 +82,23 @@ def create_policy_from_model_cfg(
         if cameras is not None:
             openpi_kwargs["cameras"] = cameras
         return OpenPiPolicyCfg(**openpi_kwargs)
+    if policy_name == "cosmos":
+        cosmos_kwargs: dict[str, Any] = dict(
+            host=_cfg_get(model_cfg, "host", "127.0.0.1"),
+            port=_cfg_get(model_cfg, "port", 8000),
+            open_loop_horizon=_cfg_get(model_cfg, "open_loop_horizon"),
+            instruction=_cfg_get(model_cfg, "instruction"),
+        )
+        camera_map = _cfg_get(model_cfg, "camera_map")
+        if camera_map is not None:
+            cosmos_kwargs["camera_map"] = camera_map
+        action_key = _cfg_get(model_cfg, "action_key")
+        if action_key is not None:
+            cosmos_kwargs["action_key"] = action_key
+        manipulator_slot = _cfg_get(model_cfg, "manipulator_slot")
+        if manipulator_slot is not None:
+            cosmos_kwargs["manipulator_slot"] = manipulator_slot
+        return CosmosPolicyCfg(**cosmos_kwargs)
     if policy_name == "motus":
         motus_kwargs = dict(
             host=_cfg_get(model_cfg, "host", "127.0.0.1"),

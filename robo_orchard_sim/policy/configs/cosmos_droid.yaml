@@ -1,0 +1,12 @@
+policy: cosmos
+# Cosmos3-Nano-Policy-DROID behind an openpi websocket server.
+host: 127.0.0.1
+port: 8000
+# receding horizon: execute 15 of the 32-step chunk, then re-query (15 Hz).
+open_loop_horizon: 15
+# null -> use the task instruction (rendered from the task yaml).
+instruction: null
+camera_map:
+  observation/wrist_image_left: wrist_camera
+  observation/exterior_image_1_left: ext1_camera
+  observation/exterior_image_2_left: ext2_camera
