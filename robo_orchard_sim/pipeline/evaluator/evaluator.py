@@ -169,11 +169,12 @@ class Evaluator:
         self._record_run_dir: str | None = None
         self._active_snapshot_uuids: frozenset[str] | None = None
         self._splits: AssetSplits | None = None
+        self._asset_registry = _create_asset_registry(self.cfg.asset_root)
         if (
             self.cfg.snapshot_path is not None
             or self.cfg.splits_path is not None
         ):
-            _reg = _create_asset_registry(self.cfg.asset_root)
+            _reg = self._asset_registry
             if self.cfg.snapshot_path is not None:
                 from robo_orchard_sim.asset_manager.snapshot import (
                     SnapshotError,
@@ -391,9 +392,8 @@ class Evaluator:
                     f"task_config_path does not exist: {config_path}"
                 )
 
-        registry_obj = _create_asset_registry(self.cfg.asset_root)
         resolver = _create_asset_resolver(
-            registry_obj=registry_obj,
+            registry_obj=self._asset_registry,
             seed=seed,
             active_snapshot=self._active_snapshot_uuids,
             splits=self._splits,

@@ -150,9 +150,12 @@ Validator and Instruction
 Asset Library Filtering
 ~~~~~~~~~~~~~~~~~~~~~~~
 
+* Asset indexes are isolated by schema version under ``asset_indexes/`` and
+  guarded by persistent inter-process lock files during load and rebuild.
 * Added ``AssetRegistry``, which can automatically generate
-  ``asset_index.parquet`` the first time it points to a new asset library root,
-  and rebuild the index automatically when the schema version changes.
+  ``asset_indexes/asset_index.v<schema>.parquet`` the first time it points to
+  a new asset library root, and rebuild the index automatically when the asset
+  set changes.
 * The asset index now consistently includes taxonomy, color, shape, material,
   size and mass ranges, path information, capability tags, and generation
   provenance.
@@ -192,9 +195,10 @@ Migration Notes
 * Tasks, evaluation flows, and examples that depend on the asset library now
   require ``--asset-root`` explicitly, or the ``ORCHARD_ASSET_LIBRARY``
   environment variable.
-* The first run of a registry-backed task will generate ``asset_index.parquet``
-  in the asset library directory. Before releasing, confirm that the target
-  asset library contains the required ``.urdf``, ``interaction.json``, and
+* The first run of a registry-backed task will generate a schema-specific
+  ``asset_indexes/asset_index.v<schema>.parquet`` under the asset library.
+  Before releasing, confirm that the target asset library contains the
+  required ``.urdf``, ``interaction.json``, and
   ``caption_candidates.json`` files.
 * The legacy ``instruction.json`` for ``place_a2b`` has been replaced by a YAML
   ``instruction`` block. New fields include ``template``, ``template_mode``,

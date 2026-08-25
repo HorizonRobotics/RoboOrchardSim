@@ -113,13 +113,14 @@ class TaskDataSynthesisRunner:
 
         self._active_snapshot_uuids: frozenset[str] | None = None
         self._splits: AssetSplits | None = None
+        from robo_orchard_sim.asset_manager.registry import AssetRegistry
+
+        self._asset_registry = AssetRegistry(self.cfg.asset_root)
         if (
             self.cfg.snapshot_path is not None
             or self.cfg.splits_path is not None
         ):
-            from robo_orchard_sim.asset_manager.registry import AssetRegistry
-
-            _reg = AssetRegistry(self.cfg.asset_root)
+            _reg = self._asset_registry
             if self.cfg.snapshot_path is not None:
                 from robo_orchard_sim.asset_manager.snapshot import (
                     SnapshotError,
@@ -438,16 +439,14 @@ class TaskDataSynthesisRunner:
 
     def build_orchard_env(self, *, seed: int):
         """Build a fresh OrchardEnv with assets sampled by ``seed``."""
-        from robo_orchard_sim.asset_manager.registry import AssetRegistry
         from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
             AssetResolver,
             AssetResolverError,
         )
         from robo_orchard_sim.benchmark.registry import build_task
 
-        registry = AssetRegistry(self.cfg.asset_root)
         resolver = AssetResolver(
-            registry=registry,
+            registry=self._asset_registry,
             splits=self._splits,
             rng=np.random.default_rng(seed),
             active_snapshot=self._active_snapshot_uuids,

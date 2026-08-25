@@ -685,7 +685,19 @@ class TestEvaluator:
         )()
         return evaluator, envs[0], registry
 
-    def test_cfg_instantiates_evaluator(self) -> None:
+    def test_cfg_instantiates_evaluator(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from robo_orchard_sim.pipeline.evaluator import (
+            evaluator as evaluator_module,
+        )
+
+        monkeypatch.setattr(
+            evaluator_module,
+            "_create_asset_registry",
+            lambda asset_root: f"registry:{asset_root}",
+        )
         evaluator = EvaluatorCfg(
             task_name="place_a2b_easy",
             asset_root="/tmp/assets",

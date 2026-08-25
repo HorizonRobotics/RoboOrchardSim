@@ -26,13 +26,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from robo_orchard_sim.asset_manager.registry.build_index import (
-    INDEX_FILENAME,
     SCHEMA_VERSION,
+    _build_asset_index_unlocked,
+    asset_index_lock,
     asset_set_fingerprint,
-    build_asset_index,
+    default_asset_index_path,
 )
 from robo_orchard_sim.asset_manager.registry.errors import (
     AssetIndexNotFoundError,
@@ -124,7 +126,7 @@ class AssetRegistry:
         self._index_path = (
             Path(index_path)
             if index_path is not None
-            else self._asset_root / INDEX_FILENAME
+            else default_asset_index_path(self._asset_root)
         )
         self._metas: dict[str, AssetMeta] = {}
         self._by_asset_id: dict[str, str] = {}
@@ -151,7 +153,7 @@ class AssetRegistry:
                 "asset set changed since index build; rebuilding %s",
                 self._index_path,
             )
-            build_asset_index(
+            _build_asset_index_unlocked(
                 str(self._asset_root), output_path=str(self._index_path)
             )
             return pq.read_table(str(self._index_path))
@@ -164,6 +166,12 @@ class AssetRegistry:
         return table
 
     def _load(self, *, auto_build: bool) -> None:
+        """Load one stable registry view under the index process lock."""
+        with asset_index_lock(self._index_path):
+            self._load_locked(auto_build=auto_build)
+
+    def _load_locked(self, *, auto_build: bool) -> None:
+        """Load or rebuild the index while its process lock is held."""
         index_path = self._index_path
         if not index_path.exists():
             if not auto_build:
@@ -173,31 +181,45 @@ class AssetRegistry:
                     "auto_build_index=True"
                 )
             logger.info("index missing; building at %s", index_path)
-            build_asset_index(
+            _build_asset_index_unlocked(
                 str(self._asset_root), output_path=str(index_path)
             )
 
-        table = pq.read_table(str(index_path))
+        try:
+            table = pq.read_table(str(index_path))
+        except pa.ArrowInvalid:
+            if not auto_build:
+                raise
+            logger.warning(
+                "index at %s is not a complete parquet file; rebuilding",
+                index_path,
+            )
+            _build_asset_index_unlocked(
+                str(self._asset_root), output_path=str(index_path)
+            )
+            table = pq.read_table(str(index_path))
 
         # --- schema-version check (Fix 4) ---
         schema_meta = table.schema.metadata or {}
         raw_version = schema_meta.get(b"schema_version")
         if not isinstance(raw_version, bytes):
             raise AssetIndexVersionError(
-                "asset_index.parquet missing or invalid schema_version "
+                f"asset index at {index_path} has missing or invalid "
+                "schema_version "
                 "metadata; rebuild required"
             )
         try:
             version = raw_version.decode()
         except UnicodeDecodeError as e:
             raise AssetIndexVersionError(
-                f"asset_index.parquet schema_version not decodable: {e}; "
-                "rebuild required"
+                f"asset index at {index_path} has an undecodable "
+                f"schema_version: {e}; rebuild required"
             ) from e
         if version != SCHEMA_VERSION:
             if not auto_build:
                 raise AssetIndexVersionError(
-                    f"asset_index.parquet schema_version={version!r} "
+                    f"asset index at {index_path} has "
+                    f"schema_version={version!r}, "
                     f"expected {SCHEMA_VERSION!r}; rebuild required"
                 )
             logger.info(
@@ -207,7 +229,7 @@ class AssetRegistry:
                 version,
                 SCHEMA_VERSION,
             )
-            build_asset_index(
+            _build_asset_index_unlocked(
                 str(self._asset_root), output_path=str(index_path)
             )
             table = pq.read_table(str(index_path))
@@ -215,19 +237,20 @@ class AssetRegistry:
             raw_version = schema_meta.get(b"schema_version")
             if not isinstance(raw_version, bytes):
                 raise AssetIndexVersionError(
-                    "rebuilt asset_index.parquet missing schema_version "
-                    "metadata"
+                    f"rebuilt asset index at {index_path} is missing "
+                    "schema_version metadata"
                 )
             try:
                 version = raw_version.decode()
             except UnicodeDecodeError as e:
                 raise AssetIndexVersionError(
-                    f"rebuilt asset_index.parquet schema_version not "
-                    f"decodable: {e}"
+                    f"rebuilt asset index at {index_path} has an undecodable "
+                    f"schema_version: {e}"
                 ) from e
             if version != SCHEMA_VERSION:
                 raise AssetIndexVersionError(
-                    f"rebuilt asset_index.parquet schema_version={version!r} "
+                    f"rebuilt asset index at {index_path} has "
+                    f"schema_version={version!r}, "
                     f"expected {SCHEMA_VERSION!r}"
                 )
 

@@ -43,8 +43,9 @@ Usage::
         --task place_a2b_easy \\
         --config path/to/my_place_a2b.yaml
 
-First run on a fresh asset root auto-builds ``asset_index.parquet`` in
-the library directory; subsequent runs reuse it.
+First run on a fresh asset root auto-builds
+``asset_indexes/asset_index.v5.parquet`` in the library directory;
+subsequent runs reuse it.
 """
 
 from __future__ import annotations
@@ -110,7 +111,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             f"Asset library root. Defaults to the ${_ASSET_ROOT_ENV} env "
             "var; required if that env var is not set. Auto-builds "
-            "asset_index.parquet on first run."
+            "the schema-specific asset index on first run."
         ),
     )
     parser.add_argument(
