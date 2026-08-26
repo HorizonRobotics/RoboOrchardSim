@@ -16,9 +16,8 @@
 
 """Tests for build_asset_index (library API and CLI entry point)."""
 
+import fcntl
 import json
-import multiprocessing
-import queue
 import shutil
 import subprocess
 import sys
@@ -33,6 +32,7 @@ from robo_orchard_sim.asset_manager.registry.build_index import (
     SCHEMA_VERSION,
     BuildReport,
     asset_index_lock,
+    asset_index_lock_path,
     build_asset_index,
     default_asset_index_path,
     default_cache_index_path,
@@ -41,20 +41,6 @@ from robo_orchard_sim.asset_manager.registry.errors import (
     DuplicateAssetIdError,
     MissingAabbError,
 )
-from robo_orchard_sim.asset_manager.registry.registry import AssetRegistry
-
-
-def _load_registry_in_process(
-    asset_root: str,
-    started,
-    finished,
-) -> None:
-    started.set()
-    try:
-        finished.put(("ok", len(AssetRegistry(asset_root))))
-    except Exception as exc:
-        finished.put(("error", f"{type(exc).__name__}: {exc}"))
-
 
 # ---------------------------------------------------------------------------
 # build_asset_index: library API
@@ -82,25 +68,19 @@ def test_build_writes_parquet_at_default_path(mini_asset_root: Path):
     assert report.output_path == str(parquet_path)
 
 
-def test_registry_process_waits_for_index_lock(mini_asset_root: Path):
+def test_asset_index_lock_competing_descriptor_raises_blocking_io_error(
+    mini_asset_root: Path,
+):
     index_path = default_asset_index_path(mini_asset_root)
-    context = multiprocessing.get_context("spawn")
-    started = context.Event()
-    finished = context.Queue()
+    lock_path = asset_index_lock_path(index_path)
 
     with asset_index_lock(index_path):
-        process = context.Process(
-            target=_load_registry_in_process,
-            args=(str(mini_asset_root), started, finished),
-        )
-        process.start()
-        assert started.wait(timeout=5)
-        with pytest.raises(queue.Empty):
-            finished.get(timeout=0.2)
-
-    status, value = finished.get(timeout=10)
-    process.join(timeout=10)
-    assert (status, value, process.exitcode) == ("ok", 6, 0)
+        with lock_path.open("a+b") as competing:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(
+                    competing.fileno(),
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                )
 
 
 def test_parquet_has_schema_version_metadata(mini_asset_root: Path):
