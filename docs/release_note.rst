@@ -4,6 +4,43 @@ Release Notes
 This document provides an overview of the main changes in this release.
 
 
+Version 2.0-alpha
+=================
+
+Highlights
+----------
+
+* Upgraded to Python 3.11, Isaac Sim 5.1.0, Isaac Lab 2.3.2, and PyTorch 2.7.
+* Added Docker support for setting up the simulation environment.
+* Added more manipulation tasks and improved task validation.
+* Added multi-task and multi-GPU evaluation with unified result summaries.
+* Added a standalone policy server for running models in a separate Python
+  environment.
+
+
+New Features
+------------
+
+* Added articulated-object tasks: ``open``, ``close``, ``joint_direction``,
+  and ``affordance``.
+* Added ``spatial_directions``, ``spatial_near_far``, and ``stack_cubes``
+  tasks.
+* Added target swapping and counterfactual evaluation for supported tasks.
+* Added parallel MCAP recording, video export, and preview generation.
+* Added tools for converting MCAP recordings to LeRobot datasets and videos.
+* Added policy integrations for HoloBrain, GR00T, Motus, DreamZero, and
+  Cosmos.
+* Added richer metrics and diagnostics for evaluation results.
+
+
+Migration Notes
+---------------
+
+* Python 3.10, Isaac Sim 4.5, and Isaac Lab 2.0 are no longer the supported
+  runtime. Use Python 3.11, Isaac Sim 5.1.0, and Isaac Lab 2.3.2.
+* The legacy asset-pool APIs and ``spatial_place_a2b`` task have been removed.
+
+
 Version 1.0.0
 =============
 
