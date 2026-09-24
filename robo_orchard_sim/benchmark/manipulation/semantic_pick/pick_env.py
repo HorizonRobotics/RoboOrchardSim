@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         AssetResolver,
     )
     from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+    from robo_orchard_sim.task_components.role_registry import RoleRegistry
     from robo_orchard_sim.task_components.trajs_gen.base_executor import (
         BaseExecutorCfg,
     )
@@ -108,9 +109,9 @@ class PickTaskDefinitionBase(TaskDefinition):
         resolver: "AssetResolver | None" = None,
         config_path: str | None = None,
     ) -> "OrchardEnv":
+        from robo_orchard_sim.orchard_env.assets.task_assets import TaskAssets
         from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
         from robo_orchard_sim.orchard_env.task_templates.pick_task import (
-            PickAssets,
             PickTask,
             PickTaskParams,
         )
@@ -130,7 +131,7 @@ class PickTaskDefinitionBase(TaskDefinition):
             )
 
         resolved = resolver.resolve(asset_configs)
-        task_assets = PickAssets.from_resolved(resolved)
+        task_assets = TaskAssets.from_resolved(resolved)
         task_params = PickTaskParams(
             **cls.resolve_task_params(config_path=config_path)
         )
@@ -151,10 +152,14 @@ class PickTaskDefinitionBase(TaskDefinition):
     def build_atomic_action_plan(
         cls,
         orchard_env: "OrchardEnv",
+        *,
+        role_registry: RoleRegistry | None = None,
     ) -> list["BaseExecutorCfg"]:
         """Build the default atomic action plan for semantic pick."""
         del cls
-        return action_plan.build_task_atomic_action_plan(orchard_env)
+        return action_plan.build_task_atomic_action_plan(
+            orchard_env, role_registry=role_registry
+        )
 
 
 def _make_pick_task_definition_class(
@@ -186,15 +191,9 @@ PickAttributeTaskDefinition = _make_pick_task_definition_class(
     namespace="pick_attribute",
     yaml_name="pick_attribute.yaml",
 )
-PickDisambiguationTaskDefinition = _make_pick_task_definition_class(
-    class_name="PickDisambiguationTaskDefinition",
-    namespace="pick_disambiguation",
-    yaml_name="pick_disambiguation.yaml",
-)
 
 __all__ = [
     "PickTaskDefinitionBase",
     "PickCategoryTaskDefinition",
     "PickAttributeTaskDefinition",
-    "PickDisambiguationTaskDefinition",
 ]

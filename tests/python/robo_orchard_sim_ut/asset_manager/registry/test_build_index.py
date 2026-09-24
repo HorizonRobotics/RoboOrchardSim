@@ -16,6 +16,7 @@
 
 """Tests for build_asset_index (library API and CLI entry point)."""
 
+import fcntl
 import json
 import shutil
 import subprocess
@@ -30,12 +31,18 @@ from robo_orchard_sim.asset_manager.registry.build_index import (
     INDEX_FILENAME,
     SCHEMA_VERSION,
     BuildReport,
+    asset_index_lock,
+    asset_index_lock_path,
     build_asset_index,
+    default_asset_index_path,
     default_cache_index_path,
 )
 from robo_orchard_sim.asset_manager.registry.errors import (
     DuplicateAssetIdError,
     MissingAabbError,
+)
+from robo_orchard_sim.asset_manager.registry.types import (
+    ARTICULATION_SPEC_TYPE,
 )
 
 # ---------------------------------------------------------------------------
@@ -53,29 +60,61 @@ def test_build_report_counts(mini_asset_root: Path):
     assert report.skipped[0].asset_dir.endswith("broken_001")
 
 
+def test_build_index_rigid_missing_interaction_is_skipped(
+    mini_asset_root: Path,
+) -> None:
+    report = build_asset_index(str(mini_asset_root))
+
+    skipped = next(
+        item
+        for item in report.skipped
+        if item.asset_dir.endswith("broken_001")
+    )
+    assert skipped.reason == "missing_interaction"
+
+
 def test_build_writes_parquet_at_default_path(mini_asset_root: Path):
     report = build_asset_index(str(mini_asset_root))
-    parquet_path = mini_asset_root / "asset_index.parquet"
+    parquet_path = (
+        mini_asset_root
+        / "asset_indexes"
+        / f"asset_index.v{SCHEMA_VERSION}.parquet"
+    )
     assert parquet_path.exists()
     assert report.output_path == str(parquet_path)
 
 
+def test_asset_index_lock_competing_descriptor_raises_blocking_io_error(
+    mini_asset_root: Path,
+):
+    index_path = default_asset_index_path(mini_asset_root)
+    lock_path = asset_index_lock_path(index_path)
+
+    with asset_index_lock(index_path):
+        with lock_path.open("a+b") as competing:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(
+                    competing.fileno(),
+                    fcntl.LOCK_EX | fcntl.LOCK_NB,
+                )
+
+
 def test_parquet_has_schema_version_metadata(mini_asset_root: Path):
     build_asset_index(str(mini_asset_root))
-    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    table = pq.read_table(default_asset_index_path(mini_asset_root))
     meta = table.schema.metadata or {}
     assert meta.get(b"schema_version") == SCHEMA_VERSION.encode()
 
 
 def test_parquet_row_count_matches_indexed(mini_asset_root: Path):
     build_asset_index(str(mini_asset_root))
-    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    table = pq.read_table(default_asset_index_path(mini_asset_root))
     assert table.num_rows == 6
 
 
 def test_parquet_columns_cover_asset_meta(mini_asset_root: Path):
     build_asset_index(str(mini_asset_root))
-    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    table = pq.read_table(default_asset_index_path(mini_asset_root))
     cols = set(table.column_names)
     for required in [
         "uuid",
@@ -102,7 +141,7 @@ def test_parquet_caption_path_defaults_to_asset_local_json(
     mini_asset_root: Path,
 ):
     build_asset_index(str(mini_asset_root))
-    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    table = pq.read_table(default_asset_index_path(mini_asset_root))
     df = table.to_pandas()
     row = df[df.asset_id == "apple_001"].iloc[0]
     expected = (
@@ -133,7 +172,7 @@ def test_parquet_caption_path_follows_urdf_link(tmp_path: Path, make_urdf):
     )
 
     build_asset_index(str(tmp_path))
-    table = pq.read_table(tmp_path / "asset_index.parquet")
+    table = pq.read_table(default_asset_index_path(tmp_path))
     df = table.to_pandas()
     row = df[df.asset_id == "apple_001"].iloc[0]
     expected = asset_dir / "caption_candidates_updated.json"
@@ -142,7 +181,7 @@ def test_parquet_caption_path_follows_urdf_link(tmp_path: Path, make_urdf):
 
 def test_box_001_has_both_tags(mini_asset_root: Path):
     build_asset_index(str(mini_asset_root))
-    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    table = pq.read_table(default_asset_index_path(mini_asset_root))
     df = table.to_pandas()
     row = df[df.asset_id == "box_001"].iloc[0]
     assert set(row.tags) == {"graspable", "container"}
@@ -150,7 +189,7 @@ def test_box_001_has_both_tags(mini_asset_root: Path):
 
 def test_plate_001_has_only_container_tag(mini_asset_root: Path):
     build_asset_index(str(mini_asset_root))
-    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    table = pq.read_table(default_asset_index_path(mini_asset_root))
     df = table.to_pandas()
     row = df[df.asset_id == "plate_001"].iloc[0]
     assert list(row.tags) == ["container"]
@@ -165,7 +204,7 @@ def test_build_writes_to_explicit_output_path(
     report = build_asset_index(str(mini_asset_root), output_path=str(nested))
     assert nested.exists()
     assert report.output_path == str(nested)
-    assert not (mini_asset_root / "asset_index.parquet").exists()
+    assert not default_asset_index_path(mini_asset_root).exists()
 
 
 def test_default_cache_index_path_under_tmp_cache(tmp_path: Path):
@@ -215,9 +254,108 @@ def test_build_index_missing_caption_candidates_still_indexes_asset(
 ):
     report = build_asset_index(str(mini_asset_root))
     assert report.total_indexed == 6
-    table = pq.read_table(mini_asset_root / "asset_index.parquet")
+    table = pq.read_table(default_asset_index_path(mini_asset_root))
     df = table.to_pandas()
     assert "apple_001" in set(df.asset_id)
+
+
+def _articulation_metadata(uuid: str) -> dict:
+    return {
+        "uuid": uuid,
+        "articulation": {
+            "joints": [
+                {
+                    "joint_name": "hinge_joint",
+                    "semantic_name": "lid",
+                    "outcome_link": "lid_link",
+                    "operations": {
+                        "open": {
+                            "interaction_link": "lid_link",
+                            "initial_joint_position": 0.0,
+                            "target_joint_fraction": 1.0,
+                        }
+                    },
+                }
+            ]
+        },
+    }
+
+
+def _write_articulation_asset(
+    root: Path,
+    make_urdf,
+    *,
+    metadata: dict | None,
+) -> Path:
+    uuid = "articulation-uuid"
+    asset_dir = root / "appliances" / "laptops" / "laptop_001"
+    asset_dir.mkdir(parents=True)
+    (asset_dir / "laptop_001.urdf").write_text(
+        make_urdf(
+            uuid=uuid,
+            spec_type=ARTICULATION_SPEC_TYPE,
+        )
+    )
+    (asset_dir / "laptop_001.usd").write_text("fake-usd")
+    if metadata is not None:
+        (asset_dir / "metadata.json").write_text(json.dumps(metadata))
+    return asset_dir
+
+
+def test_build_index_articulation_without_interaction_is_indexed(
+    tmp_path: Path,
+    make_urdf,
+) -> None:
+    root = tmp_path / "assets"
+    asset_dir = _write_articulation_asset(
+        root,
+        make_urdf,
+        metadata=_articulation_metadata("articulation-uuid"),
+    )
+
+    report = build_asset_index(str(root))
+    row = pq.read_table(report.output_path).to_pylist()[0]
+
+    assert report.total_indexed == 1
+    assert not (asset_dir / "interaction.json").exists()
+    assert row["interaction_path"] == ""
+
+
+def test_build_index_articulation_missing_metadata_is_skipped(
+    tmp_path: Path,
+    make_urdf,
+) -> None:
+    root = tmp_path / "assets"
+    _write_articulation_asset(root, make_urdf, metadata=None)
+
+    report = build_asset_index(str(root))
+
+    assert report.total_indexed == 0
+    assert report.skipped[0].reason == "missing_metadata"
+
+
+def test_build_index_articulation_invalid_metadata_is_skipped(
+    tmp_path: Path,
+    make_urdf,
+) -> None:
+    root = tmp_path / "assets"
+    _write_articulation_asset(root, make_urdf, metadata={"uuid": "wrong"})
+
+    report = build_asset_index(str(root))
+
+    assert report.total_indexed == 0
+    assert report.skipped[0].reason.startswith("invalid_metadata:")
+
+
+def test_build_index_articulation_invalid_metadata_strict_raises_value_error(
+    tmp_path: Path,
+    make_urdf,
+) -> None:
+    root = tmp_path / "assets"
+    _write_articulation_asset(root, make_urdf, metadata={"uuid": "wrong"})
+
+    with pytest.raises(ValueError, match="articulation"):
+        build_asset_index(str(root), strict=True)
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +376,7 @@ def test_cli_runs_on_mini_asset_root(mini_asset_root: Path):
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert (mini_asset_root / "asset_index.parquet").exists()
+    assert default_asset_index_path(mini_asset_root).exists()
     assert "indexed " in (result.stdout + result.stderr)
 
 

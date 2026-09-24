@@ -16,6 +16,7 @@
 from .dict_term import McapDictTerm, McapDictTermCfg
 from .joints_term import McapJointsTerm, McapJointsTermCfg
 from .mcap_image_term import McapImageTerm, McapImageTermCfg
+from .multi_tf_term import McapMultiTFTerm, McapMultiTFTermCfg
 from .tf_term import McapTFTerm, McapTFTermCfg
 
 __all__ = [
@@ -25,6 +26,8 @@ __all__ = [
     "McapJointsTermCfg",
     "McapImageTerm",
     "McapImageTermCfg",
+    "McapMultiTFTerm",
+    "McapMultiTFTermCfg",
     "McapTFTerm",
     "McapTFTermCfg",
 ]

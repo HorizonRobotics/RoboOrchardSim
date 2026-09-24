@@ -23,14 +23,28 @@ from types import SimpleNamespace
 import pytest
 
 from robo_orchard_sim.orchard_env.assets import RigidObjectSpec
+from robo_orchard_sim.orchard_env.assets.task_assets import TaskAssets
 from robo_orchard_sim.orchard_env.task_templates.pick_task import (
-    PickAssets,
     PickTask,
 )
 from robo_orchard_sim.task_components.instructions.base import (
     InstructionRenderError,
     InstructionWrapper,
 )
+from robo_orchard_sim.task_components.role_registry import (
+    RoleRegistry,
+    TargetRef,
+)
+from robo_orchard_sim.task_components.validators.context import (
+    ValidatorContext,
+)
+
+
+def _context_bound_to(task) -> ValidatorContext:
+    """A context whose pick role names the task's only candidate."""
+    registry = RoleRegistry(num_envs=1)
+    registry.bind_one(0, "pick", TargetRef(task.pick_object.scene_name))
+    return ValidatorContext(robot=None, role_registry=registry)
 
 
 def _write_caption(path, *, uuid: str, raw: str) -> None:
@@ -60,7 +74,7 @@ def test_pick_task_attribute_instruction_color_renders_attribute_category(
         attributes={"color": ("yellow",)},
     )
     task = PickTask(
-        PickAssets(pick=spec),
+        TaskAssets(role_candidates={"pick": [spec]}),
         instruction=InstructionWrapper(
             "pick_attribute",
             template_mode="fixed",
@@ -76,7 +90,9 @@ def test_pick_task_attribute_instruction_color_renders_attribute_category(
         }
     )
 
-    actors = task.build_instruction_context(env, actor_description_seed=0)
+    actors = task.build_instruction_context(
+        env, actor_description_seed=0, context=_context_bound_to(task)
+    )
     instruction = task.instruction.render(actors=actors)
 
     assert instruction == "Pick yellow peach"
@@ -96,7 +112,7 @@ def test_pick_task_attribute_instruction_three_colors_renders_color_phrase(
         attributes={"color": ("yellow", "green", "red")},
     )
     task = PickTask(
-        PickAssets(pick=spec),
+        TaskAssets(role_candidates={"pick": [spec]}),
         instruction=InstructionWrapper(
             "pick_attribute",
             template_mode="fixed",
@@ -112,7 +128,9 @@ def test_pick_task_attribute_instruction_three_colors_renders_color_phrase(
         }
     )
 
-    actors = task.build_instruction_context(env, actor_description_seed=0)
+    actors = task.build_instruction_context(
+        env, actor_description_seed=0, context=_context_bound_to(task)
+    )
     instruction = task.instruction.render(actors=actors)
 
     assert instruction == "Pick green, red, and yellow peach"
@@ -131,7 +149,7 @@ def test_pick_task_attribute_instruction_missing_attribute_raises(
         category="peach",
     )
     task = PickTask(
-        PickAssets(pick=spec),
+        TaskAssets(role_candidates={"pick": [spec]}),
         instruction=InstructionWrapper(
             "pick_attribute",
             template_mode="fixed",
@@ -148,4 +166,6 @@ def test_pick_task_attribute_instruction_missing_attribute_raises(
     )
 
     with pytest.raises(InstructionRenderError, match="no 'material' value"):
-        task.build_instruction_context(env, actor_description_seed=0)
+        task.build_instruction_context(
+            env, actor_description_seed=0, context=_context_bound_to(task)
+        )

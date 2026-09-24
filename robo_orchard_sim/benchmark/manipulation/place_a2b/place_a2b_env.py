@@ -25,15 +25,16 @@ from robo_orchard_sim.benchmark.manipulation.place_a2b.action_plan import (
     build_task_atomic_action_plan,
 )
 from robo_orchard_sim.benchmark.registration import register_task
-from robo_orchard_sim.task_components.trajs_gen.executors.pick import (
-    PickExecutorCfg,
-)
 
 if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
         AssetResolver,
     )
     from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+    from robo_orchard_sim.task_components.role_registry import RoleRegistry
+    from robo_orchard_sim.task_components.trajs_gen.base_executor import (
+        BaseExecutorCfg,
+    )
 
 _DIR = Path(__file__).resolve().parent
 _CONFIG_DIR = _DIR / "configs"
@@ -105,13 +106,13 @@ class PlaceA2BTaskDefinitionBase(TaskDefinition):
         resolver: "AssetResolver | None" = None,
         config_path: str | None = None,
     ) -> "OrchardEnv":
+        from robo_orchard_sim.orchard_env.assets.task_assets import TaskAssets
         from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
         from robo_orchard_sim.orchard_env.task_templates import (
             place_a2b_task as _place_a2b_task,
         )
 
         PlaceA2BTask = _place_a2b_task.PlaceA2BTask
-        PlaceA2BTaskAssets = _place_a2b_task.PlaceA2BTaskAssets
         PlaceA2BTaskParams = _place_a2b_task.PlaceA2BTaskParams
 
         if resolver is None:
@@ -128,7 +129,7 @@ class PlaceA2BTaskDefinitionBase(TaskDefinition):
             )
 
         resolved = resolver.resolve(asset_configs)
-        task_assets = PlaceA2BTaskAssets.from_resolved(resolved)
+        task_assets = TaskAssets.from_resolved(resolved)
         task_params = PlaceA2BTaskParams(
             **cls.resolve_task_params(config_path=config_path)
         )
@@ -149,10 +150,14 @@ class PlaceA2BTaskDefinitionBase(TaskDefinition):
     def build_atomic_action_plan(
         cls,
         orchard_env: "OrchardEnv",
-    ) -> list[PickExecutorCfg]:
+        *,
+        role_registry: RoleRegistry | None = None,
+    ) -> list[BaseExecutorCfg]:
         """Build the default atomic action plan for place-a2b."""
         del cls
-        return build_task_atomic_action_plan(orchard_env)
+        return build_task_atomic_action_plan(
+            orchard_env, role_registry=role_registry
+        )
 
 
 def _make_place_a2b_task_definition_class(
@@ -176,19 +181,13 @@ def _make_place_a2b_task_definition_class(
     return register_task(task_cls)
 
 
-PlaceA2BEasyTaskDefinition = _make_place_a2b_task_definition_class(
-    class_name="PlaceA2BEasyTaskDefinition",
-    namespace="place_a2b_easy",
-    yaml_name="place_a2b_easy.yaml",
-)
-PlaceA2BHardTaskDefinition = _make_place_a2b_task_definition_class(
-    class_name="PlaceA2BHardTaskDefinition",
-    namespace="place_a2b_hard",
-    yaml_name="place_a2b_hard.yaml",
+PlaceA2BTaskDefinition = _make_place_a2b_task_definition_class(
+    class_name="PlaceA2BTaskDefinition",
+    namespace="place_a2b",
+    yaml_name="place_a2b.yaml",
 )
 
 __all__ = [
     "PlaceA2BTaskDefinitionBase",
-    "PlaceA2BEasyTaskDefinition",
-    "PlaceA2BHardTaskDefinition",
+    "PlaceA2BTaskDefinition",
 ]

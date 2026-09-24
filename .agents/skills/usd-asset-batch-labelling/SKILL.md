@@ -23,8 +23,45 @@ Produces a labelled directory per asset:
 The URDF's `<extra_info>` block accumulates fields across stages:
 - Step 2 writes the core fields (`category`, `description`, `shape`, `material`, dimensions, ...)
 - Step 2 also writes `<aabb>` (local-frame axis-aligned bounding box, computed from the USD via pxr)
+- Step 2 writes `<spec_type>` (`usd.rigid_object` or `usd.articulation`)
 - Step 4 adds `<tags>` (e.g. `is_container,is_graspable`)
 - Step 5 adds a `<caption_candidates>` link to the JSON file
+
+---
+
+## Rigid vs. articulated assets
+
+Step 2 has two explicit processing branches:
+
+| Asset kind | `--spec-type` | Canonical runtime asset |
+|---|---|---|
+| Rigid object | `usd.rigid_object` (default) | Generated/copied USD or mesh |
+| Articulated object | `usd.articulation` | Original articulation USD |
+
+For an articulated asset:
+
+- The original USD is the canonical physical asset. It contains the rigid
+  bodies, joints, limits, drives, MimicJoint APIs, collisions, and materials.
+- The generated single-link URDF is a **catalog metadata sidecar only**. Never
+  use it to replace or spawn the articulation.
+- Label the asset in place: `--input-dir` and `--output-root` must be the same
+  root. The CLI rejects cross-directory articulation labelling because copying
+  only the main USD and `textures/` can omit sibling sublayers or payloads.
+- The CLI hashes the source USD before and after labelling and fails if the
+  canonical source changes.
+- The built-in USD renderer applies Gf transforms using row-vector convention
+  so articulated child-link meshes remain assembled in their authored pose.
+- Before processing a new articulated batch, smoke one representative asset
+  and visually inspect all six views. Do not start the full batch until the
+  jointed parts are correctly assembled.
+
+Articulation task semantics such as `joint_name`, `target_link`, and supported
+operations still belong in the adjacent `metadata.json`; the flattened URDF
+does not describe the articulation graph.
+
+Downstream indexing/runtime code must understand `usd.articulation` and build
+the runtime object from the original USD plus `metadata.json`. A registry that
+only supports rigid objects will ignore this routing metadata.
 
 ---
 
@@ -107,6 +144,7 @@ CUDA_VISIBLE_DEVICES=<free_gpu> \
     --input-dir <dst_root>/ \
     --output-root <dst_root>/ \
     --format usd \
+    --spec-type usd.rigid_object \
     2>&1 | tee nohup_labeller_<batch>.out
 ```
 
@@ -115,7 +153,52 @@ CUDA_VISIBLE_DEVICES=<free_gpu> \
 |------|-------|-----|
 | `--input-dir == --output-root` | same dir | writes mesh/renders/urdf into each asset folder |
 | `--format usd` | `usd` | triggers `copy_source=True` for textures |
+| `--spec-type` | `usd.rigid_object` | writes the runtime asset type into URDF metadata |
 | `CUDA_VISIBLE_DEVICES` | idle GPU | avoid contention; check with `nvidia-smi` first |
+
+### Articulated asset branch
+
+First record source checksums:
+
+```bash
+find <dst_root>/ -type f -name "*.usd" -print0 \
+    | sort -z | xargs -0 sha256sum \
+    > <dst_root>/.prelabelling_usd_sha256.txt
+```
+
+Smoke one representative articulation in place:
+
+```bash
+CUDA_VISIBLE_DEVICES=<free_gpu> \
+    python3 tools/asset_pipeline/run_labeller.py \
+    --mesh <asset_dir>/<asset_name>.usd \
+    --output-root <asset_dir>/ \
+    --category <category> \
+    --format usd \
+    --spec-type usd.articulation
+```
+
+Inspect all six files under `<asset_dir>/renders/`. In particular, verify that
+lids, doors, handles, drawers, buttons, and knobs are attached to the correct
+parent body.
+
+After the smoke passes, run the batch:
+
+```bash
+CUDA_VISIBLE_DEVICES=<free_gpu> \
+    python3 tools/asset_pipeline/run_labeller.py \
+    --input-dir <dst_root>/ \
+    --output-root <dst_root>/ \
+    --format usd \
+    --spec-type usd.articulation \
+    2>&1 | tee nohup_labeller_<batch>.out
+```
+
+Verify that the physical USD files are byte-for-byte unchanged:
+
+```bash
+sha256sum -c <dst_root>/.prelabelling_usd_sha256.txt
+```
 
 **Check idle GPUs first:**
 ```bash
@@ -186,8 +269,8 @@ Reads each URDF's `<extra_info>` fields (text-only, no rendered images), asks GP
 ```bash
 python3 tools/asset_pipeline/run_caption_labeller.py \
     --asset-root <dst_root>/ \
-    --seen-count 15 \
-    --unseen-count 5 \
+    --seen-count 3-5 \
+    --unseen-count 1-2 \
     --max-workers 4 \
     2>&1 | tee nohup_caption_<batch>.out
 ```
@@ -198,8 +281,8 @@ Multimodal: reads each asset's `renders/` images and asks GPT for `seen_count + 
 | Flag | Default | Why |
 |------|---------|-----|
 | `--asset-root` | (required) | Recursively scans for `*.urdf` |
-| `--seen-count` | 15 | Phrases per asset written to the `seen` list |
-| `--unseen-count` | 5 | Phrases per asset written to the `unseen` list |
+| `--seen-count` | `3-5` | Dynamic range; simple assets keep fewer salient seen phrases |
+| `--unseen-count` | `1-2` | Dynamic range for held-out caption phrases |
 | `--force` | off | Regenerate even if `caption_candidates.json` exists |
 | `--max-workers` | 4 | Parallel GPT calls |
 | `--dry-run` | off | List URDFs without calling GPT |
@@ -221,9 +304,10 @@ echo "renders:      $(find <dst_root> -maxdepth 5 -type d -name "renders" | wc -
 echo "tags:         $(grep -rl '<tags>' <dst_root> --include='*.urdf' | wc -l)  (expect $N)"
 echo "captions:     $(find <dst_root> -maxdepth 5 -name caption_candidates.json | wc -l)  (expect $N)"
 echo "aabbs:        $(grep -rl '<aabb>' <dst_root> --include='*.urdf' | wc -l)  (expect $N)"
+echo "spec types:   $(grep -rl '<spec_type>' <dst_root> --include='*.urdf' | wc -l)  (expect $N)"
 ```
 
-All seven counts should equal N. A mismatch pinpoints which stage failed.
+All eight counts should equal N. A mismatch pinpoints which stage failed.
 
 For assets with `passive_pick_body=0`, check `outputs/labeller_runs/label_summary.json` (relative to CWD) for the full per-asset status log.
 
@@ -243,3 +327,6 @@ For tag failures, inspect `<dst_root>/tag_labeller_errors.jsonl` (one JSONL row 
 | Re-run of Step 4 silently skips everything | URDFs already have `<tags>` element — add `--force` or `--only-tags X` to override |
 | Step 5 fails with "missing renders" | Step 2's renders weren't generated for that asset — re-run Step 2 first |
 | New tag added to vocab but old assets don't have it | Run Step 4 with `--only-tags new_tag` to backfill without touching existing tags |
+| Articulation URDF says `usd.rigid_object` | Re-run Step 2 with `--spec-type usd.articulation`; do not patch the physical USD |
+| Articulation child links appear detached in renders | Stop the batch; verify the Gf row-vector transform path and smoke six views before retrying |
+| Articulation labelling rejects a different output root | Expected safety check; label in place so sublayers and payloads are preserved |

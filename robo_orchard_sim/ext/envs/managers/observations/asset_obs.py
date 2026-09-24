@@ -209,16 +209,12 @@ class AssetObservationTerm(
 
 
 class AssetObservationTermCfg(
-    ObservationTermCfg[
-        AssetObservationTerm[IsaacEnvType_co], LabSceneEntityCfg
-    ],
+    ObservationTermCfg[AssetObservationTerm, LabSceneEntityCfg],
     Generic[IsaacEnvType_co],
 ):
     """Configuration for the asset observation term."""
 
-    class_type: ClassType_co[AssetObservationTerm[IsaacEnvType_co]] = (
-        AssetObservationTerm[IsaacEnvType_co]
-    )
+    class_type: ClassType_co[AssetObservationTerm] = AssetObservationTerm
 
     asset_cfg: LabSceneEntityCfg
     """The configuration of the asset."""

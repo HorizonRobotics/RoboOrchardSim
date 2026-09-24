@@ -20,12 +20,10 @@ from robo_orchard_sim.benchmark.manipulation.place_a2b.action_plan import (
     build_task_atomic_action_plan,
 )
 from robo_orchard_sim.benchmark.manipulation.place_a2b.place_a2b_env import (  # noqa: E501
-    PlaceA2BEasyTaskDefinition,
-    PlaceA2BHardTaskDefinition,
+    PlaceA2BTaskDefinition,
 )
 
 __all__ = [
-    "PlaceA2BEasyTaskDefinition",
-    "PlaceA2BHardTaskDefinition",
+    "PlaceA2BTaskDefinition",
     "build_task_atomic_action_plan",
 ]

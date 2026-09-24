@@ -19,11 +19,9 @@
 from robo_orchard_sim.benchmark.manipulation.semantic_pick.pick_env import (  # noqa: E501
     PickAttributeTaskDefinition,
     PickCategoryTaskDefinition,
-    PickDisambiguationTaskDefinition,
 )
 
 __all__ = [
     "PickCategoryTaskDefinition",
     "PickAttributeTaskDefinition",
-    "PickDisambiguationTaskDefinition",
 ]

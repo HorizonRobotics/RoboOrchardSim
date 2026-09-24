@@ -7,6 +7,11 @@ For the full label-→-tag-→-caption pipeline see
 **`generate_interaction.py`**, the step that emits per-asset
 `interaction.json` annotations.
 
+For articulated USD assets, run the labeller in place with
+`--spec-type usd.articulation`. The original USD remains the canonical
+physical asset; the generated single-link URDF is only a catalog metadata
+sidecar. See the skill for the checksum and six-view smoke procedure.
+
 > **Scope:** `generate_interaction.py` only annotates **pick objects** —
 > i.e. it writes `interaction.active.place.body` and
 > `interaction.passive.pick.body`. Annotations for **place objects**, the

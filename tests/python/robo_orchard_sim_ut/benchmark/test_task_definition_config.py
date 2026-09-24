@@ -24,6 +24,7 @@ well-formed.
 from __future__ import annotations
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -34,6 +35,14 @@ from robo_orchard_sim.benchmark import (
     registry as task_registry,
 )
 from robo_orchard_sim.benchmark.base import TaskDefinition
+from robo_orchard_sim.orchard_env.assets import RigidObjectSpec, TaskAssets
+from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+from robo_orchard_sim.task_components.instructions.base import (
+    InstructionWrapper,
+)
+from robo_orchard_sim.task_components.instructions.counterfactual import (
+    counterfactual_instruction_actors,
+)
 
 TASK_SUITE_ROOT = (
     Path(__file__).resolve().parents[4] / "robo_orchard_sim" / "benchmark"
@@ -117,21 +126,22 @@ def test_task_suite_yaml_scene_backgrounds_explicit_configs_use_known_scene():
         for path in yaml_paths
         if "scene" in yaml.safe_load(path.read_text())
     }
-    assert set(scene_types.values()) <= {"room_table", "plane_table"}
+    assert set(scene_types.values()) <= {
+        "room_table",
+        "room_table_workbench",
+        "plane_table",
+    }
 
 
 @pytest.mark.parametrize(
     "yaml_name",
-    [
-        "place_a2b_easy.yaml",
-        "place_a2b_hard.yaml",
-    ],
+    ["place_a2b.yaml"],
 )
 def test_place_a2b_yaml_ships_valid_asset_configs(yaml_name: str):
-    """The shipped place-a2b YAML variants must carry asset_configs.
+    """The shipped place-a2b YAML must carry asset_configs.
 
     This test guards against accidental regressions to the YAML shape that
-    `PlaceA2BEasyTaskDefinition.build(resolver=...)` falls back to.
+    `PlaceA2BTaskDefinition.build(resolver=...)` falls back to.
     """
     yaml_path = (
         Path(__file__).resolve().parents[4]
@@ -147,7 +157,7 @@ def test_place_a2b_yaml_ships_valid_asset_configs(yaml_name: str):
         f"{yaml_name} at {yaml_path} is missing the asset_configs block"
     )
     asset_configs = raw["asset_configs"]
-    # Keys must match PlaceA2BTaskAssets.required_object_fields
+    # Keys must match the roles PlaceA2BTask declares
     assert "pick" in asset_configs
     assert "place" in asset_configs
     for role in ("pick", "place"):
@@ -159,10 +169,7 @@ def test_place_a2b_yaml_ships_valid_asset_configs(yaml_name: str):
 
 @pytest.mark.parametrize(
     "yaml_name",
-    [
-        "place_a2b_easy.yaml",
-        "place_a2b_hard.yaml",
-    ],
+    ["place_a2b.yaml"],
 )
 def test_place_a2b_yaml_ships_valid_task_pose_range(yaml_name: str):
     yaml_path = (
@@ -221,6 +228,9 @@ def test_registration_build_task_forwards_config_path(monkeypatch) -> None:
             raise NotImplementedError
 
     resolver = object()
+    built_env = SimpleNamespace(
+        task=SimpleNamespace(instruction=None),
+    )
     recorded: list[tuple[object, str | None]] = []
     monkeypatch.setitem(
         task_registration._TASK_REGISTRY,
@@ -232,7 +242,7 @@ def test_registration_build_task_forwards_config_path(monkeypatch) -> None:
         "build",
         classmethod(
             lambda cls, resolver=None, config_path=None: (
-                recorded.append((resolver, config_path)) or cls
+                recorded.append((resolver, config_path)) or built_env
             )
         ),
     )
@@ -243,8 +253,55 @@ def test_registration_build_task_forwards_config_path(monkeypatch) -> None:
         config_path="/tmp/custom.yaml",
     )
 
-    assert built is _Stub
+    assert built is built_env
     assert recorded == [(resolver, "/tmp/custom.yaml")]
+
+
+def test_registration_build_task_absent_instruction_binds_resolved_actor(
+    monkeypatch,
+) -> None:
+    present = RigidObjectSpec(
+        name="apple",
+        uuid="present",
+        usd_path="/tmp/apple.usd",
+    )
+    absent = RigidObjectSpec(
+        name="absent_object",
+        uuid="absent",
+        category="orange",
+        usd_path="/tmp/orange.usd",
+    )
+    runtime_task = SimpleNamespace(
+        assets=TaskAssets(role_candidates={"pick": [present]}),
+        instruction=InstructionWrapper("absent_object", template_mode="fixed"),
+    )
+    orchard_env = object.__new__(OrchardEnv)
+    orchard_env.task = runtime_task
+
+    class _Stub(TaskDefinition):
+        namespace = "_stub_absent_instruction"
+
+        @classmethod
+        def build(cls, resolver=None, config_path=None):
+            del cls, resolver, config_path
+            return orchard_env
+
+    resolver = SimpleNamespace(
+        resolve_absent_referent=lambda **kwargs: absent,
+    )
+    monkeypatch.setitem(
+        task_registration._TASK_REGISTRY,
+        _Stub.namespace,
+        _Stub,
+    )
+
+    built = task_registration.build_task(
+        _Stub.namespace,
+        resolver=resolver,
+    )
+    actors = counterfactual_instruction_actors(built.task)
+
+    assert built.task.instruction.render(actors=actors) == "Pick up orange"
 
 
 def test_task_definition_build_atomic_action_plan_returns_empty_list() -> None:
@@ -314,13 +371,11 @@ def test_registry_build_task_bootstraps_and_forwards_config_path(
     )
 
     built = task_registry.build_task(
-        "place_a2b_easy",
+        "place_a2b",
         resolver=resolver,
         config_path="/tmp/custom.yaml",
     )
 
     assert built == "env"
     assert bootstrap_calls == ["bootstrapped"]
-    assert forwarded_calls == [
-        ("place_a2b_easy", resolver, "/tmp/custom.yaml")
-    ]
+    assert forwarded_calls == [("place_a2b", resolver, "/tmp/custom.yaml")]

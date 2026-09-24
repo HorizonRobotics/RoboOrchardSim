@@ -14,44 +14,20 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""This script demonstrates how to use RoboOrchard launcher.
-
-User should provide callback function `main` in the script file, and `main`
-function should accept `simulation_app` as an argument.
-
-This example is modified version of
-"IsaacLab/source/standalone/tutorials/00_sim/create_empty.py.",
-which demonstrates how to create a simple stage in Isaac Sim.
-
-
-Usage:
-    `python3 -m robo_orchard_sim.launcher examples/isaac/launcher_example.py`
-    or
-    `RoboOrchard-SimLauncher examples/isaac/launcher_example.py`
-
-"""
-
 import time
 
-from isaaclab.sim import SimulationCfg, SimulationContext
-from isaacsim.simulation_app import SimulationApp
+from robo_orchard_sim.launcher import SimpleIsaacAppLauncher
 
+if __name__ == "__main__":
+    launcher = SimpleIsaacAppLauncher(
+        headless=True, enable_cameras=True, virtual_display=False
+    )
 
-def main(simulation_app: SimulationApp):
-    # Initialize the simulation context
-    sim_cfg = SimulationCfg(dt=0.01)
-    sim = SimulationContext(sim_cfg)
-    # Set main camera
-    sim.set_camera_view([1, 1, 1], [0.0, 0.0, 0.0])
-
-    sim.reset()
-    print("Isaac sim Setup complete...")
-
-    # Simulate physics
-    while simulation_app.is_running():
-        # perform step
-        sim.step()
-        print("Isaac sim will exits in 2 seconds...")
+    # Update the application to prevent the application from exiting
+    while launcher.app.is_running():
+        print("Hello, world!")
+        launcher.app.update()
         time.sleep(2)
         break
+
     print("Isaac sim exited...")

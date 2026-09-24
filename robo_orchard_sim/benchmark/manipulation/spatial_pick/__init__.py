@@ -17,11 +17,11 @@
 """Public builders for the spatial pick task suite (D3)."""
 
 from robo_orchard_sim.benchmark.manipulation.spatial_pick.spatial_pick_env import (  # noqa: E501
-    SpatialPickEasyTaskDefinition,
+    SpatialPickTaskDefinition,
     SpatialPickTaskDefinitionBase,
 )
 
 __all__ = [
     "SpatialPickTaskDefinitionBase",
-    "SpatialPickEasyTaskDefinition",
+    "SpatialPickTaskDefinition",
 ]

@@ -32,6 +32,7 @@ from robo_orchard_sim.pipeline.data_synthesis.single_task import (
     EpisodeSummary,
     TaskDataSynthesisCfg,
     TaskRunResult,
+    data_synthesis_runtime,
 )
 
 
@@ -192,6 +193,7 @@ def build_task_cfgs_for_group(
     task_root_dir: str,
     splits_path: Path | None = None,
     snapshot_path: Path | None = None,
+    swap_enabled: bool = False,
 ) -> list[TaskDataSynthesisCfg]:
     """Build runner task configs for one manifest group."""
     del task_root_dir
@@ -209,6 +211,7 @@ def build_task_cfgs_for_group(
                 config=str(path),
                 seed=group.seed + config_index * plan.episodes_per_config,
                 episode_num=plan.episodes_per_config,
+                swap_enabled=swap_enabled,
                 task_save_root=task_save_root,
                 snapshot_path=snapshot_path,
                 splits_path=splits_path,
@@ -349,6 +352,7 @@ def run_group_data_synthesis(
     task_root_dir: str,
     splits_path: Path | None = None,
     snapshot_path: Path | None = None,
+    swap_enabled: bool = False,
 ) -> MultiTaskRunResult:
     """Run one manifest group through the multi-task synthesis runner."""
     task_cfgs = build_task_cfgs_for_group(
@@ -358,21 +362,34 @@ def run_group_data_synthesis(
         task_root_dir=task_root_dir,
         splits_path=splits_path,
         snapshot_path=snapshot_path,
+        swap_enabled=swap_enabled,
     )
     copy_task_configs_to_output_dirs(
         task_cfgs=task_cfgs,
         task_root_dir=task_root_dir,
     )
-    result = MultiTaskDataSynthesisRunner(
+    runner = MultiTaskDataSynthesisRunner(
         MultiTaskDataSynthesisCfg(
             task_root_dir=task_root_dir,
             task_cfgs=task_cfgs,
         )
-    ).run()
-    write_group_outputs(
-        output_dir=task_root_dir,
-        plan=plan,
-        group_id=group_id,
-        result=result,
     )
-    return result
+    if not task_cfgs:
+        result = runner.run()
+        write_group_outputs(
+            output_dir=task_root_dir,
+            plan=plan,
+            group_id=group_id,
+            result=result,
+        )
+        return result
+
+    with data_synthesis_runtime(task_cfgs[0].launch) as runtime:
+        result = runner.run_with_runtime(runtime=runtime)
+        write_group_outputs(
+            output_dir=task_root_dir,
+            plan=plan,
+            group_id=group_id,
+            result=result,
+        )
+        return result

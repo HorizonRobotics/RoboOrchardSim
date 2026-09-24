@@ -17,29 +17,39 @@
 """Scan an asset root and write an index parquet file."""
 
 from __future__ import annotations
+import fcntl
 import hashlib
 import logging
 import os
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterator
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from robo_orchard_sim.asset_manager.metadata.joint_operations import (
+    load_articulation_metadata,
+)
+from robo_orchard_sim.asset_manager.metadata.urdf import (
+    ParsedUrdf,
+    parse_urdf_extra_info,
+)
 from robo_orchard_sim.asset_manager.registry.errors import (
     DuplicateAssetIdError,
     MissingAabbError,
 )
-from robo_orchard_sim.asset_manager.registry.urdf_parser import (
-    ParsedUrdf,
-    parse_urdf_extra_info,
+from robo_orchard_sim.asset_manager.registry.types import (
+    ARTICULATION_SPEC_TYPE,
 )
 
-SCHEMA_VERSION = "5"
-INDEX_FILENAME = "asset_index.parquet"
+SCHEMA_VERSION = "7"
+INDEX_DIRNAME = "asset_indexes"
+INDEX_FILENAME = f"asset_index.v{SCHEMA_VERSION}.parquet"
 
 
 def _auto_default_workers() -> int:
@@ -56,6 +66,11 @@ DEFAULT_WORKERS = _auto_default_workers()
 DEFAULT_CACHE_ROOT = Path("/tmp/.cache/robo_orchard_sim/asset_index")
 
 
+def default_asset_index_path(asset_root: str | Path) -> Path:
+    """Return the schema-specific index path inside an asset library."""
+    return Path(asset_root) / INDEX_DIRNAME / INDEX_FILENAME
+
+
 def default_cache_index_path(asset_root: str | Path) -> Path:
     """Compute a stable per-asset-root cache path under DEFAULT_CACHE_ROOT.
 
@@ -68,6 +83,37 @@ def default_cache_index_path(asset_root: str | Path) -> Path:
     abs_root = str(Path(asset_root).expanduser().resolve())
     digest = hashlib.sha256(abs_root.encode()).hexdigest()[:12]
     return DEFAULT_CACHE_ROOT / digest / INDEX_FILENAME
+
+
+def asset_index_lock_path(index_path: str | Path) -> Path:
+    """Return the persistent lock-file path for an asset index."""
+    path = Path(index_path)
+    return path.with_name(f"{path.name}.lock")
+
+
+@contextmanager
+def asset_index_lock(index_path: str | Path) -> Iterator[None]:
+    """Hold the exclusive inter-process lock for an asset index.
+
+    The lock file is intentionally persistent. Lock ownership is maintained
+    by the operating system and released automatically when the file
+    descriptor is closed, including when the owning process exits.
+    """
+    lock_path = asset_index_lock_path(index_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        wait_start = time.monotonic()
+        logger.info("waiting for asset index lock at %s", lock_path)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        logger.info(
+            "acquired asset index lock at %s after %.3fs",
+            lock_path,
+            time.monotonic() - wait_start,
+        )
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 logger = logging.getLogger(__name__)
@@ -95,6 +141,8 @@ _EMPTY_SCHEMA = pa.schema(
         ("urdf_path", pa.string()),
         ("interaction_path", pa.string()),
         ("caption_path", pa.string()),
+        ("metadata_path", pa.string()),
+        ("spec_type", pa.string()),
         ("aabb_x_min", pa.float64()),
         ("aabb_x_max", pa.float64()),
         ("aabb_y_min", pa.float64()),
@@ -127,7 +175,7 @@ class BuildReport:
 def _find_asset_dirs(root: Path) -> list[Path]:
     super_dirs: list[Path] = []
     for domain_dir in root.iterdir():
-        if not domain_dir.is_dir():
+        if not domain_dir.is_dir() or domain_dir.name == INDEX_DIRNAME:
             continue
         for super_dir in domain_dir.iterdir():
             if super_dir.is_dir():
@@ -156,10 +204,9 @@ def _parse_one(
 ) -> tuple[ParsedUrdf | None, str]:
     """Return (parsed, reason_if_skipped).
 
-    Capability tags come from URDF ``<extra_info><tags>``.
-    ``interaction.json`` is still required as an existence gate (used by
-    the Isaac runtime layer for grasp poses) but its contents are no
-    longer parsed at index-build time.
+    Capability tags come from URDF ``<extra_info><tags>``. Rigid assets
+    require ``interaction.json`` for runtime grasp poses. Articulations
+    instead require typed ``metadata.json`` operation semantics.
     """
     urdf_path = asset_dir / f"{asset_dir.name}.urdf"
     interaction_path = asset_dir / "interaction.json"
@@ -173,7 +220,20 @@ def _parse_one(
         return None, f"parse_error: {e}"
     if parsed is None:
         return None, "missing_extra_info"
-    if not interaction_path.exists():
+    if parsed.spec_type == ARTICULATION_SPEC_TYPE:
+        metadata_path = asset_dir / "metadata.json"
+        if not metadata_path.exists():
+            return None, "missing_metadata"
+        try:
+            load_articulation_metadata(
+                str(metadata_path),
+                expected_uuid=parsed.uuid,
+            )
+        except ValueError as exc:
+            if strict:
+                raise
+            return None, f"invalid_metadata: {exc}"
+    elif not interaction_path.exists():
         return None, "missing_interaction"
     return parsed, ""
 
@@ -186,6 +246,7 @@ def _row_from_parsed(
     strict: bool = False,
 ) -> dict:
     asset_id = asset_dir.name
+    interaction_path = asset_dir / "interaction.json"
     if parsed.aabb_min is None or parsed.aabb_max is None:
         if strict:
             raise MissingAabbError(
@@ -219,12 +280,16 @@ def _row_from_parsed(
         "max_mass": parsed.max_mass,
         "usd_path": str(asset_dir / f"{asset_id}.usd"),
         "urdf_path": str(asset_dir / f"{asset_id}.urdf"),
-        "interaction_path": str(asset_dir / "interaction.json"),
+        "interaction_path": (
+            str(interaction_path) if interaction_path.exists() else ""
+        ),
         "caption_path": str(
             asset_dir / parsed.caption_link
             if parsed.caption_link
             else asset_dir / "caption_candidates.json"
         ),
+        "metadata_path": str(asset_dir / "metadata.json"),
+        "spec_type": parsed.spec_type,
         "aabb_x_min": aabb_x_min,
         "aabb_x_max": aabb_x_max,
         "aabb_y_min": aabb_y_min,
@@ -241,7 +306,7 @@ def asset_set_fingerprint(root: Path) -> str:
     """sha256 over sorted asset dir paths (add/remove/rename detection)."""
     rels: list[str] = []
     for domain in sorted(root.iterdir()):
-        if not domain.is_dir():
+        if not domain.is_dir() or domain.name == INDEX_DIRNAME:
             continue
         for super_dir in sorted(domain.iterdir()):
             if not super_dir.is_dir():
@@ -265,17 +330,15 @@ def _build_table(rows: list[dict], fingerprint: str) -> pa.Table:
     )
 
 
-def build_asset_index(
+def _build_asset_index_unlocked(
     asset_root: str,
     *,
-    output_path: str | None = None,
+    output_path: str,
     strict: bool = False,
 ) -> BuildReport:
-    """Scan asset_root recursively, parse each asset, write parquet."""
+    """Build an index while the caller holds its inter-process lock."""
     start = time.monotonic()
     root = Path(asset_root).resolve()
-    if output_path is None:
-        output_path = str(root / INDEX_FILENAME)
 
     report = BuildReport(output_path=output_path)
     fingerprint = asset_set_fingerprint(root)
@@ -342,6 +405,25 @@ def build_asset_index(
 
     report.elapsed_seconds = time.monotonic() - start
     return report
+
+
+def build_asset_index(
+    asset_root: str,
+    *,
+    output_path: str | None = None,
+    strict: bool = False,
+) -> BuildReport:
+    """Scan asset_root and write its schema-specific parquet index."""
+    root = Path(asset_root).resolve()
+    if output_path is None:
+        output_path = str(default_asset_index_path(root))
+
+    with asset_index_lock(output_path):
+        return _build_asset_index_unlocked(
+            str(root),
+            output_path=output_path,
+            strict=strict,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

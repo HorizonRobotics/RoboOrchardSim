@@ -19,7 +19,7 @@
 The resolver is task-agnostic: it transforms ``dict[role, config]`` into
 ``dict[role, AssetSpec | list[AssetSpec]]``. Role membership semantics
 (required / optional / unknown) are owned by the calling task's
-``TaskAssetsBase`` subclass and tested separately.
+task's declared ``roles`` and tested separately.
 """
 
 from __future__ import annotations
@@ -78,6 +78,35 @@ class TestResolveHappyPath:
 
 
 class TestSamplingAndSpec:
+    def test_sample_without_replacement_same_seed_returns_same_unique_order(
+        self,
+        mini_registry,
+    ):
+        candidates = tuple("abcdefghij")
+        first = AssetResolver(
+            registry=mini_registry,
+            rng=np.random.default_rng(42),
+        ).sample_without_replacement(candidates, count=4)
+        replay = AssetResolver(
+            registry=mini_registry,
+            rng=np.random.default_rng(42),
+        ).sample_without_replacement(candidates, count=4)
+
+        assert first == replay
+        assert len(first) == len(set(first)) == 4
+
+    @pytest.mark.parametrize("count", [-1, 11])
+    def test_sample_without_replacement_invalid_count_raises_value_error(
+        self,
+        mini_resolver,
+        count,
+    ):
+        with pytest.raises(ValueError, match="Cannot draw"):
+            mini_resolver.sample_without_replacement(
+                tuple("abcdefghij"),
+                count=count,
+            )
+
     def test_resolve_produces_correct_spec_name(self, mini_resolver):
         configs = {
             "pick": {"filter": {"category": "apple"}, "prim_name": "my_apple"},
@@ -411,119 +440,81 @@ class TestConfigShapeValidation:
         assert isinstance(exc_info.value.cause, KeyError)
 
 
-class TestPoolSize:
-    """pool_size branching in target and distractor resolution."""
+class TestSampleCount:
+    """Ordinary multi-asset sampling."""
 
-    def test_resolve_target_pool_returns_pool_spec(self, mini_resolver):
-        """Target entry with pool_size>1 returns PoolSpec wrapping members."""
-        from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
-
+    def test_target_sample_count_returns_active_spec_list(
+        self,
+        mini_resolver,
+    ):
         out = mini_resolver.resolve(
             {
                 "pick": {
                     "filter": {"super_category": "fruits"},
                     "prim_name": "pick_object",
-                    "pool_size": 3,
+                    "sample_count": 3,
                 },
             }
         )
-        assert isinstance(out["pick"], PoolSpec)
-        assert out["pick"].role_id == "pick_object"
-        assert {m.name for m in out["pick"].members} == {
-            f"pick_object_pool_{i}" for i in range(3)
-        }
 
-    def test_resolve_distractor_pool_returns_pool_spec(self, mini_resolver):
-        """Distractor entry with pool_size returns PoolSpec."""
-        from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
+        assert isinstance(out["pick"], list)
+        assert [spec.name for spec in out["pick"]] == [
+            "pick_object_0",
+            "pick_object_1",
+            "pick_object_2",
+        ]
 
-        out = mini_resolver.resolve(
-            {
-                "pick": {
-                    "filter": {
-                        "super_category": "fruits",
-                        "category": "apple",
-                    },
-                    "prim_name": "pick_object",
-                },
-                "distractors": {
-                    "anchor": "pick",
-                    "match": ["super_category"],
-                    "min_count": 1,
-                    "max_count": 1,
-                    "pool_size": 2,
-                    "prim_name_prefix": "distractor",
-                },
-            }
-        )
-        pool = out["distractors"]
-        assert isinstance(pool, PoolSpec)
-        assert pool.role_id == "distractor"
-        assert pool.active_count == 1
-        assert {m.name for m in pool.members} == {
-            "distractor_pool_0",
-            "distractor_pool_1",
-        }
-
-    def test_distractor_pool_size_with_zero_max_count_raises(
-        self, mini_resolver
-    ):
-        """pool_size>0 + max_count=0 must reject — would leave stray actors."""
-        with pytest.raises(AssetResolutionError, match="pool_size"):
+    def test_multi_sample_rejects_pinned_uuid(self, mini_resolver):
+        with pytest.raises(
+            AssetResolutionError,
+            match="requires registry filter sampling",
+        ):
             mini_resolver.resolve(
                 {
                     "pick": {
-                        "filter": {"category": "apple"},
+                        "uuid": "apple-001",
                         "prim_name": "pick_object",
-                    },
-                    "distractors": {
-                        "anchor": "pick",
-                        "match": ["super_category"],
-                        "min_count": 0,
-                        "max_count": 0,
-                        "pool_size": 2,
-                        "prim_name_prefix": "d",
+                        "sample_count": 2,
                     },
                 }
             )
 
-    def test_resolve_pools_are_uuid_disjoint(self, mini_registry):
-        """Cross-pool UUID disjointness holds across multiple seeds."""
-        cfg = {
-            "pick": {
+
+@pytest.mark.parametrize(
+    "role,entry",
+    [
+        (
+            "pick",
+            {
                 "filter": {"super_category": "fruits"},
                 "prim_name": "pick_object",
                 "pool_size": 2,
             },
-            "distractors": {
+        ),
+        (
+            "distractors",
+            {
                 "anchor": "pick",
-                "match": ["super_category"],
                 "min_count": 1,
                 "max_count": 1,
-                "pool_size": 1,
-                "prim_name_prefix": "distractor",
+                "pool_size": 2,
             },
+        ),
+    ],
+)
+def test_asset_resolver_pool_size_entry_raises_unknown_key(
+    mini_resolver,
+    role,
+    entry,
+):
+    configs = {role: entry}
+    if role == "distractors":
+        configs["pick"] = {
+            "filter": {"category": "apple"},
+            "prim_name": "pick_object",
         }
-
-        class FakeSpec:
-            def __init__(self, *, name, usd_path="", **_):
-                self.name = name
-                self.usd_path = usd_path
-
-        def _fake_build_spec(meta, *, name=None, **_):
-            return FakeSpec(name=name or meta.asset_id, usd_path=meta.usd_path)
-
-        for seed in range(20):
-            with patch.object(
-                mini_registry, "build_spec", side_effect=_fake_build_spec
-            ):
-                out = AssetResolver(
-                    registry=mini_registry,
-                    rng=np.random.default_rng(seed),
-                ).resolve(cfg)
-                pick_uuids = {m.usd_path for m in out["pick"].members}
-                dist_uuids = {s.usd_path for s in out["distractors"]}
-                assert pick_uuids.isdisjoint(dist_uuids), f"seed {seed}"
+    with pytest.raises(AssetResolutionError, match="Unknown entry key"):
+        mini_resolver.resolve(configs)
 
 
 class TestResolveByUuid:
@@ -772,3 +763,174 @@ class TestActiveSnapshot:
                         }
                     }
                 )
+
+
+class TestSameAs:
+    """Several slots holding one asset, so only wording tells them apart.
+
+    Slots normally each get their own asset, which is what keeps a scene
+    varied. A task that asks which of four identical objects the
+    instruction means needs the opposite, and cannot get it by narrowing
+    a filter: the de-duplication would still hand out four different
+    ones, or run the pool dry trying.
+    """
+
+    def test_clones_receive_the_asset_their_source_drew(self, mini_resolver):
+        resolved = mini_resolver.resolve(
+            {
+                "pick_near": {
+                    "filter": {"tags": ["graspable"]},
+                    "prim_name": "pick_near",
+                },
+                "pick_far": {"same_as": "pick_near", "prim_name": "pick_far"},
+                "clutter_0": {
+                    "same_as": "pick_near",
+                    "prim_name": "clutter_0",
+                },
+            }
+        )
+
+        assert {spec.usd_path for spec in resolved.values()} == {
+            resolved["pick_near"].usd_path
+        }
+        assert [resolved[key].name for key in sorted(resolved)] == [
+            "clutter_0",
+            "pick_far",
+            "pick_near",
+        ]
+
+    def test_a_clone_may_be_written_before_its_source(self, mini_resolver):
+        """Order in the file says nothing about which slot draws."""
+        resolved = mini_resolver.resolve(
+            {
+                "pick_far": {"same_as": "pick_near", "prim_name": "pick_far"},
+                "pick_near": {
+                    "filter": {"tags": ["graspable"]},
+                    "prim_name": "pick_near",
+                },
+            }
+        )
+        assert resolved["pick_far"].usd_path == resolved["pick_near"].usd_path
+
+    def test_cloning_leaves_other_slots_their_own_assets(self, mini_resolver):
+        """Sharing is confined to the slots that ask for it.
+
+        A scene usually wants its other objects to look different, so
+        cloning must not spread: the slots that named a source share
+        one asset, and the slot that did not still draws its own.
+        """
+        resolved = mini_resolver.resolve(
+            {
+                "pick": {
+                    "filter": {"tags": ["container"]},
+                    "prim_name": "pick",
+                },
+                "copy_a": {"same_as": "pick", "prim_name": "copy_a"},
+                "copy_b": {"same_as": "pick", "prim_name": "copy_b"},
+                "other": {
+                    "filter": {"tags": ["container"]},
+                    "prim_name": "other",
+                },
+            }
+        )
+        assert resolved["pick"].usd_path == resolved["copy_a"].usd_path
+        assert resolved["pick"].usd_path == resolved["copy_b"].usd_path
+        assert resolved["other"].usd_path != resolved["pick"].usd_path
+
+    def test_the_source_still_honours_its_split(
+        self, mini_resolver_with_splits
+    ):
+        """Sharing does not cost the run its split.
+
+        Pinning a uuid would also give every slot one asset, but a
+        pinned uuid overrides the split, so an evaluation could no
+        longer be pointed at unseen assets.
+        """
+        resolved = mini_resolver_with_splits.resolve(
+            {
+                "pick": {
+                    "filter": {},
+                    "prim_name": "pick",
+                    "split": "unseen_instance",
+                },
+                "pick_copy": {"same_as": "pick", "prim_name": "pick_copy"},
+            }
+        )
+        assert "carrot_001" in resolved["pick"].usd_path
+        assert resolved["pick_copy"].usd_path == resolved["pick"].usd_path
+
+    def test_naming_a_slot_that_draws_nothing_is_rejected(self, mini_resolver):
+        with pytest.raises(AssetResolutionError, match="not a slot that"):
+            mini_resolver.resolve(
+                {"solo": {"same_as": "absent", "prim_name": "solo"}}
+            )
+
+    def test_naming_another_clone_is_rejected_with_a_hint(self, mini_resolver):
+        """Chains are refused, and the message says where to point."""
+        with pytest.raises(AssetResolutionError, match="itself a clone"):
+            mini_resolver.resolve(
+                {
+                    "source": {
+                        "filter": {"tags": ["graspable"]},
+                        "prim_name": "source",
+                    },
+                    "middle": {"same_as": "source", "prim_name": "middle"},
+                    "end": {"same_as": "middle", "prim_name": "end"},
+                }
+            )
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"filter": {"tags": ["graspable"]}},
+            {"uuid": "u-apple-001"},
+            {"split": "seen"},
+            {"sample_count": 2},
+        ],
+    )
+    def test_a_clone_that_also_asks_to_draw_is_rejected(
+        self, mini_resolver, extra
+    ):
+        """Silently ignoring the drawing keys would mislead the author."""
+        with pytest.raises(AssetResolutionError, match="could not be"):
+            mini_resolver.resolve(
+                {
+                    "source": {
+                        "filter": {"tags": ["graspable"]},
+                        "prim_name": "source",
+                    },
+                    "clone": {
+                        "same_as": "source",
+                        "prim_name": "clone",
+                        **extra,
+                    },
+                }
+            )
+
+    def test_naming_a_source_that_draws_several_is_rejected(
+        self, mini_resolver
+    ):
+        """With several assets drawn there is no single one to share."""
+        with pytest.raises(AssetResolutionError, match="there is no"):
+            mini_resolver.resolve(
+                {
+                    "pool": {
+                        "filter": {"tags": ["graspable"]},
+                        "prim_name": "pool",
+                        "sample_count": 2,
+                    },
+                    "clone": {"same_as": "pool", "prim_name": "clone"},
+                }
+            )
+
+    def test_a_clone_still_needs_a_name(self, mini_resolver):
+        with pytest.raises(AssetResolutionError, match="prim_name"):
+            mini_resolver.resolve(
+                {
+                    "source": {
+                        "filter": {"tags": ["graspable"]},
+                        "prim_name": "source",
+                    },
+                    "clone": {"same_as": "source"},
+                }
+            )

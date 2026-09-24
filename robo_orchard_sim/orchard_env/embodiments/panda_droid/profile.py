@@ -62,6 +62,10 @@ PANDA_DROID_ROBOT_INFO_CFGS = {
         manipulator_profile=ManipulatorProfile(
             arm_joint_names=("panda_joint[1-7]",),
             gripper_joint_names=("finger_joint",),
+            gripper_body_names=(
+                "left_inner_finger",
+                "right_inner_finger",
+            ),
             body_names=(
                 "panda_link0",
                 "panda_link1",

@@ -13,7 +13,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
-from .record_controller import (
+from robo_orchard_sim.ext.envs.managers.record.parallel_record_manager import (
+    ParallelRecordManager,
+    ParallelRecordManagerCfg,
+)
+from robo_orchard_sim.ext.envs.managers.record.record_controller import (
     EpisodeRecordController,
     EpisodeRecordControllerCfg,
     ManualRecordController,
@@ -26,8 +30,14 @@ from .record_controller import (
     StationaryEpisodeRecordController,
     StationaryEpisodeRecordControllerCfg,
 )
-from .record_manager import RecordManager, RecordManagerCfg
-from .record_term_base import RecordTermBase, RecordTermBaseCfg
+from robo_orchard_sim.ext.envs.managers.record.record_manager import (
+    RecordManager,
+    RecordManagerCfg,
+)
+from robo_orchard_sim.ext.envs.managers.record.record_term_base import (
+    RecordTermBase,
+    RecordTermBaseCfg,
+)
 
 __all__ = [
     "EpisodeRecordController",
@@ -43,6 +53,8 @@ __all__ = [
     "StationaryEpisodeRecordControllerCfg",
     "RecordManager",
     "RecordManagerCfg",
+    "ParallelRecordManager",
+    "ParallelRecordManagerCfg",
     "RecordTermBase",
     "RecordTermBaseCfg",
 ]

@@ -31,6 +31,25 @@ class AssetIndexVersionError(AssetRegistryError):
     """Raised when the index parquet schema_version is incompatible."""
 
 
+class UnknownSpecTypeError(AssetRegistryError):
+    """Raised when no AssetMeta-to-Spec builder is registered."""
+
+    def __init__(self, spec_type: str) -> None:
+        self.spec_type = spec_type
+        super().__init__(
+            f"No asset spec builder is registered for {spec_type!r}."
+        )
+
+
+class InvalidSpecConfigError(AssetRegistryError):
+    """Raised when a registered builder rejects its configuration."""
+
+    def __init__(self, spec_type: str, cause: Exception) -> None:
+        self.spec_type = spec_type
+        self.cause = cause
+        super().__init__(f"Invalid {spec_type!r} spec configuration: {cause}")
+
+
 class DuplicateAssetIdError(AssetRegistryError):
     """Raised during build when two dirs share the same asset_id."""
 
@@ -78,7 +97,7 @@ class InsufficientPoolError(AssetRegistryError):
         self.requested = requested
         super().__init__(
             f"only {available} asset(s) match (requested {requested}, "
-            f"mode={mode}). Options: (1) reduce pool_size / count to "
+            f"mode={mode}). Options: (1) reduce the requested count to "
             f"<= {available}, (2) widen the asset filter, "
             f"(3) extend the asset library."
         )

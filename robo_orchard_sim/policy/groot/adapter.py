@@ -285,8 +285,12 @@ class GrootAdapter:
         return tensor
 
     def _require_instruction(self, obs: CanonicalPolicyInput) -> str:
-        instruction = obs.instruction or self._default_instruction
-        if not instruction:
+        instruction = (
+            obs.instruction
+            if obs.instruction is not None
+            else self._default_instruction
+        )
+        if instruction is None:
             raise ValueError(
                 "GR00T observation requires an instruction (set it on the "
                 "task or via the policy config default_instruction)."

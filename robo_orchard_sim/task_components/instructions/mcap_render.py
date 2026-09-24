@@ -100,6 +100,68 @@ def _map_required_actor_uuids(
     return actor_uuids
 
 
+def _resolve_bound_actor(
+    payload: Mapping[str, Any], *, role_id: str, mcap_path: str
+) -> Mapping[str, Any]:
+    """Resolve an episode role, never falling back to static actor types."""
+    bindings = payload.get("role_bindings")
+    if not isinstance(bindings, Mapping):
+        raise InstructionRenderError(
+            f"MCAP '{mcap_path}' has no valid role_bindings mapping "
+            f"for role '{role_id}'."
+        )
+    target = bindings.get(role_id)
+    if not isinstance(target, Mapping):
+        raise InstructionRenderError(
+            f"Role '{role_id}' must bind one target in '{mcap_path}'."
+        )
+    scene_name = target.get("scene_name")
+    actors = payload.get(_ACTORS_KEY)
+    if (
+        not isinstance(scene_name, str)
+        or not scene_name.strip()
+        or not isinstance(actors, Mapping)
+    ):
+        raise InstructionRenderError(
+            f"Invalid actor binding for role '{role_id}' in '{mcap_path}'."
+        )
+    actor = actors.get(scene_name)
+    if not isinstance(actor, Mapping):
+        raise InstructionRenderError(
+            f"Bound actor '{scene_name}' for role '{role_id}' "
+            f"is missing from '{mcap_path}'."
+        )
+    actor_uuid = actor.get("actor_uuid")
+    if (
+        not isinstance(actor_uuid, str)
+        or not actor_uuid.strip()
+        or actor_uuid == "unknown"
+    ):
+        raise InstructionRenderError(
+            f"Bound actor '{scene_name}' for role '{role_id}' "
+            f"has no valid UUID in '{mcap_path}'."
+        )
+    return actor
+
+
+def extract_role_actor_from_mcap(
+    mcap_path: str,
+    *,
+    role_id: str,
+    allow_missing_bindings: bool = False,
+) -> Mapping[str, Any] | None:
+    """Read actor metadata for an explicitly bound single-target role.
+
+    With ``allow_missing_bindings``, return None only if the metadata has
+    no role_bindings field. Malformed bindings and missing actors remain
+    errors; a missing metadata message is never treated as legacy data.
+    """
+    payload = _load_meta_dict_from_mcap(mcap_path)
+    if allow_missing_bindings and "role_bindings" not in payload:
+        return None
+    return _resolve_bound_actor(payload, role_id=role_id, mcap_path=mcap_path)
+
+
 def _extract_required_actor_keys_from_template(
     template_name: str,
     *,
@@ -181,6 +243,19 @@ def extract_instruction_actor_uuids_from_mcap(
         template_name,
         template_mode=template_mode,
     )
+    if "role_bindings" in payload:
+        actor_uuids = {}
+        for actor_key in sorted(required_actor_keys):
+            role_id = _ACTOR_TYPE_BY_TEMPLATE_KEY.get(actor_key)
+            if role_id is None:
+                raise InstructionRenderError(
+                    f"Unsupported template actor key '{actor_key}'"
+                )
+            actor = _resolve_bound_actor(
+                payload, role_id=role_id, mcap_path=mcap_path
+            )
+            actor_uuids[actor_key] = actor["actor_uuid"]
+        return actor_uuids
     return _map_pick_place_actor_uuids(
         actors,
         required_actor_keys=required_actor_keys,

@@ -41,6 +41,7 @@ import asyncio
 import json
 import logging
 import struct
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -160,16 +161,10 @@ def _rebuild_profiled_observations(
 
 
 def _resolve_observation_fields(remote_policy_type: str) -> dict[str, Any]:
-    match remote_policy_type:
-        case "openpi":
-            from robo_orchard_sim.policy.openpi.adapter import OpenPiAdapter
-
-            return OpenPiAdapter.required_observation_fields()
-        case _:
-            raise ValueError(
-                "Profiled remote observation extraction is unsupported "
-                f"for remote policy type: {remote_policy_type}"
-            )
+    raise ValueError(
+        "Profiled remote observation extraction is unsupported "
+        f"for remote policy type: {remote_policy_type}"
+    )
 
 
 def _rebuild_canonical_observations(obs_data: dict) -> CanonicalPolicyInput:
@@ -527,6 +522,11 @@ class PolicyWebsocketServer:
         self.host = host
         self.port = port
         self.logging_tag = logging_tag or f"{host}:{port}"
+        self._policy_lock = threading.Lock()
+
+    def _call_policy(self, callback, *args):
+        with self._policy_lock:
+            return callback(*args)
 
     async def _handle(self, websocket):
         await self.handle_client(websocket)
@@ -545,7 +545,10 @@ class PolicyWebsocketServer:
                     req = _decode_binary_message(message)
                     req_type = req.get("type", "act")
                     if req_type == "reset":
-                        self.policy.reset()
+                        await asyncio.to_thread(
+                            self._call_policy,
+                            self.policy.reset,
+                        )
                         await websocket.send(
                             _encode_binary_message(
                                 {
@@ -567,9 +570,17 @@ class PolicyWebsocketServer:
                         req.get("instruction"),
                     )
                     if req_type == "act_sequence":
-                        actions = self._act_sequence(obs)
+                        actions = await asyncio.to_thread(
+                            self._call_policy,
+                            self._act_sequence,
+                            obs,
+                        )
                     else:
-                        actions = self.policy.act(obs)
+                        actions = await asyncio.to_thread(
+                            self._call_policy,
+                            self.policy.act,
+                            obs,
+                        )
                     response = _encode_binary_message(
                         {
                             "actions": _encode_value(actions),

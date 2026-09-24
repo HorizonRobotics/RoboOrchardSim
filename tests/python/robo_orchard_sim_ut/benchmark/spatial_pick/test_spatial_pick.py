@@ -19,11 +19,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from robo_orchard_sim.benchmark.manipulation.spatial_pick.spatial_pick_env import (  # noqa: E501
+    SpatialPickTaskDefinition,
     SpatialPickTaskDefinitionBase,
 )
 from robo_orchard_sim.orchard_env.assets.object_spec import RigidObjectSpec
-from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
 from robo_orchard_sim.orchard_env.layout.loader import LayoutValidationError
+from robo_orchard_sim.task_components.role_registry import (
+    RoleRegistry,
+    TargetRef,
+)
+from robo_orchard_sim.task_components.validators.context import (
+    ValidatorContext,
+)
 
 
 def _entry(
@@ -62,9 +69,8 @@ def _make_resolver(by_role_cat: dict[str, dict[str, RigidObjectSpec]]):
     def resolve(asset_configs):
         out = {}
         for key, entry in asset_configs.items():
-            role = key.split("_pool_", 1)[0] if "_pool_" in key else key
             cat = entry["filter"]["category"]
-            out[key] = by_role_cat[role][cat].model_copy(update={"name": key})
+            out[key] = by_role_cat[key][cat].model_copy(update={"name": key})
         return out
 
     resolver.resolve.side_effect = resolve
@@ -164,7 +170,16 @@ def _patched_build_with_instruction():
 _DUMMY = lambda n: RigidObjectSpec(name=n, usd_path=f"/d/{n}.usd")  # noqa: E731
 
 
-def test_build_multi_category_pick_yields_pool_spec(tmp_path):
+def test_spatial_pick_task_definition_uses_canonical_identity():
+    config_path = Path(SpatialPickTaskDefinition.config_path)
+
+    assert SpatialPickTaskDefinition.namespace == "spatial_pick"
+    assert config_path.name == "spatial_pick.yaml"
+
+
+def test_spatial_pick_build_multi_category_layout_raises_validation_error(
+    tmp_path,
+):
     _write_json(
         tmp_path,
         [_entry("garlic", "thermos"), _entry("potato", "thermos")],
@@ -175,24 +190,10 @@ def test_build_multi_category_pick_yields_pool_spec(tmp_path):
             "anchor": {"thermos": _DUMMY("t")},
         }
     )
-    with _patched_build() as orch:
+    with pytest.raises(LayoutValidationError, match="multiple categories"):
         SpatialPickTaskDefinitionBase.build(
             resolver=resolver, config_path=str(_write_yaml(tmp_path))
         )
-
-    kwargs = orch.call_args.kwargs
-    pick_assets = kwargs["task"].assets
-    assert isinstance(pick_assets.pick, PoolSpec)
-    assert {m.scene_name for m in pick_assets.pick.members} == {
-        "objects/pick_pool_0",
-        "objects/pick_pool_1",
-    }
-    layout_builder = kwargs["layout_builder"]
-    assert layout_builder.num_episodes == 2
-    # role_member_by_category is keyed by LAYOUT-JSON role (what
-    # LayoutResetTerm sees), not the task slot — LayoutResetTerm iterates
-    # ``layout.objects.items()`` to look up actors per episode.
-    assert set(layout_builder.role_member_by_category) == {"src", "ref"}
 
 
 def test_build_single_category_pick_yields_object_spec(tmp_path):
@@ -211,7 +212,8 @@ def test_build_single_category_pick_yields_object_spec(tmp_path):
             resolver=resolver, config_path=str(_write_yaml(tmp_path))
         )
     pick_assets = orch.call_args.kwargs["task"].assets
-    assert isinstance(pick_assets.pick, RigidObjectSpec)
+    (pick_spec,) = pick_assets.by_role("pick")
+    assert isinstance(pick_spec, RigidObjectSpec)
 
 
 def test_build_layout_mode_preserves_light_and_texture_task_params(tmp_path):
@@ -357,10 +359,13 @@ def test_build_instruction_context_spatial_relation_renders_instruction(
         }
     )
 
+    registry = RoleRegistry(num_envs=1)
+    registry.bind_one(0, "pick", TargetRef(task.pick_object.scene_name))
     instruction = task.instruction.render(
         actors=task.build_instruction_context(
             env,
             actor_description_seed=0,
+            context=ValidatorContext(robot=None, role_registry=registry),
         )
     )
 

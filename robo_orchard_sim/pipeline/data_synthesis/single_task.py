@@ -18,15 +18,21 @@
 
 from __future__ import annotations
 import os
-from dataclasses import dataclass, field
+
+# import traceback
+from collections.abc import Mapping
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generator
 
 import numpy as np
 import torch
 from robo_orchard_core.utils.config import ClassConfig, ClassType_co
 
 from robo_orchard_sim.contracts.joint_command import EnvActionState
+from robo_orchard_sim.task_components.role_registry import RoleRegistry
+from robo_orchard_sim.task_components.selector import create_selector
 from robo_orchard_sim.task_components.validators.base import ValidatorOutput
 
 if TYPE_CHECKING:
@@ -78,6 +84,29 @@ class DataSynthesisRuntime:
     sim_app: Any
 
 
+@contextmanager
+def data_synthesis_runtime(
+    launch: LaunchConfig | None = None,
+) -> Generator[DataSynthesisRuntime, None, None]:
+    """Own an Isaac app while callers run synthesis and flush outputs.
+
+    IsaacSim shutdown may force-exit the process when its close call hangs, so
+    callers must write durable results inside this context before it exits.
+    """
+    from robo_orchard_sim.launcher import SimpleIsaacAppLauncher
+
+    launch = launch or LaunchConfig()
+    launcher = SimpleIsaacAppLauncher(
+        headless=launch.headless,
+        enable_cameras=launch.enable_cameras,
+        virtual_display=launch.virtual_display,
+    )
+    try:
+        yield DataSynthesisRuntime(sim_app=launcher.app)
+    finally:
+        launcher.close()
+
+
 @dataclass
 class TaskRunResult:
     """Observable result for one task-level data synthesis run."""
@@ -94,6 +123,28 @@ class TaskRunResult:
     success_rate: float
     error: str | None = None
     user_data: dict[str, Any] = field(default_factory=dict)
+
+
+def bind_instruction_actor_descriptions(
+    *,
+    role_registry: RoleRegistry,
+    descriptions_by_role: Mapping[str, str],
+    env_idx: int = 0,
+) -> dict[str, str]:
+    """Bind role descriptions to their current scene actors."""
+    descriptions_by_scene: dict[str, str] = {}
+    for role_id, description in descriptions_by_role.items():
+        scene_name = role_registry.resolve_one(role_id, env_idx).scene_name
+        if (
+            scene_name in descriptions_by_scene
+            and descriptions_by_scene[scene_name] != description
+        ):
+            raise ValueError(
+                f"Scene actor {scene_name!r} has conflicting instruction "
+                "descriptions."
+            )
+        descriptions_by_scene[scene_name] = description
+    return descriptions_by_scene
 
 
 class TaskDataSynthesisRunner:
@@ -113,13 +164,14 @@ class TaskDataSynthesisRunner:
 
         self._active_snapshot_uuids: frozenset[str] | None = None
         self._splits: AssetSplits | None = None
+        from robo_orchard_sim.asset_manager.registry import AssetRegistry
+
+        self._asset_registry = AssetRegistry(self.cfg.asset_root)
         if (
             self.cfg.snapshot_path is not None
             or self.cfg.splits_path is not None
         ):
-            from robo_orchard_sim.asset_manager.registry import AssetRegistry
-
-            _reg = AssetRegistry(self.cfg.asset_root)
+            _reg = self._asset_registry
             if self.cfg.snapshot_path is not None:
                 from robo_orchard_sim.asset_manager.snapshot import (
                     SnapshotError,
@@ -196,6 +248,7 @@ class TaskDataSynthesisRunner:
                     f"{self.cfg.episode_num} failed with "
                     f"{type(exc).__name__}: {exc}"
                 )
+                # traceback.print_exc()
                 summaries.append(
                     EpisodeSummary(
                         episode_index=episode_index,
@@ -263,7 +316,11 @@ class TaskDataSynthesisRunner:
             success_count=success_count,
             success_rate=success_count / total if total else 0.0,
             error=error,
-            user_data=dict(self.cfg.user_data),
+            user_data={
+                **self.cfg.user_data,
+                "swap_enabled": self.cfg.swap_enabled,
+                "selector": "random" if self.cfg.swap_enabled else "first",
+            },
         )
 
     def _pump_sim_app_updates(
@@ -319,6 +376,11 @@ class TaskDataSynthesisRunner:
             seed=seed,
         )
         orchard_env = self.build_orchard_env(seed=seed)
+        role_registry = self.build_role_registry(
+            runtime_task=orchard_env.task,
+            seed=seed,
+            swap_enabled=self.cfg.swap_enabled,
+        )
         if self.cfg.enable_recording:
             self.prepare_recording(
                 orchard_env=orchard_env,
@@ -351,11 +413,16 @@ class TaskDataSynthesisRunner:
             plan = build_task_atomic_action_plan(
                 task_name=self.cfg.task,
                 orchard_env=orchard_env,
+                role_registry=role_registry,
             )
+            if not plan:
+                raise ValueError(
+                    f"Task {self.cfg.task!r} has no synthesis action plan."
+                )
             action_manager.clear()
             action_manager.register(plan)
 
-            _ = env.reset(seed=seed)
+            _ = env.reset(seed=seed, role_bindings=role_registry.bindings(0))
 
             # Initialize action-manager terms from current joint state.
             embodiment = orchard_env.embodiment
@@ -371,17 +438,35 @@ class TaskDataSynthesisRunner:
                 },
             )
 
-            actors = self.build_validator_actors(
+            validator, context = self.build_validator(
                 runtime_task=orchard_env.task,
-                scene=env.scene,
-            )
-            validator = self.build_validator(
-                runtime_task=orchard_env.task,
-                actors=actors,
                 embodiment=orchard_env.embodiment,
+                role_registry=role_registry,
             )
             validator.reset()
-            self.capture_init_states(scene=env.scene, actors=actors)
+            operable_names = orchard_env.task.get_operable_scene_names()
+            if operable_names:
+                context.capture_init_states(env, operable_names)
+
+            instruction = orchard_env.task.instruction
+            instruction_text = None
+            instruction_actor_descriptions: Mapping[str, str] = {}
+            if instruction is not None:
+                instruction_actors = (
+                    orchard_env.task.build_instruction_context(
+                        env,
+                        actor_description_seed=seed,
+                        context=context,
+                    )
+                )
+                (
+                    instruction_text,
+                    instruction_actor_descriptions,
+                ) = instruction.render_with_actor_descriptions(
+                    actors=instruction_actors,
+                    template_seed=seed,
+                    actor_description_seed=seed,
+                )
 
             status_logger = ActionStatusLogger()
             steps, stop_reason, validator_output = (
@@ -401,11 +486,17 @@ class TaskDataSynthesisRunner:
             else:
                 episode_success = bool(validator_output.success)
 
-            self.capture_final_states(scene=env.scene, actors=actors)
+            if operable_names:
+                context.capture_final_states(env, operable_names)
             self.record_validator_metadata(
                 env=env,
-                actors=actors,
+                context=context,
+                scene_names=operable_names,
                 validator_output=validator_output,
+                instruction_actor_descriptions=(
+                    instruction_actor_descriptions
+                ),
+                instruction_text=instruction_text,
             )
 
             self._update_episode_record_data(
@@ -438,16 +529,14 @@ class TaskDataSynthesisRunner:
 
     def build_orchard_env(self, *, seed: int):
         """Build a fresh OrchardEnv with assets sampled by ``seed``."""
-        from robo_orchard_sim.asset_manager.registry import AssetRegistry
         from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
             AssetResolver,
             AssetResolverError,
         )
         from robo_orchard_sim.benchmark.registry import build_task
 
-        registry = AssetRegistry(self.cfg.asset_root)
         resolver = AssetResolver(
-            registry=registry,
+            registry=self._asset_registry,
             splits=self._splits,
             rng=np.random.default_rng(seed),
             active_snapshot=self._active_snapshot_uuids,
@@ -514,83 +603,155 @@ class TaskDataSynthesisRunner:
                 return True
         return False
 
-    def build_validator_actors(
-        self,
+    @staticmethod
+    def build_role_registry(
         *,
         runtime_task: Any,
-        scene: Any,
-    ) -> list[Any]:
-        """Build validator actor snapshots from the runtime scene."""
-        from robo_orchard_sim.task_components.validators.base import (
-            ValidatorActor,
-        )
+        seed: int,
+        swap_enabled: bool = False,
+    ) -> RoleRegistry:
+        """Select episode targets before actions and reset, as evaluation does.
 
-        actor_names = runtime_task.get_validator_actor_names()
-        return [
-            ValidatorActor.from_rigid_object(name, scene[name])
-            for name in actor_names
-        ]
+        Each role draws independently using the episode seed and index zero.
+        Swap-enabled roles use their declared candidate order;
+        disabling swap preserves the original first-candidate behavior.
+        """
+        role_registry = RoleRegistry(num_envs=1)
+        for role_id, role_spec in runtime_task.roles.items():
+            candidates = runtime_task.get_role_candidates(
+                role_id, swap=swap_enabled
+            )
+            if role_spec.cardinality == "one":
+                if not candidates:
+                    raise ValueError(
+                        f"Synthesis role {role_id!r} has no candidates."
+                    )
+                chosen = candidates[0]
+                if swap_enabled:
+                    selector = create_selector(
+                        "random", seed=seed, role_id=role_id
+                    )
+                    chosen = selector.select(candidates, 1, 0)[0]
+                role_registry.bind_one(0, role_id, chosen)
+            else:
+                role_registry.bind_many(0, role_id, list(candidates))
+        return role_registry
 
     def build_validator(
         self,
         *,
         runtime_task: Any,
-        actors: list[Any],
         embodiment: Any,
-    ) -> Any:
-        """Build the task validator bound to the current actor snapshots."""
+        role_registry: RoleRegistry | None = None,
+    ) -> tuple[Any, Any]:
+        """Build the validator and the context it resolves through."""
         from robo_orchard_sim.task_components.validators.context import (
-            build_validator_context,
+            ValidatorContext,
         )
 
-        return runtime_task.build_validator(
-            actors=actors,
-            context=build_validator_context(embodiment),
+        if role_registry is None:
+            # Preserve standalone callers; the episode loop always supplies
+            # its already selected registry and never selects a second time.
+            role_registry = self.build_role_registry(
+                runtime_task=runtime_task, seed=0
+            )
+        context = ValidatorContext.from_embodiment(embodiment, role_registry)
+        validator = runtime_task.build_validator(context=context)
+        if validator.fixed_horizon:
+            raise ValueError(
+                "Fixed-horizon validation is not supported by data synthesis."
+            )
+        return validator, context
+
+    def build_actor_metadata(
+        self,
+        *,
+        env: Any,
+        scene_names: list[str],
+        actor_descriptions_by_scene: Mapping[str, str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Build metadata for every recorded scene actor."""
+        from robo_orchard_sim.utils.env_utils import bbox_of
+
+        actor_descriptions_by_scene = dict(actor_descriptions_by_scene or {})
+        unrecorded_scene_names = actor_descriptions_by_scene.keys() - set(
+            scene_names
         )
+        if unrecorded_scene_names:
+            names = ", ".join(sorted(unrecorded_scene_names))
+            raise ValueError(
+                "Instruction description references unrecorded scene actor: "
+                f"{names}."
+            )
 
-    def capture_init_states(self, *, scene: Any, actors: list[Any]) -> None:
-        """Capture initial validator actor states from the runtime scene."""
-        for actor in actors:
-            actor.capture_init_state(scene[actor.name])
-
-    def capture_final_states(self, *, scene: Any, actors: list[Any]) -> None:
-        """Capture final validator actor states from the runtime scene."""
-        for actor in actors:
-            actor.capture_final_state(scene[actor.name])
+        actors = {}
+        for name in scene_names:
+            cfg = env.scene[name].cfg
+            actor_metadata = {
+                "actor_category": cfg.category or "unknown",
+                "actor_type": cfg.actor_type or "unknown",
+                "actor_uuid": cfg.uuid or "unknown",
+                "bbox": bbox_of(cfg),
+            }
+            if name in actor_descriptions_by_scene:
+                actor_metadata["description"] = actor_descriptions_by_scene[
+                    name
+                ]
+            actors[name] = actor_metadata
+        return actors
 
     def build_episode_metadata(
         self,
         *,
-        actors: list[Any],
+        env: Any,
+        context: Any,
+        scene_names: list[str],
         validator_output: Any,
         env_idx: int = 0,
+        instruction_actor_descriptions: Mapping[str, str] | None = None,
+        instruction_text: str | None = None,
     ) -> dict[str, Any]:
         """Build evaluator-compatible validator metadata for recording."""
-        if not actors:
-            return {}
 
+        def _pose(state: Any) -> list[float]:
+            # Recorded poses stay 7-dim (pos + quat); the captured state
+            # carries velocities beyond that.
+            return state[:7].cpu().numpy().tolist()
+
+        actor_descriptions_by_scene = bind_instruction_actor_descriptions(
+            role_registry=context.role_registry,
+            descriptions_by_role=instruction_actor_descriptions or {},
+            env_idx=env_idx,
+        )
         meta_data = {
             "init_position": {
-                actor.name: actor.init_state[env_idx].tolist()
-                for actor in actors
-                if actor.init_state is not None
+                name: _pose(context.init_state_of(name, env_idx))
+                for name in scene_names
             },
             "final_position": {
-                actor.name: actor.final_state[env_idx].tolist()
-                for actor in actors
-                if actor.final_state is not None
+                name: _pose(context.final_state_of(name, env_idx))
+                for name in scene_names
             },
-            "actors": {
-                actor.name: {
-                    "actor_category": actor.category,
-                    "actor_type": actor.actor_type,
-                    "actor_uuid": actor.uuid,
-                }
-                for actor in actors
-            },
+            "actors": self.build_actor_metadata(
+                env=env,
+                scene_names=scene_names,
+                actor_descriptions_by_scene=actor_descriptions_by_scene,
+            ),
             "task_success": float(validator_output.success),
             "task_progress": float(validator_output.progress),
+            "role_bindings": {
+                role_id: (
+                    [asdict(target) for target in targets]
+                    if isinstance(targets, list)
+                    else asdict(targets)
+                )
+                for role_id, targets in context.role_registry.bindings(
+                    env_idx
+                ).items()
+            },
         }
+        if instruction_text is not None:
+            meta_data["instruction"] = instruction_text
 
         return meta_data
 
@@ -598,8 +759,11 @@ class TaskDataSynthesisRunner:
         self,
         *,
         env: Any,
-        actors: list[Any],
+        context: Any,
+        scene_names: list[str],
         validator_output: Any,
+        instruction_actor_descriptions: Mapping[str, str] | None = None,
+        instruction_text: str | None = None,
     ) -> None:
         """Merge validator metadata into episode user data."""
         record_manager = getattr(env, "record_manager", None)
@@ -611,16 +775,28 @@ class TaskDataSynthesisRunner:
         if num_envs > 1:
             meta_dict = [
                 self.build_episode_metadata(
-                    actors=actors,
+                    env=env,
+                    context=context,
+                    scene_names=scene_names,
                     validator_output=validator_output,
                     env_idx=env_idx,
+                    instruction_actor_descriptions=(
+                        instruction_actor_descriptions
+                    ),
+                    instruction_text=instruction_text,
                 )
                 for env_idx in range(num_envs)
             ]
         else:
             meta_dict = self.build_episode_metadata(
-                actors=actors,
+                env=env,
+                context=context,
+                scene_names=scene_names,
                 validator_output=validator_output,
+                instruction_actor_descriptions=(
+                    instruction_actor_descriptions
+                ),
+                instruction_text=instruction_text,
             )
 
         if not meta_dict:
@@ -744,7 +920,7 @@ class TaskDataSynthesisRunner:
         if output_path is None:
             return
 
-        os.makedirs(self.cfg.output_config_dir, exist_ok=True)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         successful_paths = [
             mcap_path
             for summary in summaries
@@ -795,6 +971,8 @@ class TaskDataSynthesisCfg(ClassConfig[TaskDataSynthesisRunner]):
     config: str | None = None
     seed: int = 0
     episode_num: int = 1
+    swap_enabled: bool = False
+    """Select from each role's swap candidates in independent episodes."""
     max_steps: int = 1000
     settle_steps: int = 250
     settle_streak: int = 50

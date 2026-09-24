@@ -769,3 +769,22 @@ class SettleTracker:
             ``reset``).
         """
         return list(self._last_breaches)
+
+
+def bbox_of(cfg: Any) -> Union[Dict[str, List[float]], None]:
+    """Restate an asset's bounding box as center and size.
+
+    Both stay in the object's local frame, so pairing them with a
+    recorded pose gives an oriented box at any instant. ``None`` when
+    the asset declares no box.
+    """
+    lower = getattr(cfg, "aabb_min", None)
+    upper = getattr(cfg, "aabb_max", None)
+    if lower is None or upper is None:
+        return None
+    return {
+        "center": [
+            (lo + hi) * 0.5 for lo, hi in zip(lower, upper, strict=True)
+        ],
+        "size": [hi - lo for lo, hi in zip(lower, upper, strict=True)],
+    }

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robo_orchard_server"
+version = "0.2.1"
+description = "Lightweight canonical policy server for RoboOrchard evaluators"
+readme = "README.md"
+authors = [{ name = "The RoboOrchard Team" }]
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["numpy", "websockets>=12"]
+
+[tool.setuptools.packages.find]
+include = ["robo_orchard_server*"]
+
+[tool.setuptools.package-data]
+robo_orchard_server = ["py.typed"]
+"robo_orchard_server.policy.holobrain" = ["config.yaml", "start_holobrain.sh"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+extraPaths = [".", "..", "../tests/robo_orchard_sever"]

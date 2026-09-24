@@ -724,6 +724,32 @@ class TestInstructionWrapper:
         text = wrapper.render(actors={"actor1": actor})
         assert text == "name=raw-name,desc=raw-desc"
 
+    @pytest.mark.parametrize(
+        ("raw_description", "expected_description"),
+        [
+            ("usd_drive", "usd drive"),
+            ("children's_cup", "children's cup"),
+        ],
+    )
+    def test_render_raw_description_with_underscores_replaces_underscores(
+        self,
+        raw_description,
+        expected_description,
+    ):
+        template = _register_template(
+            {"fixed": "Pick up {actor.description}", "variants": []}
+        )
+        wrapper = InstructionWrapper(template, actor_description_mode="raw")
+        actor = InstructionActor(
+            uuid="u-raw-underscore",
+            description=raw_description,
+            raw_description=raw_description,
+        )
+
+        instruction = wrapper.render(actors={"actor1": actor})
+
+        assert instruction == f"Pick up {expected_description}"
+
     def test_render_with_actor_description_mode_seen_requires_seed(self):
         template = _register_template(
             {"fixed": "desc={actor.description}", "variants": []}

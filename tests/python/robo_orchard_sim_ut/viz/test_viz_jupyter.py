@@ -16,33 +16,46 @@
 import time
 
 import pytest
-from omni.isaac.kit import SimulationApp
 
-from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import RigidObjectCfg
-from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (
+pytest.importorskip("ipycanvas")
+pytest.importorskip("ipywidgets")
+pytest.importorskip("ipyevents")
+
+from omni.isaac.kit import SimulationApp  # noqa: E402
+
+from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import (  # noqa: E402
+    RigidObjectCfg,
+)
+from robo_orchard_sim.ext.cfg_wrappers.sim.schemas.schemas_cfg import (  # noqa: E402
     RigidBodyPropertiesCfg,
 )
-from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import SimulationCfg
-from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.from_files import (
+from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import (  # noqa: E402
+    SimulationCfg,
+)
+from robo_orchard_sim.ext.cfg_wrappers.sim.spawners.from_files import (  # noqa: E402
     UsdFileCfg,
 )
-from robo_orchard_sim.ext.envs.env_base import (
+from robo_orchard_sim.ext.envs.env_base import (  # noqa: E402
     IsaacEnv,
     IsaacEnvCfg,
     IsaacEnvContextManager,
 )
-from robo_orchard_sim.ext.models.assets.asset_cfg import (
+from robo_orchard_sim.ext.models.assets.asset_cfg import (  # noqa: E402
     NV_ISAAC_DIR,
     GroupAssetCfg,
 )
-from robo_orchard_sim.ext.models.scenes.table_scene import TableSceneCfg
-from robo_orchard_sim.ext.models.sensors.camera import (
+from robo_orchard_sim.ext.models.scenes.table_scene import (  # noqa: E402
+    TableSceneCfg,
+)
+from robo_orchard_sim.ext.models.sensors.camera import (  # noqa: E402
     Camera,
     CameraCfg,
     CameraOffset,
     PinholeCameraCfg,
 )
-from robo_orchard_sim.viz.jupyter.viewports import IsaacIpyViewportViz
+from robo_orchard_sim.viz.jupyter.viewports import (  # noqa: E402
+    IsaacIpyViewportViz,
+)
 
 
 @pytest.fixture()

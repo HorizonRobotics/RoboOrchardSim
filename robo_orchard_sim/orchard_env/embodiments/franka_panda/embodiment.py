@@ -155,6 +155,36 @@ class FrankaPandaEmbodiment(EmbodimentBase):
         }
 
     @classmethod
+    def _generate_base_link_world_tf_term(
+        cls, robot_scene_name: str
+    ) -> dict[str, FrameTransformTermCfg]:
+        """Join the object and robot TF trees.
+
+        World -> panda_link0, so scene objects (parented to world) and
+        the robot/camera TF tree (parented to panda_link0) connect into
+        one tree for visualization.
+        """
+        return {
+            "base_link_world_tf": FrameTransformTermCfg(
+                child_asset_cfg=SceneEntityCfg(
+                    name=robot_scene_name, body_names=["panda_link0"]
+                ),
+                world_parent=True,
+                bidirectional=False,
+            )
+        }
+
+    @staticmethod
+    def _generate_base_link_world_tf_record_term() -> dict[str, McapTFTermCfg]:
+        return {
+            "base_link_world_tf_term": McapTFTermCfg(
+                topic="/observation/robot_state/base_link/tf",
+                fps=ACTION_FPS,
+                key="/tf/base_link_world_tf",
+            )
+        }
+
+    @classmethod
     def _generate_camera_tf_terms(
         cls, robot_scene_name: str
     ) -> dict[str, FrameTransformTermCfg]:
@@ -335,9 +365,14 @@ class FrankaPandaEmbodiment(EmbodimentBase):
                 }
             ),
             "/tf": ObservationGroupCfg(
-                terms=self._generate_robot_tf_terms(
-                    robot_scene_name=robot_scene_name,
-                )
+                terms={
+                    **self._generate_robot_tf_terms(
+                        robot_scene_name=robot_scene_name,
+                    ),
+                    **self._generate_base_link_world_tf_term(
+                        robot_scene_name=robot_scene_name
+                    ),
+                }
             ),
         }
         if self.enable_cameras:
@@ -442,6 +477,7 @@ class FrankaPandaEmbodiment(EmbodimentBase):
                 position_key="/last_action/robot_gripper_control",
             ),
             **self._generate_robot_tf_record_terms(),
+            **self._generate_base_link_world_tf_record_term(),
         }
 
         if not self.enable_cameras:

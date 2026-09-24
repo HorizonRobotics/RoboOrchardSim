@@ -17,7 +17,8 @@
 """Place-a2b task definition built on ``TaskBase``."""
 
 from __future__ import annotations
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, ClassVar
 
 from robo_orchard_core.envs.managers.events import EventManagerCfg
 from robo_orchard_core.utils.config import Config
@@ -28,25 +29,16 @@ from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
 from robo_orchard_sim.ext.envs.managers.events.light_reset import (
     LightResetTermCfg,
 )
-from robo_orchard_sim.ext.envs.managers.events.pool_reset import (
-    PoolResetTermCfg,
-    PoolSlot,
-)
 from robo_orchard_sim.ext.envs.managers.events.pose_reset import (
     PoseResetTermCfg,
 )
 from robo_orchard_sim.ext.envs.managers.events.texture_reset import (
     TextureResetTermCfg,
 )
-from robo_orchard_sim.ext.envs.managers.record import (
-    RecordTermBaseCfg,
-)
-from robo_orchard_sim.ext.envs.managers.record.mcap import McapDictTermCfg
-from robo_orchard_sim.orchard_env.assets import ObjectSpec, PoolSpec
-from robo_orchard_sim.orchard_env.task_templates.task_base import (
-    TaskAssetsBase,
-    TaskBase,
-)
+from robo_orchard_sim.orchard_env.assets import ObjectSpec
+from robo_orchard_sim.orchard_env.assets.task_assets import TaskAssets
+from robo_orchard_sim.orchard_env.task_spec import RoleSpec
+from robo_orchard_sim.orchard_env.task_templates.task_base import TaskBase
 from robo_orchard_sim.orchard_env.task_templates.task_params import (
     TaskLightResetConfig,
     TaskPoseResetConfig,
@@ -56,18 +48,44 @@ from robo_orchard_sim.task_components.instructions.base import (
     InstructionActor,
     InstructionWrapper,
 )
+from robo_orchard_sim.task_components.instructions.counterfactual import (
+    CounterfactualCondition,
+    counterfactual_condition_for_task,
+    counterfactual_instruction_actors,
+)
+from robo_orchard_sim.task_components.role_registry import TargetRef
 from robo_orchard_sim.task_components.validators.base import (
     Validator,
-    ValidatorActor,
 )
 from robo_orchard_sim.task_components.validators.checkers import (
-    is_within_xy,
-    lift,
-    reach,
+    BothGripperOpenChecker,
+    ContactChecker,
+    LiftChecker,
+    ReachChecker,
+    SceneCheckerSuite,
+    WithinXYChecker,
 )
 from robo_orchard_sim.task_components.validators.context import (
     ValidatorContext,
 )
+from robo_orchard_sim.task_components.validators.counterfactual import (
+    CounterfactualSpec,
+    CounterfactualStageRelationSelector,
+    CounterfactualStageSelector,
+    CounterfactualStageSpec,
+    CounterfactualStageTracker,
+    CounterfactualValidator,
+)
+from robo_orchard_sim.task_components.validators.metrics import (
+    AllMetricSelector,
+    AnyRoleMetricSelector,
+    BoundRoleMetricSelector,
+    BoundRolePairMetricSelector,
+    DwellMetricSelector,
+    GlobalMetricSelector,
+    MetricStore,
+)
+from robo_orchard_sim.task_components.validators.role_scope import RoleScope
 
 
 class PlaceA2BTaskParams(Config):
@@ -76,107 +94,93 @@ class PlaceA2BTaskParams(Config):
     pose_reset: TaskPoseResetConfig = TaskPoseResetConfig()
     light_reset: TaskLightResetConfig | None = None
     texture_reset: TaskTextureResetConfig | None = None
+    reach_dwell_steps: int = 15
 
 
-class PlaceA2BTaskAssets(TaskAssetsBase):
-    """Task-specific asset schema for place-a2b scenes."""
+PICK_ROLE = "pick"
+PLACE_ROLE = "place"
 
-    required_object_fields = ("pick", "place")
+_SWAP_POOLS: dict[str, tuple[str, ...]] = {
+    PICK_ROLE: (PICK_ROLE, "distractors_pick"),
+    PLACE_ROLE: (PLACE_ROLE, "distractors_place"),
+}
+"""Asset groups each role may draw from under swap.
 
-    pick: ObjectSpec | PoolSpec
-    place: ObjectSpec | PoolSpec
-
-    def flatten(self) -> dict[str, ObjectSpec | PoolSpec]:
-        """Return task assets in the flattened shape expected by TaskBase."""
-        flattened: dict[str, ObjectSpec | PoolSpec] = {
-            "pick": self.pick,
-            "place": self.place,
-        }
-        flattened.update(self.flatten_distractors())
-        return flattened
+The clutter around the pick object was sampled to resemble it, and the
+same holds for the place target, so each role rotates within its own
+group and never into the other's — one is grasped, the other receives.
+"""
 
 
 class PlaceA2BTask(TaskBase):
     """A generic place-a2b task with one pick object and one place object."""
 
+    roles: ClassVar[dict[str, RoleSpec]] = {
+        PICK_ROLE: RoleSpec(
+            description="the object to pick up",
+            cardinality="one",
+            required_traits=("is_graspable",),
+        ),
+        PLACE_ROLE: RoleSpec(
+            description="where the picked object should end up",
+            cardinality="one",
+        ),
+    }
+
     def __init__(
         self,
-        assets: PlaceA2BTaskAssets,
+        assets: TaskAssets,
         params: PlaceA2BTaskParams | None = None,
         instruction: InstructionWrapper | None = None,
     ):
-        self.assets = assets
         self.params = params or PlaceA2BTaskParams()
-        flattened_assets = assets.flatten()
-        super().__init__(flattened_assets, instruction=instruction)
+        super().__init__(assets, instruction=instruction)
 
-        self.pick_object = self._assets["pick"]
-        self.place_object = self._assets["place"]
+        self.pick_object = self.assets.by_role(PICK_ROLE)[0]
+        self.place_object = self.assets.by_role(PLACE_ROLE)[0]
 
-        # Separate classic per-spec distractors from pool-wrapped distractors.
-        self.distractors: list[ObjectSpec] = []
-        self.distractors_pool: PoolSpec | None = None
-        for role, spec in self._assets.items():
-            if role == "distractors_pool":
-                assert isinstance(spec, PoolSpec)
-                self.distractors_pool = spec
-            elif role.startswith("distractor_"):
-                self.distractors.append(spec)
+        self.distractors: list[ObjectSpec] = [
+            spec
+            for role_id, specs in self.assets.role_candidates.items()
+            if role_id not in self.roles
+            for spec in specs
+        ]
+
+    def get_role_candidates(
+        self,
+        role_id: str,
+        *,
+        swap: bool = False,
+    ) -> list[TargetRef]:
+        """Offer the objects this role may point at.
+
+        Under swap each role also rotates through the clutter drawn to
+        resemble it, but never through the other role's: one object is
+        grasped, the other receives it. A YAML that declares no matching
+        clutter yields a single candidate and nothing rotates.
+        """
+        groups = _SWAP_POOLS.get(role_id, (role_id,)) if swap else (role_id,)
+        return [
+            TargetRef(spec.scene_name)
+            for group in groups
+            for spec in self.assets.by_role(group)
+        ]
 
     def get_event_cfg(self) -> EventManagerCfg:
         """Return reset events for all task objects."""
         terms: dict = {}
 
-        slots: list[PoolSlot] = []
-        non_pool_actor_names: list[str] = []
-
         # Order: place first (largest target), then pick, so the smaller
         # pick has more room when sampling around it. Distractors come last.
-        for role in ("place", "pick"):
-            spec = self._assets[role]
-            if isinstance(spec, PoolSpec):
-                slots.append(
-                    PoolSlot(
-                        role_id=spec.role_id,
-                        members=spec.member_scene_names,
-                    )
-                )
-            else:
-                non_pool_actor_names.append(spec.scene_name)
+        actor_names = [
+            *(spec.scene_name for spec in self.assets.by_role(PLACE_ROLE)),
+            *(spec.scene_name for spec in self.assets.by_role(PICK_ROLE)),
+            *(spec.scene_name for spec in self.distractors),
+        ]
 
-        # Distractor pool: emit active_count alias slots sharing all members.
-        if self.distractors_pool is not None:
-            n_active = self.distractors_pool.active_count
-            members = self.distractors_pool.member_scene_names
-            for i in range(n_active):
-                slots.append(
-                    PoolSlot(
-                        role_id=f"distractor_{i}",
-                        members=members,
-                    )
-                )
-
-        # Classic distractors (no pool wrapping) use the regular pose reset.
-        for d in self.distractors:
-            non_pool_actor_names.append(d.scene_name)
-
-        if slots:
-            terms["pool_reset_event"] = PoolResetTermCfg(
-                slots=slots,
-                pose_range=dict(self.params.pose_reset.pose_range),
-                min_separation=self.params.pose_reset.min_separation,
-                group_key="manipulation_objects",
-            )
-
-        if non_pool_actor_names:
-            # In mixed pool/classic mode, pool_reset_event runs first and
-            # already clears the shared cache; this term reads + appends.
-            # Fall back to clearing only when pool_reset is absent.
-            clear_cache = "pool_reset_event" not in terms
+        if actor_names:
             terms["random_pose_event"] = PoseResetTermCfg(
-                asset_cfgs=[
-                    SceneEntityCfg(name=n) for n in non_pool_actor_names
-                ],
+                asset_cfgs=[SceneEntityCfg(name=name) for name in actor_names],
                 trigger_topic="reset",
                 mode=self.params.pose_reset.mode,
                 pose_range=dict(self.params.pose_reset.pose_range),
@@ -184,7 +188,7 @@ class PlaceA2BTask(TaskBase):
                 min_separation=self.params.pose_reset.min_separation,
                 max_retries=256,
                 group_key="manipulation_objects",
-                clear_cross_group_cache=clear_cache,
+                clear_cross_group_cache=True,
             )
 
         light_reset_cfg = self.params.light_reset
@@ -224,30 +228,15 @@ class PlaceA2BTask(TaskBase):
 
         return EventManagerCfg(terms=terms)
 
-    def get_record_terms(self) -> dict[str, RecordTermBaseCfg]:
-        return {
-            "meta_dict_term": McapDictTermCfg(
-                topic="/meta_data",
-                fps=1.0,
-                # Use the task-level metadata record key contract.
-                key=TaskBase.EPISODE_META_RECORD_KEY,
-                record_mode="once",
-            )
-        }
-
-    def get_validator_actor_names(self) -> list[str]:
-        """Return scene actors used by the place-a2b validator."""
-        return [
-            self.pick_object.scene_name,
-            self.place_object.scene_name,
-        ]
-
     def build_validator(
         self,
-        actors: list[ValidatorActor],
         context: ValidatorContext | None = None,
     ) -> Validator:
         """Build the task validator for place-a2b evaluation.
+
+        Scores whichever objects the roles name right now, so rebinding
+        them between episodes moves both targets without rebuilding
+        anything.
 
         Returns:
             Validator: Task-specific success/progress validator.
@@ -257,37 +246,195 @@ class PlaceA2BTask(TaskBase):
                 "PlaceA2BTask.build_validator() requires ValidatorContext "
                 "with robot data."
             )
-        actors_by_name = {actor.name: actor for actor in actors}
-        pick_actor = actors_by_name[self.pick_object.scene_name]
-        place_actor = actors_by_name[self.place_object.scene_name]
+        metric_store = MetricStore(RoleScope.from_task(self))
+        checker_suite = SceneCheckerSuite(
+            (
+                ReachChecker(threshold=0.2),
+                ContactChecker(force_threshold=0.1),
+                LiftChecker(threshold=0.03),
+                WithinXYChecker(PICK_ROLE, PLACE_ROLE),
+                BothGripperOpenChecker(),
+            )
+        )
+        condition = counterfactual_condition_for_task(self)
+        if condition is not None:
+            spec = self._get_counterfactual_spec(
+                condition=condition,
+                metric_store=metric_store,
+            )
+            return CounterfactualValidator(
+                context=context,
+                checker_suite=checker_suite,
+                metric_store=metric_store,
+                spec=spec,
+            )
+
+        reach_pick = BoundRoleMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            role_id=PICK_ROLE,
+            metric="reached",
+        )
+        contact_pick = BoundRoleMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            role_id=PICK_ROLE,
+            metric="contacted",
+        )
+        grasp_pick = BoundRoleMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            role_id=PICK_ROLE,
+            metric="grasped",
+        )
+        lift_pick = BoundRoleMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            role_id=PICK_ROLE,
+            metric="lifted",
+        )
+        lifted_while_grasped = AllMetricSelector((lift_pick, grasp_pick))
+        within_place = BoundRolePairMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            subject_role=PICK_ROLE,
+            object_role=PLACE_ROLE,
+            metric="within_xy",
+        )
+        gripper_open = GlobalMetricSelector(
+            metric_store=metric_store,
+            metric="gripper_open",
+        )
+        placed_and_released = AllMetricSelector((within_place, gripper_open))
         return Validator(
-            actors=actors,
+            context=context,
+            checker_suite=checker_suite,
+            metric_store=metric_store,
             criteria=[
-                reach(
-                    pick_actor.name,
-                    0.2,
-                    robot_name=context.robot.robot_name,
-                    ee_links=context.robot.ee_links,
+                DwellMetricSelector(
+                    reach_pick,
+                    self.params.reach_dwell_steps,
                 ),
-                (lift(pick_actor, 0.03), [0]),
-                (is_within_xy(pick_actor.name, place_actor.name), [1]),
                 (
-                    is_within_xy(
-                        pick_actor.name,
-                        place_actor.name,
-                        require_gripper_open=True,
-                        robot_name=context.robot.robot_name,
-                        gripper_joints=context.robot.gripper_joints,
-                    ),
+                    contact_pick,
+                    [0],
+                ),
+                (
+                    grasp_pick,
+                    [1],
+                ),
+                (
+                    lifted_while_grasped,
                     [2],
+                ),
+                (within_place, [3]),
+                (
+                    placed_and_released,
+                    [4],
                 ),
             ],
             criteria_name=[
                 "reach_pick",
+                "contact_pick",
+                "grasp_pick",
                 "lift_pick",
                 "reach_place",
                 "place_within_xy",
             ],
+        )
+
+    def _get_counterfactual_spec(
+        self,
+        *,
+        condition: CounterfactualCondition,
+        metric_store: MetricStore,
+    ) -> CounterfactualSpec:
+        """Return PlaceA2B-specific counterfactual metrics and rubric."""
+        if (
+            condition == "generic_object"
+            and self.instruction is not None
+            and self.instruction.template != "place_a2b_generic_object"
+        ):
+            raise ValueError(
+                "PlaceA2B generic counterfactual evaluation requires the "
+                "'place_a2b_generic_object' instruction template."
+            )
+
+        def rubric(reached: Mapping[str, bool]) -> tuple[bool, float]:
+            success = (
+                reached["any_placed"]
+                if condition == "generic_object"
+                else not any(reached.values())
+            )
+            return success, 1.0 if success else 0.0
+
+        tracker = CounterfactualStageTracker(
+            metric_store=metric_store,
+            role_id=PICK_ROLE,
+            stages=(
+                CounterfactualStageSpec(
+                    "reach",
+                    ("reached",),
+                    self.params.reach_dwell_steps,
+                ),
+                CounterfactualStageSpec("contact", ("contacted",)),
+                CounterfactualStageSpec("grasp", ("grasped",)),
+                CounterfactualStageSpec("lift", ("lifted", "grasped")),
+            ),
+        )
+        picked_within_place = CounterfactualStageRelationSelector(
+            tracker=tracker,
+            completed_stage="lift",
+            object_role=PLACE_ROLE,
+            relation_metric="within_xy",
+        )
+        placed_and_released = AllMetricSelector(
+            (
+                picked_within_place,
+                GlobalMetricSelector(
+                    metric_store=metric_store,
+                    metric="gripper_open",
+                ),
+            )
+        )
+        if condition == "generic_object":
+            criteria = (
+                *(
+                    CounterfactualStageSelector(tracker, stage)
+                    for stage in ("reach", "contact", "grasp", "lift")
+                ),
+                (placed_and_released, [3]),
+            )
+        else:
+            criteria = (
+                CounterfactualStageSelector(tracker, "reach"),
+                AnyRoleMetricSelector(
+                    metric_store=metric_store,
+                    role_id=PICK_ROLE,
+                    metric="contacted",
+                ),
+                AnyRoleMetricSelector(
+                    metric_store=metric_store,
+                    role_id=PICK_ROLE,
+                    metric="grasped",
+                ),
+                AnyRoleMetricSelector(
+                    metric_store=metric_store,
+                    role_id=PICK_ROLE,
+                    metric="lifted",
+                ),
+                placed_and_released,
+            )
+        return CounterfactualSpec(
+            criteria=criteria,
+            criteria_name=(
+                "any_reached",
+                "any_contacted",
+                "any_grasped",
+                "any_lifted",
+                "any_placed",
+            ),
+            rubric=rubric,
         )
 
     def build_instruction_context(
@@ -295,18 +442,30 @@ class PlaceA2BTask(TaskBase):
         env: Any,
         *,
         actor_description_seed: int,
+        context: ValidatorContext | None = None,
     ) -> dict[str, InstructionActor]:
+        """Describe whichever objects the roles name right now."""
+        if context is None:
+            raise ValueError(
+                "PlaceA2BTask.build_instruction_context() requires a "
+                "ValidatorContext to resolve role bindings."
+            )
         if self.instruction is None:
             return {}
+        counterfactual_actors = counterfactual_instruction_actors(self)
+        if counterfactual_actors is not None:
+            return counterfactual_actors
 
+        pick_target = context.role_registry.resolve_one(PICK_ROLE)
+        place_target = context.role_registry.resolve_one(PLACE_ROLE)
         return {
             "actor1": InstructionActor.from_rigid_object(
-                env.scene[self.pick_object.scene_name],
+                env.scene[pick_target.scene_name],
                 actor_description_mode=self.instruction.actor_description_mode,
                 actor_description_seed=actor_description_seed,
             ),
             "actor2": InstructionActor.from_rigid_object(
-                env.scene[self.place_object.scene_name],
+                env.scene[place_target.scene_name],
                 actor_description_mode=self.instruction.actor_description_mode,
                 actor_description_seed=actor_description_seed,
             ),

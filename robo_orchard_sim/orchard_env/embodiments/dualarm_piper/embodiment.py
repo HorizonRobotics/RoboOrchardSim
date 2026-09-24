@@ -181,6 +181,36 @@ class DualArmPiperEmbodiment(EmbodimentBase):
         }
 
     @classmethod
+    def _generate_base_link_world_tf_term(
+        cls, robot_scene_name: str
+    ) -> dict[str, FrameTransformTermCfg]:
+        """Join the object and robot TF trees.
+
+        World -> base_link, so scene objects (parented to world) and
+        the robot/camera TF tree (parented to base_link) connect into
+        one tree for visualization.
+        """
+        return {
+            "base_link_world_tf": FrameTransformTermCfg(
+                child_asset_cfg=SceneEntityCfg(
+                    name=robot_scene_name, body_names=["base_link"]
+                ),
+                world_parent=True,
+                bidirectional=False,
+            )
+        }
+
+    @staticmethod
+    def _generate_base_link_world_tf_record_term() -> dict[str, McapTFTermCfg]:
+        return {
+            "base_link_world_tf_term": McapTFTermCfg(
+                topic="/observation/robot_state/base_link/tf",
+                fps=ACTION_FPS,
+                key="/tf/base_link_world_tf",
+            )
+        }
+
+    @classmethod
     def _generate_camera_tf_terms(
         cls, robot_scene_name: str
     ) -> dict[str, FrameTransformTermCfg]:
@@ -390,6 +420,9 @@ class DualArmPiperEmbodiment(EmbodimentBase):
                         arm_prefix="right",
                         robot_scene_name=robot_scene_name,
                     ),
+                    **self._generate_base_link_world_tf_term(
+                        robot_scene_name=robot_scene_name
+                    ),
                 }
             ),
         }
@@ -552,6 +585,7 @@ class DualArmPiperEmbodiment(EmbodimentBase):
             ),
             **self._generate_arm_tf_record_terms(arm_prefix="left"),
             **self._generate_arm_tf_record_terms(arm_prefix="right"),
+            **self._generate_base_link_world_tf_record_term(),
         }
 
         if not self.enable_cameras:

@@ -29,6 +29,11 @@ embodiment:
     right_joint8: -0.05
 
 instruction:
+  # For counterfactual evaluation, set template_mode to fixed and choose one
+  # of the following templates:
+  #   template: generic_object
+  #   template: absent_object
+  #   template: empty
   template: pick_default
   template_mode: variants  # valid values: fixed | variants
   actor_description_mode: seen  # valid values: raw | seen | unseen

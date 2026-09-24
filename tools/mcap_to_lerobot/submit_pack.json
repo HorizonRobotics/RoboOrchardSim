@@ -1,0 +1,42 @@
+{
+  "job_name": "lerobot_pack_test",
+  "workspace_folder": "submit-pack",
+  "docker_image": "hub.hobot.cc/auto/robot_lab/mengao.zhao:ubuntu22.04-gcc11.4-py3.11-cuda12.8-isaac_lab-v2.0.2-sem-ext-v0.2",
+  "input_bucket": "robot_lab,robot_lab2",
+  "output_bucket": "robot_lab,robot_lab2",
+  "num_workers": 1,
+  "cpu_per_worker": 24,
+  "cpu_mem_ratio": 8,
+  "wall_time": 14400,
+  "clear_workspace": false,
+  "cmd": [
+    "ulimit -n 65536",
+    "pip install --no-deps lerobot==0.3.3",
+    "pip install --no-deps jsonlines==4.0.0",
+    "pip install --no-deps av",
+    "export PYTHONPATH=${WORKING_PATH}:$PYTHONPATH",
+    "echo $PYTHONPATH",
+    "manifest_path=**{path/to/your/manifest.json}**",
+    "output_path=/horizon-bucket/robot_lab/users/ziang.li/sim_data/anymove/datasets/lerobot_0617_piper/pick_category_test",
+    "embodiment=dualarm_piperx",
+    "repo_id=robo_orchard/piperx_pack",
+    "cd ${WORKING_PATH} && \\",
+    "python3 -m tools.mcap_to_lerobot.convert \\",
+    "    --embodiment ${embodiment} \\",
+    "    --manifest ${manifest_path} \\",
+    "    --out /job_data/lerobot_local \\",
+    "    --repo-id ${repo_id} \\",
+    "    --num-workers 4 \\",
+    "    --upload-to ${output_path} \\",
+    "    --best-effort"
+  ],
+  "to_upload": [
+    "robo_orchard_sim",
+    "tools",
+    "manifest.json"
+  ],
+  "job_password": "1227",
+  "queue_name": "project-cpu-horizon-labs-bcloud",
+  "project_id": "horizon-labs",
+  "priority": 5
+}

@@ -18,10 +18,13 @@
 
 from robo_orchard_sim.asset_manager.registry.build_index import (  # noqa: F401
     DEFAULT_CACHE_ROOT,
+    INDEX_DIRNAME,
+    INDEX_FILENAME,
     SCHEMA_VERSION,
     BuildReport,
     SkippedAsset,
     build_asset_index,
+    default_asset_index_path,
     default_cache_index_path,
 )
 from robo_orchard_sim.asset_manager.registry.errors import (  # noqa: F401
@@ -32,14 +35,18 @@ from robo_orchard_sim.asset_manager.registry.errors import (  # noqa: F401
     DuplicateAssetIdError,
     EmptyPoolError,
     InsufficientPoolError,
+    InvalidSpecConfigError,
     MissingAabbError,
     UnknownAssetError,
+    UnknownSpecTypeError,
 )
 from robo_orchard_sim.asset_manager.registry.registry import (  # noqa: F401
     AssetRegistry,
     AssetSampler,
 )
 from robo_orchard_sim.asset_manager.registry.types import (  # noqa: F401
+    ARTICULATION_SPEC_TYPE,
+    RIGID_OBJECT_SPEC_TYPE,
     AssetFilter,
     AssetMeta,
     DistractorSpec,

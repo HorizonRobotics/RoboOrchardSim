@@ -44,7 +44,7 @@ urdf_spawn_cfg = UrdfFileCfg(
     merge_fixed_joints=False,
     collider_type="convex_decomposition",
     semantic_tags=[("class", "dualarm_piper")],
-    activate_contact_sensors=False,
+    activate_contact_sensors=True,
     rigid_props=RigidBodyPropertiesCfg(
         disable_gravity=False,
         max_depenetration_velocity=5.0,
@@ -67,7 +67,7 @@ usd_spawn_cfg = UsdFileCfg(
         f"{ORCHARD_ASSET}/ROBOTS/dualarm_piper/usd/"
         "piper_description_dualarm_new_textured_large_stroke.usd"
     ),
-    activate_contact_sensors=False,
+    activate_contact_sensors=True,
     rigid_props=RigidBodyPropertiesCfg(
         disable_gravity=False,
         max_depenetration_velocity=5.0,

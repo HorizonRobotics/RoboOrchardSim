@@ -68,10 +68,24 @@ class MultiEvaluator:
             for evaluator_cfg in self.cfg.evaluator_cfgs
         ]
 
-    def evaluate(self, policy_or_cfg: Any) -> MultiEvaluationResult:
-        """Evaluate one policy across every configured task YAML."""
+    def evaluate(
+        self,
+        policy_or_cfg: Any,
+        runtime: EvaluationRuntime | None = None,
+    ) -> MultiEvaluationResult:
+        """Evaluate one policy across every configured task YAML.
+
+        When ``runtime`` is given the Isaac app is owned by the caller and is
+        neither created nor closed here, so the caller can flush results
+        before shutdown.
+        """
         if not self.entries:
             return self._build_multi_evaluation_result([])
+
+        if runtime is not None:
+            return self._build_multi_evaluation_result(
+                self._evaluate_entries(policy_or_cfg, runtime=runtime)
+            )
 
         first_evaluator = self.evaluator_class(self.entries[0].evaluator_cfg)
         if hasattr(first_evaluator, "create_launcher") and hasattr(
@@ -101,6 +115,41 @@ class MultiEvaluator:
 
         return self._build_multi_evaluation_result(task_results)
 
+    def _evaluate_entries(
+        self,
+        policy_or_cfg: Any,
+        *,
+        runtime: EvaluationRuntime,
+        first_evaluator: Any = None,
+    ) -> list[TaskEvaluationResult]:
+        """Run every entry against an already-running Isaac app."""
+        task_results: list[TaskEvaluationResult] = []
+        for entry_index, entry in enumerate(self.entries):
+            evaluator = (
+                first_evaluator
+                if entry_index == 0 and first_evaluator is not None
+                else self.evaluator_class(entry.evaluator_cfg)
+            )
+            try:
+                result = self._evaluate_entry_with_runtime(
+                    entry=entry,
+                    evaluator=evaluator,
+                    policy_or_cfg=policy_or_cfg,
+                    runtime=runtime,
+                )
+            except (Exception, SystemExit) as exc:
+                if not self.cfg.continue_on_task_error:
+                    raise
+                result = TaskEvaluationResult(
+                    task_name=entry.evaluator_cfg.task_name,
+                    config_path=entry.evaluator_cfg.task_config_path,
+                    result_json_path=entry.result_json_path,
+                    error=f"{type(exc).__name__}: {exc}",
+                    user_data=dict(entry.user_data),
+                )
+            task_results.append(result)
+        return task_results
+
     def _evaluate_with_owned_runtime(
         self,
         policy_or_cfg: Any,
@@ -110,32 +159,13 @@ class MultiEvaluator:
         launcher = first_evaluator.create_launcher()
         runtime = EvaluationRuntime(sim_app=launcher.app)
         try:
-            task_results: list[TaskEvaluationResult] = []
-            for entry_index, entry in enumerate(self.entries):
-                evaluator = (
-                    first_evaluator
-                    if entry_index == 0
-                    else self.evaluator_class(entry.evaluator_cfg)
+            return self._build_multi_evaluation_result(
+                self._evaluate_entries(
+                    policy_or_cfg,
+                    runtime=runtime,
+                    first_evaluator=first_evaluator,
                 )
-                try:
-                    result = self._evaluate_entry_with_runtime(
-                        entry=entry,
-                        evaluator=evaluator,
-                        policy_or_cfg=policy_or_cfg,
-                        runtime=runtime,
-                    )
-                except (Exception, SystemExit) as exc:
-                    if not self.cfg.continue_on_task_error:
-                        raise
-                    result = TaskEvaluationResult(
-                        task_name=entry.evaluator_cfg.task_name,
-                        config_path=entry.evaluator_cfg.task_config_path,
-                        result_json_path=entry.result_json_path,
-                        error=f"{type(exc).__name__}: {exc}",
-                        user_data=dict(entry.user_data),
-                    )
-                task_results.append(result)
-            return self._build_multi_evaluation_result(task_results)
+            )
         finally:
             close = getattr(launcher, "close", None)
             if callable(close):

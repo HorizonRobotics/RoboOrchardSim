@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Isaac Sim backend package for the RoboOrchard project"
 readme = "README.md"
 authors = [{ name = "The RoboOrchard Team" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,20 +20,18 @@ dependencies = [
     "pyyaml",
     "pyvirtualdisplay",
     "scipy>=1.15.0",
-    "numpy<2.0.0,>=1.26.4",
-    "pydantic==2.9.2",
-    "torch>=2.5.1",
-    "torchvision>=0.20.1",
-    "isaacsim[all,extscache]==4.5.0",
-    "isaaclab==2.0.2",
+    "numpy>=1.26,<2.0",
+    "pydantic>=2.9",
+    "torch>=2.7",
+    "torchvision>=0.22",
+    "isaacsim[all,extscache]==5.1.0.0",
+    "isaaclab==2.3.2",
     "h5py",
     "pyarrow>=14.0.0",
-    "robo_orchard_core==0.4.0",
-    "mcap-protobuf-support"
+    "robo_orchard_core>=0.4.0,<=0.6.0",
+    "mcap-protobuf-support",
+    "foxglove_schemas_protobuf"
 ]
-
-[project.optional-dependencies]
-dwh = ["robo_orchard_dwh"]
 
 [project.scripts]
 RoboOrchard-SimLauncher = "robo_orchard_sim.launcher:main"
@@ -58,10 +56,11 @@ exclude = [
     "__pycache__",
     "build",
     "dist",
+    "patches",
 ]
 line-length = 79
 indent-width = 4
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "TID", "D", "Q", "W"]

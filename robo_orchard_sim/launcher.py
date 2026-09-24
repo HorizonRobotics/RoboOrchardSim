@@ -18,57 +18,18 @@ import argparse
 import atexit
 import importlib
 import os
-import subprocess
 import sys
-import time
+import threading
 from abc import ABCMeta, abstractmethod
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Callable, Generator
 
 # Set environment variable OMNI_KIT_ACCEPT_EULA=YES and
 # OMNI_KIT_ALLOW_ROOT=1
-os.environ["OMNI_KIT_ACCEPT_EULA"] = "YES"
-os.environ["OMNI_KIT_ALLOW_ROOT"] = "1"
+# os.environ["OMNI_KIT_ACCEPT_EULA"] = "YES"
+# os.environ["OMNI_KIT_ALLOW_ROOT"] = "1"
 
 
-def _configure_torch_cuda_arch_list() -> None:
-    """Configure Torch CUDA JIT arch for the current host.
-
-    Priority:
-    1. `ROBO_ORCHARD_TORCH_CUDA_ARCH_LIST` explicit override.
-    2. Auto-detect the current GPU compute capability and use
-       ``<capability>+PTX``.
-    """
-    override = os.environ.get("ROBO_ORCHARD_TORCH_CUDA_ARCH_LIST")
-    if override:
-        os.environ["TORCH_CUDA_ARCH_LIST"] = override
-        return
-
-    try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=compute_cap",
-                "--format=csv,noheader",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return
-
-    for line in result.stdout.splitlines():
-        capability = line.strip()
-        if not capability:
-            continue
-        os.environ["TORCH_CUDA_ARCH_LIST"] = f"{capability}+PTX"
-        return
-
-
-_configure_torch_cuda_arch_list()
-
-import torch  # isort:skip # noqa: E402
 from isaaclab.app import AppLauncher  # isort:skip # noqa: E402
 from robo_orchard_core.utils.misc import (  # isort:skip # noqa: E402
     SingletonMixin,
@@ -79,147 +40,48 @@ if TYPE_CHECKING:
     from pyvirtualdisplay.smartdisplay import SmartDisplay as Display
 
 
-def _disable_torch_jit_gpu_fusion() -> None:
-    """Disable TorchScript GPU fusion paths that trigger NVRTC failures.
-
-    Only applied on Blackwell (compute capability >= 12.0) where these paths
-    cause NVRTC failures. Older GPUs (e.g. RTX 4090, compute 8.9) benefit from
-    these optimisations and are left untouched.
-    """
-    try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=compute_cap",
-                "--format=csv,noheader",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        capability = result.stdout.strip().splitlines()[0].strip()
-        major = int(capability.split(".")[0])
-    except Exception:
-        return
-
-    if major < 12:
-        return
-
-    for name, value in (
-        ("_jit_override_can_fuse_on_gpu", False),
-        ("_jit_set_texpr_fuser_enabled", False),
-        ("_jit_set_profiling_executor", False),
-        ("_jit_set_profiling_mode", False),
-    ):
-        fn = getattr(torch._C, name, None)
-        if fn is not None:
-            fn(value)
-
-
-_disable_torch_jit_gpu_fusion()
+# In IsaacSim 5.1 headless subprocess exit, the stage-transition step inside
+# `SimulationApp.close()` (both `close_stage()` and `new_stage()` go through
+# it) blocks on an async task that never fires when the render loop is not
+# active. NVIDIA's own workaround for this upstream bug is a hard exit after a
+# grace period. See launcher.py history / plan doc for details.
+_CLOSE_APP_WATCHDOG_SECONDS = 5.0
 
 
 def close_app(
     simulation_app: "SimulationApp",
     wait_for_replicator: bool = True,  # type: ignore
 ):
-    """Close Simulation App.
+    """Close Simulation App via the official IsaacSim shutdown path.
 
-    Copy of the `close` function from `isaaclab.app.SimulationApp` but
-    preventing the crash on exit.
+    Delegates to `simulation_app.close()` (IsaacSim 5.1 fixed the historical
+    crash-on-exit issues that the earlier manual shutdown workaround was
+    written to avoid).
 
+    A daemon watchdog timer force-exits the process if the close call does
+    not return within :data:`_CLOSE_APP_WATCHDOG_SECONDS`, working around
+    the IsaacSim 5.1 headless stage-transition deadlock.
+
+    ``wait_for_replicator`` is kept for backward compatibility but no
+    longer used - replicator cleanup is handled inside SimulationApp.close.
     """
-    self = simulation_app
+    del wait_for_replicator
 
-    def is_stage_loading() -> bool:
-        import omni.usd
+    def _force_exit() -> None:
+        print(
+            "[close_app] SimulationApp.close() exceeded "
+            f"{_CLOSE_APP_WATCHDOG_SECONDS}s, forcing process exit.",
+            flush=True,
+        )
+        os._exit(0)
 
-        context = omni.usd.get_context()
-        if context is None:
-            return False
-        else:
-            _, _, loading = context.get_stage_loading_status()
-            return loading > 0
-
-    # self.close()
-    # Modify the close function to prevent crash on exit
-
-    import omni.usd
-
+    watchdog = threading.Timer(_CLOSE_APP_WATCHDOG_SECONDS, _force_exit)
+    watchdog.daemon = True
+    watchdog.start()
     try:
-        # make sure that any replicator workflows finish rendering/writing
-        import omni.replicator.core as rep
-
-        if rep.orchestrator.get_status() not in [
-            rep.orchestrator.Status.STOPPED,
-            rep.orchestrator.Status.STOPPING,
-        ]:
-            rep.orchestrator.stop()
-        if wait_for_replicator:
-            rep.orchestrator.wait_until_complete()
-            time.sleep(1.0)
-
-        # Disable capture on play to avoid replicator engaging on any new
-        # timeline events
-        rep.orchestrator.set_capture_on_play(False)
-    except Exception:
-        pass
-
-    # workaround for exit issues, clean the stage first:
-    try:
-        if omni.usd.get_context().can_close_stage():
-            omni.usd.get_context().close_stage()
-    except Exception:
-        pass
-    # omni.kit.app.get_app().update()
-    # check if exited already
-    if not self._exiting:
-        self._exiting = True
-        self._app.print_and_log("Simulation App Shutting Down")
-
-        # We are exisitng but something is still loading, wait for it to load
-        # to avoid a deadlock
-        import carb
-
-        # from isaacsim.core.utils import is_stage_loading
-        # from isaacsim.simulation_app.utils import is_stage_loading
-
-        if is_stage_loading():
-            print(
-                "   Waiting for USD resource operations to complete "
-                "(this may take a few seconds), use Ctrl-C to exit immediately"
-            )
-        while is_stage_loading():
-            self._app.update()
-
-        # Cleanup any running tracy intances so data is not lost
-        try:
-            _profiler_tracy = carb.profiler.acquire_profiler_interface(
-                plugin_name="carb.profiler-tracy.plugin"
-            )
-            if _profiler_tracy:
-                _profiler_tracy.set_capture_mask(0)
-                _profiler_tracy.end(0)
-                _profiler_tracy.shutdown()
-        except RuntimeError:
-            # Tracy plugin was not loaded, so profiler never started
-            # - skip checks.
-            pass
-
-        # Disable logging before shutdown to keep the log clean
-        # Warnings at this point don't matter as the python process
-        # is about to be terminated
-        _logging = carb.logging.acquire_logging()
-        _logging.set_level_threshold(carb.logging.LEVEL_ERROR)
-        # Disabled to prevent crashes on shutdown, terminating carb is faster
-        # self._app.shutdown()
-        # self._framework.unload_all_plugins()
-        # Force all omni module to unload on close
-        # This prevents crash on exit
-        for m in list(sys.modules.keys()):
-            if "omni" in m and m != "omni.kit.app":
-                del sys.modules[m]
-        print("Simulation App Shutdown Complete")
+        simulation_app.close()
+    finally:
+        watchdog.cancel()
 
 
 class LauncherCallback(metaclass=ABCMeta):
@@ -420,7 +282,6 @@ class SimpleIsaacAppLauncher(SingletonMixin):
     ):
         self._closed = False
         self._display = None
-        _configure_torch_cuda_arch_list()
 
         if virtual_display:
             from pyvirtualdisplay.smartdisplay import SmartDisplay as Display

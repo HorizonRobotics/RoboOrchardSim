@@ -15,7 +15,7 @@
 # permissions and limitations under the License.
 
 import deprecated
-from isaaclab.managers.observation_manager import ManagerBase as LabManagerBase
+from isaaclab.managers.manager_base import ManagerBase as LabManagerBase
 from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManager,
     ActionManagerCfg,

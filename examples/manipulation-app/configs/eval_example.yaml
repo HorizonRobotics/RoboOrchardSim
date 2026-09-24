@@ -6,19 +6,27 @@
 #       --eval-config examples/manipulation-app/configs/eval_example.yaml \
 #       --output-dir eval_result/run_001 \
 #       --gpus 0,1,2,3 \
-#       [--enable-recording]
+#       [--enable-recording --export-video]
 #
 # Paths below use ${ORCHARD_ASSET} (and any other env var) and are expanded
 # at load time. Unresolved variables raise a clear error.
+
+evaluation_id: eval_001
+team_id: team_001
 #
 # Embodiment support (which robot can run which task):
-#   - franka:  place_a2b_hard, spatial_pick_easy
-#   - piperx:  pick_category, pick_attribute, place_a2b_hard
+#   - franka:  place_a2b, spatial_pick
+#   - piperx:  pick_category, pick_attribute, place_a2b
 # Pick the policy `model_yaml` that matches the embodiment you want.
 
 policy:
-  model_type: dummy # Support "dummy", "groot", "holobrain", "motus" and "sever"
+  model_type: dummy # Support "dummy", "groot", "holobrain", "motus" and "server"
   #model_yaml: robo_orchard_sim/policy/configs/groot_franka.yaml # See robo_orchard_sim/policy/configs
+
+# Optional GPU list; command-line --gpus overrides it.
+# execution:
+#   gpus: [0, 1, 2, 3]
+# Sharding is automatic; task-level shards is an optional override.
 
 # Default values inherited by every task. Tasks may override any field here.
 defaults:
@@ -38,6 +46,19 @@ tasks:
   # task yaml at runtime. Valid values: seen | unseen_instance |
   # unseen_category. Omit to keep whatever the task yaml declares.
   # Incompatible with `batch_plan` (that plan already fixes its configs).
+
+  # pick_category_with_swap:
+  #   task_type: pick_category
+  #   split_type: seen
+  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
+  #   swap:
+  #     enabled: true
+  #     selector: random  # Optional; defaults to random.
+  #     swap_per_scene: 1  # Default; use > 1 to reuse a scene.
+
+  # Counterfactual templates (generic_object, absent_object, empty) are
+  # documented in the default pick_category task yaml.
+
   pick_category:
     task_type: pick_category
     split_type: seen
@@ -55,6 +76,7 @@ tasks:
 
   pick_attribute_color:
     task_type: pick_attribute
+    yaml: robo_orchard_sim/benchmark/manipulation/semantic_pick/configs/pick_attribute_v1.yaml
     split_type: unseen_instance
     splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
@@ -64,22 +86,15 @@ tasks:
   #   yaml: xxxxxx
   #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
-  place_a2b_hard_piperx:
-    task_type: place_a2b_hard
+  place_a2b_piperx:
+    task_type: place_a2b
+    yaml: robo_orchard_sim/benchmark/manipulation/place_a2b/configs/place_a2b_v1.yaml
     split_type: unseen_instance
     splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/dualarm_task_split.yaml
 
   # Franka splits setting
-  # You should use franka embodiment for place_a2b_hard task.
-  # place_a2b_hard_franka:
-  #   task_type: place_a2b_hard
+  # You should use franka embodiment for place_a2b task.
+  # place_a2b_franka:
+  #   task_type: place_a2b
   #   split_type: unseen_instance
   #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/franka_task_split.yaml
-
-
-  # Tasks that need multiple yamls (e.g. spatial_pick_easy) point to a batch
-  # plan JSON. `yaml` and `batch_plan` are mutually exclusive.
-  # spatial_pick_easy:
-  #   task_type: spatial_pick_easy
-  #   splits: ${ORCHARD_ASSET}/OBJECTS/splits/eval_split_v2/franka_task_split.yaml
-  #   batch_plan: ${ORCHARD_ASSET}/configs/tasks/spatial_pick_0708/sch/spatial_pick_OOD_eval_sch.json

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Data Synthesis"
+  short_description: "Guide interactive SCM batch data synthesis"
+  default_prompt: "Use $data-synthesis to guide me through an SCM batch data synthesis run."

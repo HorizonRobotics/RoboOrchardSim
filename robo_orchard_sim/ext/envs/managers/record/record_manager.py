@@ -140,7 +140,11 @@ class RecordManager(ManagerBase[EnvType_co, "RecordManagerCfg"]):
         if decision.stop and self._running:
             self._stop_recording()
 
-    def record_step(self, obs: dict[str, Any] | None) -> None:
+    def record_step(
+        self,
+        obs: dict[str, Any] | None,
+        cur_time: datetime | None = None,
+    ) -> None:
         self._last_obs = copy.deepcopy(obs) if obs is not None else None
         decision = self._controller.on_post_step(obs)
         if decision.start and not self._running:
@@ -151,8 +155,12 @@ class RecordManager(ManagerBase[EnvType_co, "RecordManagerCfg"]):
             self._record_terms(
                 self._merge_record_input(obs),
                 record_modes=("step",),
-                timestamp_fn=lambda _term_cfg: self._get_episode_timestamp(
-                    self._env.step_count
+                timestamp_fn=(
+                    lambda _term_cfg: (
+                        self._to_proto_timestamp(cur_time)
+                        if cur_time is not None
+                        else self._get_episode_timestamp(self._env.step_count)
+                    )
                 ),
                 step_filtered=True,
             )
@@ -231,8 +239,14 @@ class RecordManager(ManagerBase[EnvType_co, "RecordManagerCfg"]):
         self,
         *,
         prefix: str | None = None,
+        start_time: datetime | None = None,
     ) -> bool:
         """Manually start recording for a manual record controller.
+
+        Args:
+            prefix: Optional output directory prefix.
+            start_time: Explicit recording start time. When omitted, derive
+                it from the current episode timeline and environment step.
 
         Returns:
             True if recording starts from this call. False if recording was
@@ -249,13 +263,25 @@ class RecordManager(ManagerBase[EnvType_co, "RecordManagerCfg"]):
             )
         if self._running:
             return False
-        start_time = self._get_episode_datetime(self._env.step_count)
+        if start_time is None:
+            start_time = self._get_episode_datetime(self._env.step_count)
 
         self._start_recording(
             prefix=prefix or "",
             start_time=start_time,
         )
         self._controller.on_manual_start()
+        return True
+
+    def stop_record(self) -> bool:
+        """Manually stop recording for a manual record controller."""
+        if not isinstance(self._controller, ManualRecordController):
+            raise RuntimeError(
+                "RecordManager.stop_record() requires ManualRecordController."
+            )
+        if not self._running:
+            return False
+        self._stop_recording()
         return True
 
     def _start_recording(

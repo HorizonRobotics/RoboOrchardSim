@@ -49,6 +49,7 @@ from robo_orchard_sim.utils.config import ClassType_co
 from robo_orchard_sim.utils.env_utils import PoseAugmentor
 
 PlaceConstrain = Literal["align_dir_axis", "free", "align", "follow_ee"]
+PlaceCandidateSelection = Literal["pose_distance", "joint_distance"]
 
 
 class PlaceExecutor(BaseExecutor):
@@ -258,7 +259,7 @@ class PlaceExecutor(BaseExecutor):
             pose_with_z_aug_w = _gen_multi_pose_with_axis(
                 place_pose_w,
                 place_part_direction_w,
-                9,
+                self.cfg.axis_rotation_candidates,
             )
 
             batch_size, pose_count, _ = pose_with_z_aug_w.shape
@@ -292,6 +293,7 @@ class PlaceExecutor(BaseExecutor):
                 pose_candidate=pose_candidate_ee_w,
                 ref_pose=current_world_to_ee_pose,
                 robot_base_pose=runtime_state.robot_base_pose_w,
+                current_joint_positions=runtime_state.current_joint_positions,
                 fill_with_original_pose=False,
             )
 
@@ -329,6 +331,7 @@ class PlaceExecutor(BaseExecutor):
                 pose_candidate=place_part_pose_w,
                 ref_pose=original_pose_w,
                 robot_base_pose=runtime_state.robot_base_pose_w,
+                current_joint_positions=runtime_state.current_joint_positions,
             )
             place_target_pose[..., :3] -= env.scene.env_origins[:]
 
@@ -340,7 +343,7 @@ class PlaceExecutor(BaseExecutor):
         pose_with_z_aug_w = _gen_multi_pose_with_axis(
             place_pose_w,
             place_part_direction_w,
-            9,
+            self.cfg.axis_rotation_candidates,
         )
 
         multi_poses = torch.cat(
@@ -362,6 +365,7 @@ class PlaceExecutor(BaseExecutor):
             pose_candidate=place_part_pose_w,
             ref_pose=original_pose_w,
             robot_base_pose=runtime_state.robot_base_pose_w,
+            current_joint_positions=runtime_state.current_joint_positions,
         )
         place_target_pose[..., :3] -= env.scene.env_origins[:]
 
@@ -376,6 +380,7 @@ class PlaceExecutor(BaseExecutor):
         pose_candidate: torch.Tensor,
         ref_pose: torch.Tensor,
         robot_base_pose: torch.Tensor,
+        current_joint_positions: torch.Tensor,
         pos_weight: float = 0.5,
         rot_weight: float = 0.5,
         fill_with_original_pose: bool = True,
@@ -390,19 +395,25 @@ class PlaceExecutor(BaseExecutor):
         ik_results = resolved.planner.graph_ik(cand_robot)
         success_mask = ik_results.success
 
-        ref_robot = self._convert_pose_to_robot_base(robot_base_pose, ref_pose)
-
-        ref_pos = ref_robot[:, :3].unsqueeze(1)
-        cand_pos = pose_candidate[:, :, :3]
-        pos_diff = cand_pos - ref_pos
-        position_costs = torch.sum(pos_diff**2, dim=-1)
-
-        ref_quat = ref_pose[:, 3:].unsqueeze(1)
-        cand_quat = pose_candidate[:, :, 3:]
-        dot_product = torch.sum(ref_quat * cand_quat, dim=-1)
-        rotation_costs = 1.0 - torch.abs(dot_product)
-
-        costs = pos_weight * position_costs + rot_weight * rotation_costs
+        if self.cfg.candidate_selection == "joint_distance":
+            joint_diff = (
+                ik_results.solution - current_joint_positions.unsqueeze(1)
+            )
+            costs = torch.sum(joint_diff**2, dim=-1)
+        else:
+            ref_robot = self._convert_pose_to_robot_base(
+                robot_base_pose,
+                ref_pose,
+            )
+            ref_pos = ref_robot[:, :3].unsqueeze(1)
+            cand_pos = pose_candidate[:, :, :3]
+            pos_diff = cand_pos - ref_pos
+            position_costs = torch.sum(pos_diff**2, dim=-1)
+            ref_quat = ref_pose[:, 3:].unsqueeze(1)
+            cand_quat = pose_candidate[:, :, 3:]
+            dot_product = torch.sum(ref_quat * cand_quat, dim=-1)
+            rotation_costs = 1.0 - torch.abs(dot_product)
+            costs = pos_weight * position_costs + rot_weight * rotation_costs
 
         costs_masked = costs.clone()
         costs_masked[~success_mask] = float("inf")
@@ -703,6 +714,8 @@ class PlaceExecutorCfg(BaseExecutorCfg):
     place_object_info: ObjectInfo | None = None
     pre_place_cfg: PoseGeneratorCfg | None = None
     constrain: PlaceConstrain = "align_dir_axis"
+    candidate_selection: PlaceCandidateSelection = "pose_distance"
+    axis_rotation_candidates: int = 9
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -716,6 +729,8 @@ class PlaceExecutorCfg(BaseExecutorCfg):
                 f"Invalid constrain value: '{self.constrain}'. Must be one of "
                 "'align_dir_axis', 'free', 'align', or 'follow_ee'."
             )
+        if self.axis_rotation_candidates < 1:
+            raise ValueError("axis_rotation_candidates must be positive.")
 
 
 class PrePlaceExecutorCfg(PlaceExecutorCfg):

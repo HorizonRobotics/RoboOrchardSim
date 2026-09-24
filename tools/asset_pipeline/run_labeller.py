@@ -53,6 +53,7 @@ Requires:
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -99,7 +100,17 @@ def _add_project_paths() -> None:
 
 _add_project_paths()
 
-from asset_labeller.labeller import normalize_category_label  # noqa: E402
+from asset_labeller.labeller import (  # noqa: E402
+    ARTICULATION_SPEC_TYPE,
+    RIGID_OBJECT_SPEC_TYPE,
+    normalize_category_label,
+)
+
+SUPPORTED_SPEC_TYPES = (
+    RIGID_OBJECT_SPEC_TYPE,
+    ARTICULATION_SPEC_TYPE,
+)
+USD_EXTENSIONS = {".usd", ".usda", ".usdc", ".usdz"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -167,6 +178,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--spec-type",
+        choices=SUPPORTED_SPEC_TYPES,
+        default=RIGID_OBJECT_SPEC_TYPE,
+        help=(
+            "Asset runtime type written to URDF <extra_info>. "
+            "Use usd.articulation for articulated USD assets. "
+            "Articulations must be labelled in place so the canonical "
+            "physical USD and all sibling dependencies remain intact."
+        ),
+    )
+    parser.add_argument(
         "--no-check-connection",
         action="store_true",
         help="Do not run GPT connection check at startup.",
@@ -197,6 +219,34 @@ def asset_uuid_from_mesh_path(mesh_path: str) -> str:
     """Build a stable UUID from the asset's absolute directory path."""
     asset_abs_dir = os.path.realpath(os.path.dirname(mesh_path))
     return uuid.uuid5(uuid.NAMESPACE_URL, asset_abs_dir).hex
+
+
+def file_sha256(path: str) -> str:
+    """Return the SHA256 digest for one file."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def validate_articulation_source(mesh_path: str, output_root: str) -> None:
+    """Require an articulated USD to be labelled in its source directory."""
+    suffix = os.path.splitext(mesh_path)[1].lower()
+    if suffix not in USD_EXTENSIONS:
+        raise ValueError(
+            f"{ARTICULATION_SPEC_TYPE} requires a USD source; "
+            f"got '{mesh_path}'."
+        )
+    source_dir = os.path.realpath(os.path.dirname(mesh_path))
+    output_dir = os.path.realpath(output_root)
+    if source_dir != output_dir:
+        raise ValueError(
+            f"{ARTICULATION_SPEC_TYPE} must be labelled in place: "
+            f"output_root '{output_root}' must equal the source directory "
+            f"'{os.path.dirname(mesh_path)}'. This preserves sibling "
+            "sublayers, payloads, textures, and the canonical physical USD."
+        )
 
 
 def infer_taxonomy_from_asset_relpath(asset_relpath: str) -> tuple[str, str]:
@@ -275,10 +325,19 @@ def label_single(
     domain: str = "unknown",
     super_category: str = "unknown",
     copy_source: bool = False,
+    spec_type: str = RIGID_OBJECT_SPEC_TYPE,
 ) -> dict:
     """Run the labeller on a single asset and return a result dict."""
-    input_dir = os.path.abspath(os.path.dirname(mesh_path))
-    output_root = os.path.abspath(output_root)
+    source_digest = None
+    if spec_type == ARTICULATION_SPEC_TYPE:
+        mesh_path = os.path.realpath(mesh_path)
+        output_root = os.path.realpath(output_root)
+        validate_articulation_source(mesh_path, output_root)
+        source_digest = file_sha256(mesh_path)
+    else:
+        mesh_path = os.path.abspath(mesh_path)
+        output_root = os.path.abspath(output_root)
+    input_dir = os.path.dirname(mesh_path)
     asset_uuid = asset_uuid_from_mesh_path(mesh_path)
     if output_root != input_dir:
         for generated_name in ("mesh", "renders"):
@@ -286,14 +345,27 @@ def label_single(
             if os.path.isdir(generated_path):
                 shutil.rmtree(generated_path)
 
-    urdf_path = labeller(
-        mesh_path=mesh_path,
-        output_root=output_root,
-        category=category,
-        uuid=asset_uuid,
-        domain=domain,
-        super_category=super_category,
-    )
+    labelling_error = None
+    try:
+        urdf_path = labeller(
+            mesh_path=mesh_path,
+            output_root=output_root,
+            category=category,
+            uuid=asset_uuid,
+            domain=domain,
+            super_category=super_category,
+            spec_type=spec_type,
+        )
+    except Exception as error:
+        labelling_error = error
+
+    if source_digest is not None and file_sha256(mesh_path) != source_digest:
+        raise RuntimeError(
+            f"Articulation labelling modified the canonical source USD: "
+            f"'{mesh_path}'."
+        ) from labelling_error
+    if labelling_error is not None:
+        raise labelling_error
 
     if copy_source and os.path.isfile(mesh_path):
         dest = os.path.join(output_root, os.path.basename(mesh_path))
@@ -317,6 +389,7 @@ def label_single(
         "urdf": urdf_path,
         "attrs": dict(labeller.estimated_attrs),
         "uuid": asset_uuid,
+        "spec_type": spec_type,
         "status": "ok",
     }
 
@@ -429,6 +502,7 @@ def main() -> None:
             normalize_category_label(args.category),
             *infer_taxonomy_from_asset_dir(os.path.dirname(mesh_path)),
             copy_source=copy_source,
+            spec_type=args.spec_type,
         )
         print(f"[AssetLabeller] Generated URDF: {result['urdf']}")
         print(f"[AssetLabeller] Attributes: {result['attrs']}")
@@ -465,6 +539,7 @@ def main() -> None:
                 domain=domain,
                 super_category=super_category,
                 copy_source=copy_source,
+                spec_type=args.spec_type,
             )
             all_results[asset_name] = result
             ok += 1

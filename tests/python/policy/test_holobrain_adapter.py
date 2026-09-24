@@ -282,6 +282,18 @@ def test_build_model_input_missing_instruction_raises_value_error() -> None:
         adapter.build_model_input(obs)
 
 
+def test_build_model_input_empty_instruction_returns_empty_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = HolobrainAdapter(embodiment_type="dualarm_piper")
+    _install_fake_holobrain_processor(monkeypatch)
+    obs = _build_obs().model_copy(update={"instruction": ""})
+
+    model_input = adapter.build_model_input(obs)
+
+    assert model_input.instruction == ""
+
+
 def test_build_model_input_single_arm_observation_returns_expected_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -35,6 +35,7 @@ from robo_orchard_sim.task_components.trajs_gen.pose_generator import (
 
 if TYPE_CHECKING:
     from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+    from robo_orchard_sim.task_components.role_registry import RoleRegistry
     from robo_orchard_sim.task_components.trajs_gen.base_executor import (
         BaseExecutorCfg,
     )
@@ -45,13 +46,21 @@ _PANDA_ROBOT_NAMES = {"franka_panda", "panda_droid"}
 
 def build_task_atomic_action_plan(
     orchard_env: "OrchardEnv",
+    *,
+    role_registry: RoleRegistry | None = None,
 ) -> list[BaseExecutorCfg]:
     """Build the default pick-and-move atomic action plan."""
+    task = cast(Any, orchard_env.task)
+    pick_obj = (
+        task.pick_object.scene_name
+        if role_registry is None
+        else role_registry.resolve_one("pick").scene_name
+    )
     robot_name = cast(Any, orchard_env.embodiment).name
     if robot_name in _DUALARM_PIPER_ROBOT_NAMES:
-        return _build_dualarm_piper_action_plan(orchard_env)
+        return _build_dualarm_piper_action_plan(orchard_env, pick_obj=pick_obj)
     if robot_name in _PANDA_ROBOT_NAMES:
-        return _build_franka_panda_action_plan(orchard_env)
+        return _build_franka_panda_action_plan(orchard_env, pick_obj=pick_obj)
 
     robot_infos = orchard_env.embodiment.get_robot_info_cfgs()
     available = ", ".join(sorted(robot_infos))
@@ -63,10 +72,10 @@ def build_task_atomic_action_plan(
 
 def _build_dualarm_piper_action_plan(
     orchard_env: "OrchardEnv",
+    *,
+    pick_obj: str,
 ) -> list[BaseExecutorCfg]:
     """Build the dual-arm Piper semantic-pick action plan."""
-    task = cast(Any, orchard_env.task)
-    pick_obj = task.pick_object.scene_name
     left_arm = orchard_env.embodiment.get_robot_info_cfg("left_arm")
     right_arm = orchard_env.embodiment.get_robot_info_cfg("right_arm")
 
@@ -111,10 +120,10 @@ def _build_dualarm_piper_action_plan(
 
 def _build_franka_panda_action_plan(
     orchard_env: "OrchardEnv",
+    *,
+    pick_obj: str,
 ) -> list[BaseExecutorCfg]:
     """Build the Franka Panda semantic-pick action plan."""
-    task = cast(Any, orchard_env.task)
-    pick_obj = task.pick_object.scene_name
     arm = orchard_env.embodiment.get_robot_info_cfg("main_arm")
 
     return [

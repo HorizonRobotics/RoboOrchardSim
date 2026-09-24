@@ -88,7 +88,7 @@ _FRANKA_PLANNER = ArticulationJointCuroboTrajPlannerCfg(
                 "panda_finger_joint2": 0.08,
             },
             extra_collision_spheres={"attached_object": 50},
-            collision_spheres="/3rdparty/curobo/src/curobo/content/configs/robot/spheres/franka_mesh.yml",  # noqa: E501
+            collision_spheres="spheres/franka_mesh.yml",
             self_collision_ignore={
                 "panda_link0": ["panda_link1", "panda_link2"],
                 "panda_link1": [
@@ -207,6 +207,10 @@ FRANKA_PANDA_ROBOT_INFO_CFGS = {
             gripper_joint_names=(
                 "panda_finger_joint1",
                 "panda_finger_joint2",
+            ),
+            gripper_body_names=(
+                "panda_leftfinger",
+                "panda_rightfinger",
             ),
             body_names=(
                 "panda_link0",

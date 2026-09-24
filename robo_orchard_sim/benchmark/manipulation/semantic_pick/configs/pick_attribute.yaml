@@ -55,9 +55,9 @@ task:
 
 asset_configs:
   pick:
-    split: unseen_instance
+    split: seen
     filter:
-      tags: [is_graspable]
+      tags: [has_interactive_poses]
     prim_name: pick_object
 
   distractors:

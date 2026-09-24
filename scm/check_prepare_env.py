@@ -7,19 +7,25 @@ import sys
 from packaging.version import Version
 
 BUILD_DEPS_TORCH = {
-    "torch": ("2.5.1", "2.5.1+cu118"),
-    "torchvision": ("0.20.1", "0.20.1+cu118"),
+    "torch": ("2.7.0", "2.7.0+cu128"),
+    "torchvision": ("0.22.0", "0.22.0+cu128"),
 }
 
 BUILD_DEPS_ISAAC = {
-    "isaacsim": ("4.5.0.0", None),
-    "isaacsim-extscache-physics": ("4.5.0.0", None),
-    "isaacsim-extscache-kit": ("4.5.0.0", None),
-    "isaacsim-extscache-kit-sdk": ("4.5.0.0", None),
-    "isaacsim-replicator": ("4.5.0.0", None),
-    "isaacsim-app": ("4.5.0.0", None),
-    "isaaclab": ("2.0.2", None),
+    "isaacsim": ("5.1.0.0", None),
+    "isaacsim-extscache-physics": ("5.1.0.0", None),
+    "isaacsim-extscache-kit": ("5.1.0.0", None),
+    "isaacsim-extscache-kit-sdk": ("5.1.0.0", None),
+    "isaacsim-replicator": ("5.1.0.0", None),
+    "isaacsim-app": ("5.1.0.0", None),
+    "isaaclab": ("2.3.2", None),
 }
+
+PIP_INDEX_URL = "https://pypi.org/simple"
+PIP_EXTRA_INDEX_URLS = (
+    "https://download.pytorch.org/whl/cu128",
+    "https://pypi.nvidia.com/simple",
+)
 
 
 @functools.lru_cache(maxsize=None)
@@ -78,12 +84,11 @@ def ensure_package(
         "install",
         f"{package_name}=={install_version}",
         "-i",
-        "https://art-internal.hobot.cc/artifactory/api/pypi/pypi/simple",
-        "--timeout",
-        "600",
-        "--retries",
-        "3",
+        PIP_INDEX_URL,
     ]
+    for extra_index in PIP_EXTRA_INDEX_URLS:
+        cmd.extend(["--extra-index-url", extra_index])
+    cmd.extend(["--timeout", "600", "--retries", "3"])
     if user:
         cmd.append("--user")
     subprocess.check_call(cmd)
@@ -94,6 +99,13 @@ if __name__ == "__main__":
     build_deps = {}
     build_deps.update(BUILD_DEPS_TORCH)
     build_deps.update(BUILD_DEPS_ISAAC)
+
+    py_version: tuple[int, int] = sys.version_info[:2]
+    if py_version < (3, 11):
+        raise RuntimeError(
+            f"Python >= 3.11 is required for IsaacSim 5.1 / IsaacLab 2.3.2; "
+            f"got {py_version[0]}.{py_version[1]}."
+        )
 
     for pkg, (version, to_install) in build_deps.items():
         ensure_package(pkg, version, to_install, args.user)

@@ -14,19 +14,19 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-"""End-to-end smoke: resolver output matches PlaceA2BTaskAssets shape.
+"""End-to-end smoke: resolver output is shaped the way a task expects.
 
-We do NOT construct PlaceA2BTaskAssets itself - that import pulls
-in Isaac Sim via ObjectSpec's transitive deps. Instead we verify the
-resolver output dict has exactly the keys PlaceA2BTaskAssets expects
-(pick, place, distractors), with the right value types.
+We do NOT construct TaskAssets itself - that import pulls in Isaac Sim
+via ObjectSpec's transitive deps. Instead we verify the resolver output
+dict is keyed by the role names the task YAML declared, with the right
+value types.
 """
 
 from __future__ import annotations
 
 
 def test_resolver_output_matches_place_a2b_assets_shape(mini_resolver):
-    """Resolver output is structurally compatible with PlaceA2BTaskAssets."""
+    """Resolver output is keyed by the roles the YAML declared."""
     asset_configs = {
         "pick": {
             "filter": {"tags": ["graspable"], "category": "apple"},
@@ -48,7 +48,7 @@ def test_resolver_output_matches_place_a2b_assets_shape(mini_resolver):
 
     result = mini_resolver.resolve(asset_configs)
 
-    # Keys exactly match PlaceA2BTaskAssets fields
+    # Keys are the YAML asset_configs keys, verbatim
     assert set(result.keys()) == {"pick", "place", "distractors"}
 
     # pick / place are single specs
@@ -65,7 +65,7 @@ def test_resolver_output_matches_place_a2b_assets_shape(mini_resolver):
 def test_resolver_output_without_distractors_matches_required_only(
     mini_resolver,
 ):
-    """PlaceA2BTaskAssets allows distractors=None; resolver can omit it."""
+    """Clutter is optional: a YAML may declare only the roles."""
     asset_configs = {
         "pick": {
             "filter": {"tags": ["graspable"], "category": "apple"},

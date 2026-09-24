@@ -22,8 +22,8 @@ import pytest
 from pydantic import ValidationError
 
 from robo_orchard_sim.orchard_env.assets.object_spec import RigidObjectSpec
+from robo_orchard_sim.orchard_env.assets.task_assets import TaskAssets
 from robo_orchard_sim.orchard_env.task_templates.pick_task import (
-    PickAssets,
     PickTask,
     PickTaskParams,
 )
@@ -41,7 +41,7 @@ def _obj(name: str) -> RigidObjectSpec:
 
 def test_pick_task_get_event_cfg_light_reset_disabled_omits_light_term():
     cfg = PickTask(
-        assets=PickAssets(pick=_obj("pick_object")),
+        assets=TaskAssets(role_candidates={"pick": [_obj("pick_object")]}),
         params=PickTaskParams(),
     ).get_event_cfg()
 
@@ -51,7 +51,7 @@ def test_pick_task_get_event_cfg_light_reset_disabled_omits_light_term():
 
 def test_pick_task_get_event_cfg_light_reset_enabled_adds_light_term():
     cfg = PickTask(
-        assets=PickAssets(pick=_obj("pick_object")),
+        assets=TaskAssets(role_candidates={"pick": [_obj("pick_object")]}),
         params=PickTaskParams(
             light_reset=TaskLightResetConfig(
                 enabled=True,
@@ -76,7 +76,7 @@ def test_pick_task_get_event_cfg_light_reset_enabled_adds_light_term():
 
 def test_pick_task_get_event_cfg_texture_reset_enabled_adds_texture_term():
     cfg = PickTask(
-        assets=PickAssets(pick=_obj("pick_object")),
+        assets=TaskAssets(role_candidates={"pick": [_obj("pick_object")]}),
         params=PickTaskParams(
             texture_reset=TaskTextureResetConfig(
                 enabled=True,
@@ -141,28 +141,27 @@ def test_pick_task_params_light_reset_dict_parses_nested_config():
     assert isinstance(params.texture_reset, TaskTextureResetConfig)
     assert params.texture_reset.enabled is True
     assert params.texture_reset.preset == "default_table_texture"
-    assert params.texture_reset.asset_names == ["background/table"]
+    assert params.texture_reset.asset_names == [
+        "background/table",
+        "background/workbench",
+    ]
     assert params.texture_reset.variant_index_range == [0, 3]
 
 
-def test_pick_task_params_legacy_flat_pose_fields_are_ignored():
-    params = PickTaskParams(
-        mode="drop",
-        min_separation=0.07,
-        pose_range={
-            "x": (0.1, 0.2),
-            "y": (-0.2, 0.4),
-            "z": (0.01, 0.02),
-            "roll": (0.0, 0.1),
-            "pitch": (-0.1, 0.1),
-            "yaw": (-1.0, 1.5),
-        },
-    )
-
-    assert params.pose_reset == TaskPoseResetConfig()
-    assert not hasattr(params, "mode")
-    assert not hasattr(params, "min_separation")
-    assert not hasattr(params, "pose_range")
+def test_pick_task_params_legacy_flat_pose_fields_raise_validation_error():
+    with pytest.raises(ValidationError):
+        PickTaskParams(
+            mode="drop",
+            min_separation=0.07,
+            pose_range={
+                "x": (0.1, 0.2),
+                "y": (-0.2, 0.4),
+                "z": (0.01, 0.02),
+                "roll": (0.0, 0.1),
+                "pitch": (-0.1, 0.1),
+                "yaw": (-1.0, 1.5),
+            },
+        )
 
 
 def test_pick_task_params_light_reset_missing_asset_names_raises_error():

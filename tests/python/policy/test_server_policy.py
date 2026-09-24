@@ -22,6 +22,7 @@ import json
 import struct
 import subprocess
 import sys
+import threading
 import types
 from pathlib import Path
 from unittest.mock import Mock
@@ -758,3 +759,61 @@ def test_policy_websocket_server_handle_canonical_obs_applies_instruction(
     assert len(policy.observations) == 1
     assert isinstance(policy.observations[0], CanonicalPolicyInput)
     assert policy.observations[0].instruction == "updated instruction"
+
+
+def test_policy_server_slow_inference_keeps_event_loop_responsive() -> None:
+    server_module = load_server_module()
+    inference_started = threading.Event()
+    allow_inference = threading.Event()
+
+    class _SlowPolicy:
+        def act(self, observations):
+            del observations
+            inference_started.set()
+            allow_inference.wait(timeout=1.0)
+            return UnifiedJointCommand.from_specs(
+                torch.tensor([[1.0]], dtype=torch.float32),
+                ["joint1"],
+            )
+
+    class _FakeWebsocket:
+        def __init__(self, message: bytes) -> None:
+            self.remote_address = ("127.0.0.1", 8765)
+            self._messages = [message]
+            self.sent = []
+
+        def __aiter__(self):
+            self._iter = iter(self._messages)
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+        async def send(self, message: bytes) -> None:
+            self.sent.append(message)
+
+    server = server_module.PolicyWebsocketServer(policy=_SlowPolicy())
+    websocket = _FakeWebsocket(
+        encode_binary_message_for_test(
+            {
+                "type": "act",
+                "obs_data": extract_canonical_obs_data_for_test(
+                    build_single_arm_canonical_observation()
+                ),
+                "instruction": "test instruction",
+            }
+        )
+    )
+
+    async def run_request() -> bool:
+        request_task = asyncio.create_task(server.handle_client(websocket))
+        started = await asyncio.to_thread(inference_started.wait, 0.5)
+        event_loop_remained_responsive = started and not request_task.done()
+        allow_inference.set()
+        await request_task
+        return event_loop_remained_responsive
+
+    assert asyncio.run(run_request())

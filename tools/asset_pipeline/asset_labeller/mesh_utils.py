@@ -555,7 +555,10 @@ def _extract_usd_mesh_data(prim, meters_per_unit: float, xform_cache):
         xf = xform_cache.GetLocalToWorldTransform(prim)
         xf_np = np.array(xf, dtype=np.float64)
         ones = np.ones((vertices.shape[0], 1), dtype=np.float64)
-        vertices = (np.concatenate([vertices, ones], axis=1) @ xf_np.T)[:, :3]
+        # Gf.Matrix4d uses row-vector convention: translation is stored in
+        # the last row and points transform as ``p_h @ M``. Transposing the
+        # matrix moves articulated child-link meshes to incorrect locations.
+        vertices = (np.concatenate([vertices, ones], axis=1) @ xf_np)[:, :3]
     except Exception:
         pass
 

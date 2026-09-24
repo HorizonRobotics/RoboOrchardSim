@@ -1,0 +1,96 @@
+# syntax=docker/dockerfile:1.6
+# HoloBrain overlay for the existing Isaac Sim 5.1 / IsaacLab 2.3.2 image.
+#
+# Build with HoloBrain dependencies:
+#   docker build -f docker/Dockerfile.holobrain \
+#     --build-arg INSTALL_HOLOBRAIN=1 \
+#     -t hub.hobot.cc/auto/robot_lab_base:ubuntu22.04-py3.11-cuda12.8-isaacsim5.1-isaac_lab-v2.3.2-internal-v0.1.1-holobrain .
+
+ARG BASE_IMAGE=hub.hobot.cc/auto/robot_lab_base:ubuntu22.04-py3.11-cuda12.8-isaacsim5.1-isaac_lab-v2.3.2-internal-v0.1.1
+FROM ${BASE_IMAGE}
+
+ARG INSTALL_HOLOBRAIN=0
+
+# The venv inherits IsaacSim/IsaacLab/Torch from the base image.  It is not
+# placed on the global PATH: ordinary Isaac development must keep using the
+# base image's Python.  HoloBrain evaluation can invoke HOLOBRAIN_PYTHON.
+ENV PYTHONUNBUFFERED=1
+
+# These are the two already-validated native artifacts for the fixed
+# Torch 2.7.0+cu128 / CPython 3.11 environment.  They are build inputs only;
+# the dependency versions and installation commands remain explicit below.
+COPY .cache/holobrain-build/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl \
+     /tmp/holobrain-artifacts/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
+COPY .cache/holobrain-build/wheelhouse/pytorch3d-0.7.8-cp311-cp311-linux_x86_64.whl \
+     /tmp/holobrain-artifacts/pytorch3d-0.7.8-cp311-cp311-linux_x86_64.whl
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    set -eux; \
+    case "${INSTALL_HOLOBRAIN}" in \
+        0) echo "HoloBrain dependencies disabled" ;; \
+        1) \
+            python3 -m pip list --format=freeze | sed -n '/==/p' \
+                > /tmp/isaac-base-constraints.txt; \
+            python3 -m venv --system-site-packages /opt/holobrain-venv; \
+            export PYTHONNOUSERSITE=1; \
+            export PIP_INDEX_URL=https://art-internal.hobot.cc/artifactory/api/pypi/pypi/simple; \
+            export PIP_EXTRA_INDEX_URL=https://pypi.hobot.cc/hobot-local/simple; \
+            export FORCE_CUDA=1; \
+            export TORCH_CUDA_ARCH_LIST=12.0; \
+            export MAX_JOBS=8; \
+            VENV_PY=/opt/holobrain-venv/bin/python; \
+            ${VENV_PY} -m pip install \
+                --constraint /tmp/isaac-base-constraints.txt \
+                "setuptools==80.9.0" \
+                "wheel==0.42.0" \
+                "accelerate==1.14.0" \
+                "safetensors==0.8.0" \
+                "Deprecated==1.3.1" \
+                "timeout-decorator==0.5.0" \
+                "huggingface-hub==0.36.2" \
+                "cloudpickle==3.1.2" \
+                "pyzstd==0.16.2" \
+                "websockets==12.0" \
+                "torchmetrics==1.8.2" \
+                "datasets==4.0.0" \
+                "SQLAlchemy==2.0.52" \
+                "duckdb-engine==0.17.0" \
+                "duckdb==1.3.2" \
+                "fsspec==2024.6.1" \
+                "ffmpeg-python==0.2.0" \
+                "sortedcontainers==2.4.0" \
+                "numpydantic==1.8.1" \
+                "click==8.1.7" \
+                "pycparser==3.0" \
+                "ray[default]==2.52.1" \
+                "pytorch-kinematics==0.10.0" \
+                "diffusers==0.35.2" \
+                "lmdb==2.3.0" \
+                "h5py==3.16.0" \
+                "terminaltables==3.1.10" \
+                "Flask==3.1.3" \
+                "gevent==26.8.0" \
+                "imageio==2.37.0" \
+                "imageio-ffmpeg==0.6.0" \
+                "transformers==4.57.6" \
+                "fvcore==0.1.5.post20221221" \
+                "iopath==0.1.10" \
+                "portalocker==2.7.0"; \
+            ${VENV_PY} -m pip install \
+                --no-build-isolation --no-deps \
+                /tmp/holobrain-artifacts/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl; \
+            echo "cd1a45ebfc1731a13e55ad68e0c9ad92390ddfffba306f9222be67c6d5a805af  /tmp/holobrain-artifacts/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl" \
+                | sha256sum -c -; \
+            echo "9e1f9bd5dc33442cefc8dc4f0e672b54e8db9d72d2e3f2bbd1d04dae550fa188  /tmp/holobrain-artifacts/pytorch3d-0.7.8-cp311-cp311-linux_x86_64.whl" \
+                | sha256sum -c -; \
+            ${VENV_PY} -m pip install --no-deps \
+                /tmp/holobrain-artifacts/pytorch3d-0.7.8-cp311-cp311-linux_x86_64.whl; \
+            ${VENV_PY} -c "import torch, torchvision, transformers, flash_attn, flash_attn_2_cuda, pytorch3d._C; from importlib.metadata import version; assert torch.__version__ == '2.7.0+cu128', torch.__version__; assert torchvision.__version__ == '0.22.0+cu128', torchvision.__version__; assert torch.version.cuda == '12.8', torch.version.cuda; assert transformers.__version__ == '4.57.6', transformers.__version__; assert version('flash-attn') == '2.8.3', version('flash-attn'); assert version('pytorch3d') == '0.7.8', version('pytorch3d'); print('HoloBrain dependency smoke test: OK'); print(f'Torch: {torch.__version__}, CUDA: {torch.version.cuda}'); print(f'FlashAttention: {version(\"flash-attn\")}'); print(f'PyTorch3D: {version(\"pytorch3d\")}')"; \
+            rm -rf /tmp/isaac-base-constraints.txt /tmp/holobrain-artifacts; \
+            ;; \
+        *) echo "INSTALL_HOLOBRAIN must be 0 or 1" >&2; exit 2 ;; \
+    esac
+
+WORKDIR /workspace
+ENV HOLOBRAIN_PYTHON=/opt/holobrain-venv/bin/python
+ENTRYPOINT ["/bin/bash"]

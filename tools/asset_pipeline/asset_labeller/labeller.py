@@ -20,6 +20,7 @@ Uses GPT vision models to estimate object properties from rendered
 views, and generates a URDF file with mesh, physics, and metadata.
 """
 
+from __future__ import annotations
 import logging
 import os
 import re
@@ -28,6 +29,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from difflib import get_close_matches
 from pathlib import Path
+from typing import TYPE_CHECKING
 from xml.dom.minidom import parseString
 
 import numpy as np
@@ -38,7 +40,6 @@ from asset_labeller.compute_aabb import (
     write_aabb_to_urdf,
 )
 from asset_labeller.convex_decomposer import decompose_convex_mesh
-from asset_labeller.gpt_client import GPTClient
 from asset_labeller.mesh_utils import (
     audit_export_textures,
     export_usd_to_obj_with_materials,
@@ -47,12 +48,22 @@ from asset_labeller.mesh_utils import (
 )
 from asset_labeller.renderer import render_views, select_views
 
+if TYPE_CHECKING:
+    from asset_labeller.gpt_client import GPTClient
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+RIGID_OBJECT_SPEC_TYPE = "usd.rigid_object"
+ARTICULATION_SPEC_TYPE = "usd.articulation"
+
 VERSION = "v0.1.0"
 
-__all__ = ["AssetLabeller"]
+__all__ = [
+    "ARTICULATION_SPEC_TYPE",
+    "RIGID_OBJECT_SPEC_TYPE",
+    "AssetLabeller",
+]
 
 
 SHAPE_CHOICES = [
@@ -159,6 +170,7 @@ URDF_TEMPLATE = """
             <version>"0.0.0"</version>
             <generate_time>"-1"</generate_time>
             <gs_model>""</gs_model>
+            <spec_type>usd.rigid_object</spec_type>
         </extra_info>
     </link>
 </robot>
@@ -340,6 +352,7 @@ class AssetLabeller:
         "version",
         "generate_time",
         "gs_model",
+        "spec_type",
     ]
 
     def __init__(

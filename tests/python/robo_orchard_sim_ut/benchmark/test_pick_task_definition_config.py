@@ -56,12 +56,6 @@ class FakeResolver:
             "pick_attribute",
             "color",
         ),
-        (
-            pick_env.PickDisambiguationTaskDefinition,
-            "pick_disambiguation.yaml",
-            "pick_default",
-            None,
-        ),
     ],
 )
 def test_pick_task_definition_yaml_uses_expected_instruction_template(
@@ -93,6 +87,21 @@ def test_pick_task_definition_yaml_uses_expected_instruction_template(
     )
 
 
+def test_pick_disambiguation_task_definition_is_removed() -> None:
+    config_path = (
+        Path(__file__).resolve().parents[4]
+        / "robo_orchard_sim"
+        / "benchmark"
+        / "manipulation"
+        / "semantic_pick"
+        / "configs"
+        / "pick_disambiguation.yaml"
+    )
+
+    assert not hasattr(pick_env, "PickDisambiguationTaskDefinition")
+    assert not config_path.exists()
+
+
 def test_pick_task_definition_build_assigns_instruction_to_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -117,14 +126,6 @@ def test_pick_task_definition_build_assigns_instruction_to_task(
         "robo_orchard_sim.orchard_env.task_templates.pick_task"
     )
 
-    class FakePickAssets:
-        def __init__(self, **resolved):
-            self.resolved = resolved
-
-        @classmethod
-        def from_resolved(cls, resolved):
-            return cls(**resolved)
-
     class FakePickTaskParams:
         def __init__(self, **params):
             self.params = params
@@ -135,7 +136,6 @@ def test_pick_task_definition_build_assigns_instruction_to_task(
             self.params = params
             self.instruction = instruction
 
-    fake_pick_task_module.PickAssets = FakePickAssets
     fake_pick_task_module.PickTask = FakePickTask
     fake_pick_task_module.PickTaskParams = FakePickTaskParams
     monkeypatch.setitem(

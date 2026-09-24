@@ -17,6 +17,8 @@
 """Embodiment provider for the Panda Droid robot."""
 
 from __future__ import annotations
+from collections.abc import Mapping
+from typing import Any
 
 from robo_orchard_core.envs.managers.actions.action_manager import (
     ActionManagerCfg,
@@ -86,25 +88,27 @@ class PandaDroidEmbodiment(EmbodimentBase):
     GRIPPER_JOINT_NAMES: tuple[str, ...] = ("finger_joint",)
     """Joint names that are excluded from init-pose noise."""
 
-    @staticmethod
-    def _get_camera_asset_map() -> GroupAssetCfg:
+    def _get_camera_asset_map(self) -> GroupAssetCfg:
         """Build the camera asset mapping used across the embodiment."""
+        from robo_orchard_sim.ext.models.sensors.realsense import CameraOffset
         from robo_orchard_sim.orchard_env.embodiments.panda_droid.camera_cfgs import (  # noqa: E501
             PANDA_DROID_EXT1_CAMERA_CFG,
             PANDA_DROID_EXT2_CAMERA_CFG,
             PANDA_DROID_WRIST_CAMERA_CFG,
         )
 
-        return {
-            "ext1_camera": PANDA_DROID_EXT1_CAMERA_CFG,
-            "ext2_camera": PANDA_DROID_EXT2_CAMERA_CFG,
-            "wrist_camera": PANDA_DROID_WRIST_CAMERA_CFG,
-        }
+        camera_assets = GroupAssetCfg(
+            ext1_camera=PANDA_DROID_EXT1_CAMERA_CFG.model_copy(deep=True),
+            ext2_camera=PANDA_DROID_EXT2_CAMERA_CFG.model_copy(deep=True),
+            wrist_camera=PANDA_DROID_WRIST_CAMERA_CFG.model_copy(deep=True),
+        )
+        for camera_name, offset in self.camera_offsets.items():
+            camera_assets[camera_name].offset = CameraOffset(**offset)
+        return camera_assets
 
-    @staticmethod
-    def _get_camera_assets() -> GroupAssetCfg:
+    def _get_camera_assets(self) -> GroupAssetCfg:
         """Build fresh camera cfgs for each scene assembly."""
-        return GroupAssetCfg(**PandaDroidEmbodiment._get_camera_asset_map())
+        return GroupAssetCfg(**self._get_camera_asset_map())
 
     @staticmethod
     def _generate_robot_tf_terms(
@@ -152,8 +156,37 @@ class PandaDroidEmbodiment(EmbodimentBase):
         }
 
     @classmethod
-    def _generate_camera_tf_terms(
+    def _generate_base_link_world_tf_term(
         cls, robot_scene_name: str
+    ) -> dict[str, FrameTransformTermCfg]:
+        """Join the object and robot TF trees.
+
+        World -> panda_link0, so scene objects (parented to world) and
+        the robot/camera TF tree (parented to panda_link0) connect into
+        one tree for visualization.
+        """
+        return {
+            "base_link_world_tf": FrameTransformTermCfg(
+                child_asset_cfg=SceneEntityCfg(
+                    name=robot_scene_name, body_names=["panda_link0"]
+                ),
+                world_parent=True,
+                bidirectional=False,
+            )
+        }
+
+    @staticmethod
+    def _generate_base_link_world_tf_record_term() -> dict[str, McapTFTermCfg]:
+        return {
+            "base_link_world_tf_term": McapTFTermCfg(
+                topic="/observation/robot_state/base_link/tf",
+                fps=ACTION_FPS,
+                key="/tf/base_link_world_tf",
+            )
+        }
+
+    def _generate_camera_tf_terms(
+        self, robot_scene_name: str
     ) -> dict[str, FrameTransformTermCfg]:
         camera_parent_body_names = {
             "ext1_camera": "panda_link0",
@@ -168,7 +201,7 @@ class PandaDroidEmbodiment(EmbodimentBase):
                 ),
                 child_asset_cfg=SceneEntityCfg(name=f"cameras/{camera_name}"),
             )
-            for camera_name in cls._get_camera_asset_map()
+            for camera_name in self._get_camera_asset_map()
         }
 
     def _generate_camera_tf_record_terms(self) -> dict[str, McapTFTermCfg]:
@@ -230,6 +263,7 @@ class PandaDroidEmbodiment(EmbodimentBase):
         enable_cameras: bool = True,
         init_joint_noise_std: float = 0.0,
         init_joint_pos: dict[str, float] | None = None,
+        camera_offsets: Mapping[str, Mapping[str, Any]] | None = None,
     ):
         if init_joint_noise_std < 0.0:
             raise ValueError(
@@ -252,6 +286,20 @@ class PandaDroidEmbodiment(EmbodimentBase):
             self.init_joint_pos = dict(init_joint_pos)
         else:
             self.init_joint_pos = None
+        self.camera_offsets = {
+            camera_name: dict(offset)
+            for camera_name, offset in (camera_offsets or {}).items()
+        }
+        unknown_cameras = set(self.camera_offsets) - {
+            "ext1_camera",
+            "ext2_camera",
+            "wrist_camera",
+        }
+        if unknown_cameras:
+            raise ValueError(
+                "Unknown panda_droid camera offset override(s): "
+                f"{sorted(unknown_cameras)}"
+            )
 
     def get_assets_cfg(self) -> dict[str, GroupAssetCfg]:
         """Return robot and optionally camera assets."""
@@ -332,9 +380,14 @@ class PandaDroidEmbodiment(EmbodimentBase):
                 }
             ),
             "/tf": ObservationGroupCfg(
-                terms=self._generate_robot_tf_terms(
-                    robot_scene_name=robot_scene_name,
-                )
+                terms={
+                    **self._generate_robot_tf_terms(
+                        robot_scene_name=robot_scene_name,
+                    ),
+                    **self._generate_base_link_world_tf_term(
+                        robot_scene_name=robot_scene_name
+                    ),
+                }
             ),
         }
         if self.enable_cameras:
@@ -436,6 +489,7 @@ class PandaDroidEmbodiment(EmbodimentBase):
                 position_key="/last_action/robot_gripper_control",
             ),
             **self._generate_robot_tf_record_terms(),
+            **self._generate_base_link_world_tf_record_term(),
         }
 
         if not self.enable_cameras:

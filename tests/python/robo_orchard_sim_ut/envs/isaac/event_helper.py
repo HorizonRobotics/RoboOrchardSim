@@ -56,7 +56,7 @@ class ResetEventTermBase(
 
 
 class ResetEventTermCfg(
-    EventTermBaseCfg[ResetEventTermBase[IsaacEnvType_co], LabSceneEntityCfg]
+    EventTermBaseCfg[ResetEventTermBase, LabSceneEntityCfg]
 ):
     """You should define any additional configuration parameters here."""
 

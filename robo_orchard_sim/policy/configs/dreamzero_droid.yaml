@@ -1,0 +1,9 @@
+policy: dreamzero
+host: 10.12.121.165
+port: 8000
+logging_tag: dreamzero-droid
+valid_action_step: null
+camera_mapping:
+  static_camera: ext1_camera
+  left_hand_camera: ext2_camera
+  right_hand_camera: wrist_camera

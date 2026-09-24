@@ -18,16 +18,22 @@ from collections.abc import Sequence
 
 import torch
 from isaaclab.assets.articulation import Articulation
-from robo_orchard_core.envs.manager_based_env import ResetEvent
 from robo_orchard_core.envs.managers.events.event_term import (
     EventTermBase,
     EventTermBaseCfg,
 )
 
+from robo_orchard_sim.asset_manager.metadata import get_joint
+from robo_orchard_sim.asset_manager.metadata.joint_operations import (
+    OperationStartMode,
+    get_operation_start_position,
+)
 from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg as LabSceneEntityCfg,
 )
 from robo_orchard_sim.ext.envs.env_base import IsaacEnvType_co
+from robo_orchard_sim.ext.envs.manager_based_env import ResetEvent
+from robo_orchard_sim.task_components.role_registry import TargetRef
 from robo_orchard_sim.utils.config import ClassType_co
 
 __all__ = ["JointStateResetTerm", "JointStateResetTermCfg"]
@@ -83,6 +89,17 @@ class JointStateResetTerm(
     def __call__(self, event_msg: ResetEvent) -> None:
         """Sample noisy joint positions and apply them to selected assets."""
         env_ids = self._resolve_env_ids(event_msg)
+        operation_target = self._resolve_operation_target(event_msg)
+        if (
+            operation_target is not None
+            and operation_target.scene_name not in self._asset_display_names
+        ):
+            raise ValueError(
+                f"Role '{self._cfg.operation_role_id}' targets "
+                f"'{operation_target.scene_name}', which is not configured "
+                "for this joint reset term. Configured assets: "
+                f"{self._asset_display_names}."
+            )
 
         for articulation, std_vec, override, display_name in zip(
             self._articulations,
@@ -101,6 +118,19 @@ class JointStateResetTerm(
             default_vel = articulation.data.default_joint_vel[env_ids].clone()
 
             override_values, override_mask = override
+            if (
+                operation_target is not None
+                and operation_target.scene_name == display_name
+            ):
+                dynamic_values, dynamic_mask = self._build_operation_override(
+                    articulation,
+                    display_name,
+                    operation_target,
+                )
+                override_values = override_values.clone()
+                override_mask = override_mask.clone()
+                override_values[dynamic_mask] = dynamic_values[dynamic_mask]
+                override_mask |= dynamic_mask
             if override_mask.any():
                 center = default_pos.clone()
                 center[:, override_mask] = override_values[override_mask]
@@ -149,6 +179,83 @@ class JointStateResetTerm(
         return torch.as_tensor(
             env_ids, device=self._env.device, dtype=torch.long
         )
+
+    def _resolve_operation_target(
+        self,
+        event_msg: ResetEvent,
+    ) -> TargetRef | None:
+        """Return the configured operation target carried by this reset."""
+        role_id = self._cfg.operation_role_id
+        bindings = event_msg.role_bindings
+        if role_id is None or bindings is None:
+            return None
+        if role_id not in bindings:
+            raise KeyError(
+                f"Reset event has no binding for operation role '{role_id}'. "
+                f"Available roles: {sorted(bindings)}."
+            )
+        target = bindings[role_id]
+        if not isinstance(target, TargetRef):
+            raise TypeError(
+                f"Operation role '{role_id}' must bind exactly one "
+                f"TargetRef, got {type(target).__name__}."
+            )
+        if target.semantic_name is None or target.operation is None:
+            raise ValueError(
+                f"Operation role '{role_id}' target '{target}' must include "
+                "both semantic_name and operation."
+            )
+        return target
+
+    def _build_operation_override(
+        self,
+        articulation: Articulation,
+        display_name: str,
+        target: TargetRef,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build one per-episode center override from articulation metadata."""
+        semantic_name = target.semantic_name
+        operation_name = target.operation
+        if semantic_name is None or operation_name is None:
+            raise ValueError(
+                f"Operation target '{target}' is missing semantic intent."
+            )
+        joint = get_joint(
+            articulation.cfg.joint_operations,
+            semantic_name,
+        )
+        start_position = get_operation_start_position(
+            joint,
+            operation_name,
+            self._cfg.operation_start_mode,
+        )
+        joint_names = list(articulation.joint_names)
+        exact_ids = [
+            index
+            for index, joint_name in enumerate(joint_names)
+            if joint_name == joint.joint_name
+        ]
+        if len(exact_ids) != 1:
+            raise ValueError(
+                f"Expected exactly one joint named '{joint.joint_name}' for "
+                f"asset '{display_name}', found {len(exact_ids)} matches in "
+                f"{joint_names}."
+            )
+
+        values = torch.zeros(
+            len(joint_names),
+            dtype=torch.float32,
+            device=self._env.device,
+        )
+        mask = torch.zeros(
+            len(joint_names),
+            dtype=torch.bool,
+            device=self._env.device,
+        )
+        joint_id = exact_ids[0]
+        values[joint_id] = start_position
+        mask[joint_id] = True
+        return values, mask
 
     def _init_articulations(
         self, asset_cfgs: list[LabSceneEntityCfg] | None
@@ -286,6 +393,23 @@ class JointStateResetTermCfg(
     name; listed joints use the given value as the noise center, while
     unlisted joints fall back to the default. Unknown joint names raise
     ``ValueError``.
+    """
+
+    operation_role_id: str | None = None
+    """Role whose bound semantic operation overrides one joint center.
+
+    When set, the reset event may carry a single operation-bearing
+    ``TargetRef`` under this role. The start selected by
+    ``operation_start_mode`` overrides the configured/default center for
+    that joint only. ``None`` keeps the static reset behavior.
+    """
+
+    operation_start_mode: OperationStartMode = "metadata"
+    """Start at the selected operation's annotation by default.
+
+    ``opposing_midpoint`` averages the two annotated starts of the bound
+    joint's open/close or pull/push pair. Missing pairs raise ``ValueError``.
+    Noise and soft-limit clipping are applied after selecting the center.
     """
 
     clamp_to_joint_limits: bool = True

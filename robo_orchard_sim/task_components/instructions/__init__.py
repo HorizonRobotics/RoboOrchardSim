@@ -24,6 +24,7 @@ from robo_orchard_sim.task_components.instructions.base import (  # noqa: F401
 )
 from robo_orchard_sim.task_components.instructions.mcap_render import (  # noqa: F401
     extract_instruction_actor_uuids_from_mcap,
+    extract_role_actor_from_mcap,
     render_instruction_from_mcap,
     render_instructions_from_mcaps,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "InstructionRenderError",
     "render_instruction_from_registry",
     "extract_instruction_actor_uuids_from_mcap",
+    "extract_role_actor_from_mcap",
     "render_instruction_from_mcap",
     "render_instructions_from_mcaps",
     "INSTRUCTION_TEMPLATE_REGISTRY",

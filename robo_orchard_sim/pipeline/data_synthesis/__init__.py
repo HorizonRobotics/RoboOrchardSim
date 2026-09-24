@@ -30,6 +30,7 @@ from robo_orchard_sim.pipeline.data_synthesis.single_task import (
     TaskDataSynthesisCfg,
     TaskDataSynthesisRunner,
     TaskRunResult,
+    data_synthesis_runtime,
 )
 
 __all__ = [
@@ -44,4 +45,5 @@ __all__ = [
     "TaskDataSynthesisCfg",
     "TaskDataSynthesisRunner",
     "TaskRunResult",
+    "data_synthesis_runtime",
 ]

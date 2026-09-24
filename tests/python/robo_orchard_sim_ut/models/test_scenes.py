@@ -14,8 +14,9 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+import json
+
 import pytest
-from isaaclab.sensors.contact_sensor import ContactSensorCfg
 
 from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import SimulationCfg
 from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
@@ -35,6 +36,9 @@ from robo_orchard_sim.ext.models.scenes.table_scene import (
     GroupAssetCfg,
     RigidObjectCfg,
     TableSceneCfg,
+)
+from robo_orchard_sim.ext.models.sensors.contact_sensor import (
+    ContactSensorCfg,
 )
 from robo_orchard_sim.orchard_env.embodiments.franka_panda.cfg import (
     FRANKA_PANDA_CFG,
@@ -214,6 +218,26 @@ class TestInteractiveScene:
             ),
         )
         self._test_asset_by_cfg(scene_cfg, app)
+
+    def test_scene_cfg_with_ContactSensor_is_json_serializable(self, app):
+        # Data synthesis dumps the env cfg per episode, so every asset cfg
+        # reachable from the scene must survive `to_str(format="json")`.
+        scene_cfg = TableSceneCfg(
+            num_envs=1,
+            env_spacing=2,
+            objects=GroupAssetCfg(
+                contact_sensor=ContactSensorCfg(
+                    prim_path="{ENV_REGEX_NS}/Object",
+                    filter_prim_paths_expr=["{ENV_REGEX_NS}/Other"],
+                ),
+            ),
+        )
+        dumped = json.loads(scene_cfg.to_str(format="json"))
+
+        sensor = dumped["objects"]["contact_sensor"]
+        assert sensor["prim_path"] == "{ENV_REGEX_NS}/Object"
+        assert sensor["filter_prim_paths_expr"] == ["{ENV_REGEX_NS}/Other"]
+        assert sensor["class_type"].endswith(":ContactSensor")
 
 
 if __name__ == "__main__":

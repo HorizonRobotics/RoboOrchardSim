@@ -17,7 +17,8 @@
 """Pick task definition built on ``TaskBase``."""
 
 from __future__ import annotations
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, ClassVar
 
 from robo_orchard_core.envs.managers.events import EventManagerCfg
 from robo_orchard_core.utils.config import Config
@@ -34,14 +35,9 @@ from robo_orchard_sim.ext.envs.managers.events.pose_reset import (
 from robo_orchard_sim.ext.envs.managers.events.texture_reset import (
     TextureResetTermCfg,
 )
-from robo_orchard_sim.ext.envs.managers.record import (
-    RecordTermBaseCfg,
-)
-from robo_orchard_sim.ext.envs.managers.record.mcap import McapDictTermCfg
-from robo_orchard_sim.orchard_env.assets import ObjectSpec
-from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
+from robo_orchard_sim.orchard_env.assets.task_assets import TaskAssets
+from robo_orchard_sim.orchard_env.task_spec import RoleSpec
 from robo_orchard_sim.orchard_env.task_templates.task_base import (
-    TaskAssetsBase,
     TaskBase,
 )
 from robo_orchard_sim.orchard_env.task_templates.task_params import (
@@ -53,14 +49,41 @@ from robo_orchard_sim.task_components.instructions.base import (
     InstructionActor,
     InstructionWrapper,
 )
+from robo_orchard_sim.task_components.instructions.counterfactual import (
+    CounterfactualCondition,
+    counterfactual_condition_for_task,
+    counterfactual_instruction_actors,
+)
+from robo_orchard_sim.task_components.role_registry import TargetRef
 from robo_orchard_sim.task_components.validators.base import (
     Validator,
-    ValidatorActor,
 )
-from robo_orchard_sim.task_components.validators.checkers import lift, reach
+from robo_orchard_sim.task_components.validators.checkers import (
+    ContactChecker,
+    LiftChecker,
+    ReachChecker,
+    SceneCheckerSuite,
+)
 from robo_orchard_sim.task_components.validators.context import (
     ValidatorContext,
 )
+from robo_orchard_sim.task_components.validators.counterfactual import (
+    CounterfactualSpec,
+    CounterfactualStageSelector,
+    CounterfactualStageSpec,
+    CounterfactualStageTracker,
+    CounterfactualValidator,
+)
+from robo_orchard_sim.task_components.validators.metrics import (
+    AllMetricSelector,
+    AnyRoleMetricSelector,
+    BoundRoleMetricSelector,
+    DwellMetricSelector,
+    MetricStore,
+)
+from robo_orchard_sim.task_components.validators.role_scope import RoleScope
+
+PICK_ROLE = "pick"
 
 
 class PickTaskParams(Config):
@@ -69,51 +92,66 @@ class PickTaskParams(Config):
     pose_reset: TaskPoseResetConfig = TaskPoseResetConfig()
     light_reset: TaskLightResetConfig | None = None
     texture_reset: TaskTextureResetConfig | None = None
-
-
-class PickAssets(TaskAssetsBase):
-    """Task-specific asset schema for pick scenes."""
-
-    required_object_fields = ("pick",)
-
-    pick: ObjectSpec | PoolSpec
-
-    def flatten(self) -> dict[str, ObjectSpec | PoolSpec]:
-        """Return task assets in the flattened shape expected by TaskBase."""
-        flattened: dict[str, ObjectSpec | PoolSpec] = {
-            "pick": self.pick,
-        }
-        flattened.update(self.flatten_distractors())
-        return flattened
+    reach_dwell_steps: int = 15
 
 
 class PickTask(TaskBase):
     """A generic pick task with one target object and optional distractors."""
 
+    roles: ClassVar[dict[str, RoleSpec]] = {
+        PICK_ROLE: RoleSpec(
+            description="the object to pick up",
+            cardinality="one",
+            required_traits=("is_graspable",),
+        ),
+    }
+
     def __init__(
         self,
-        assets: PickAssets,
+        assets: TaskAssets,
         params: PickTaskParams | None = None,
         instruction: InstructionWrapper | None = None,
     ):
-        self.assets = assets
         self.params = params or PickTaskParams()
-        flattened_assets = assets.flatten()
-        super().__init__(flattened_assets, instruction=instruction)
+        super().__init__(assets, instruction=instruction)
 
-        self.pick_object = self._assets["pick"]
+        self.pick_object = self.assets.by_role(PICK_ROLE)[0]
         self.distractors = [
-            self._assets[role]
-            for role in flattened_assets
-            if role.startswith("distractor_")
+            spec
+            for role_id, specs in self.assets.role_candidates.items()
+            if role_id != PICK_ROLE
+            for spec in specs
+        ]
+
+    def get_role_candidates(
+        self,
+        role_id: str,
+        *,
+        swap: bool = False,
+    ) -> list[TargetRef]:
+        """Offer the objects this role may point at.
+
+        Under swap the target may be any object on the table, clutter
+        included — that clutter was drawn to resemble the declared
+        target, so rotating through it is what leaves the instruction as
+        the only thing telling them apart. A YAML that declares no
+        clutter yields a single candidate and nothing rotates.
+        """
+        if swap and role_id == PICK_ROLE:
+            return [
+                TargetRef(spec.scene_name)
+                for specs in self.assets.role_candidates.values()
+                for spec in specs
+            ]
+        return [
+            TargetRef(spec.scene_name) for spec in self.assets.by_role(role_id)
         ]
 
     def get_event_cfg(self) -> EventManagerCfg:
         """Return a shared pose-reset event for task objects."""
-        asset_cfgs = [SceneEntityCfg(name=self.pick_object.scene_name)]
-        asset_cfgs.extend(
-            SceneEntityCfg(name=spec.scene_name) for spec in self.distractors
-        )
+        asset_cfgs = [
+            SceneEntityCfg(name=name) for name in self.assets.all_scene_names()
+        ]
         terms = {
             "random_pose_event": PoseResetTermCfg(
                 asset_cfgs=asset_cfgs,
@@ -160,49 +198,169 @@ class PickTask(TaskBase):
             )
         return EventManagerCfg(terms=terms)
 
-    def get_record_terms(self) -> dict[str, RecordTermBaseCfg]:
-        return {
-            "meta_dict_term": McapDictTermCfg(
-                topic="/meta_data",
-                fps=1.0,
-                # Use the task-level metadata record key contract.
-                key=TaskBase.EPISODE_META_RECORD_KEY,
-                record_mode="once",
-            )
-        }
-
-    def get_validator_actor_names(self) -> list[str]:
-        """Return scene actors used by the pick validator."""
-        return [self.pick_object.scene_name]
-
     def build_validator(
         self,
-        actors: list[ValidatorActor],
         context: ValidatorContext | None = None,
     ) -> Validator:
-        """Build the task validator for pick evaluation."""
+        """Build the task validator for pick evaluation.
+
+        Scores whichever object the pick role names right now, so
+        rebinding the role between episodes moves the target without
+        rebuilding anything.
+        """
         if context is None or context.robot is None:
             raise ValueError(
                 "PickTask.build_validator() requires ValidatorContext "
                 "with robot data."
             )
-        actors_by_name = {actor.name: actor for actor in actors}
-        pick_actor = actors_by_name[self.pick_object.scene_name]
+        metric_store = MetricStore(RoleScope.from_task(self))
+        checker_suite = SceneCheckerSuite(
+            (
+                ReachChecker(threshold=0.2),
+                ContactChecker(force_threshold=0.1),
+                LiftChecker(threshold=0.03),
+            )
+        )
+        condition = counterfactual_condition_for_task(self)
+        if condition is not None:
+            spec = self._get_counterfactual_spec(
+                condition=condition,
+                metric_store=metric_store,
+            )
+            return CounterfactualValidator(
+                context=context,
+                checker_suite=checker_suite,
+                metric_store=metric_store,
+                spec=spec,
+            )
+
+        reach_pick = BoundRoleMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            role_id=PICK_ROLE,
+            metric="reached",
+        )
+        contact_pick = BoundRoleMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            role_id=PICK_ROLE,
+            metric="contacted",
+        )
+        grasp_pick = BoundRoleMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            role_id=PICK_ROLE,
+            metric="grasped",
+        )
+        lift_pick = BoundRoleMetricSelector(
+            metric_store=metric_store,
+            context=context,
+            role_id=PICK_ROLE,
+            metric="lifted",
+        )
+        lifted_while_grasped = AllMetricSelector((lift_pick, grasp_pick))
         return Validator(
-            actors=actors,
+            context=context,
+            checker_suite=checker_suite,
+            metric_store=metric_store,
             criteria=[
-                reach(
-                    pick_actor.name,
-                    0.2,
-                    robot_name=context.robot.robot_name,
-                    ee_links=context.robot.ee_links,
+                DwellMetricSelector(
+                    reach_pick,
+                    self.params.reach_dwell_steps,
                 ),
-                (lift(pick_actor, 0.03), [0]),
+                (
+                    contact_pick,
+                    [0],
+                ),
+                (
+                    grasp_pick,
+                    [1],
+                ),
+                (
+                    lifted_while_grasped,
+                    [2],
+                ),
             ],
             criteria_name=[
                 "reach_pick",
+                "contact_pick",
+                "grasp_pick",
                 "lift_pick",
             ],
+        )
+
+    def _get_counterfactual_spec(
+        self,
+        *,
+        condition: CounterfactualCondition,
+        metric_store: MetricStore,
+    ) -> CounterfactualSpec:
+        """Return Pick-specific counterfactual metrics and rubric."""
+        if (
+            condition == "generic_object"
+            and self.instruction is not None
+            and self.instruction.template == "place_a2b_generic_object"
+        ):
+            raise ValueError(
+                "Pick counterfactual evaluation does not support the "
+                "'place_a2b_generic_object' instruction template."
+            )
+
+        def rubric(reached: Mapping[str, bool]) -> tuple[bool, float]:
+            success = (
+                reached["any_lifted"]
+                if condition == "generic_object"
+                else not any(reached.values())
+            )
+            return success, 1.0 if success else 0.0
+
+        tracker = CounterfactualStageTracker(
+            metric_store=metric_store,
+            role_id=PICK_ROLE,
+            stages=(
+                CounterfactualStageSpec(
+                    "reach",
+                    ("reached",),
+                    self.params.reach_dwell_steps,
+                ),
+                CounterfactualStageSpec("contact", ("contacted",)),
+                CounterfactualStageSpec("grasp", ("grasped",)),
+                CounterfactualStageSpec("lift", ("lifted", "grasped")),
+            ),
+        )
+        if condition == "generic_object":
+            criteria = tuple(
+                CounterfactualStageSelector(tracker, stage)
+                for stage in ("reach", "contact", "grasp", "lift")
+            )
+        else:
+            criteria = (
+                CounterfactualStageSelector(tracker, "reach"),
+                AnyRoleMetricSelector(
+                    metric_store=metric_store,
+                    role_id=PICK_ROLE,
+                    metric="contacted",
+                ),
+                AnyRoleMetricSelector(
+                    metric_store=metric_store,
+                    role_id=PICK_ROLE,
+                    metric="grasped",
+                ),
+                AnyRoleMetricSelector(
+                    metric_store=metric_store,
+                    role_id=PICK_ROLE,
+                    metric="lifted",
+                ),
+            )
+        return CounterfactualSpec(
+            criteria=criteria,
+            criteria_name=(
+                "any_reached",
+                "any_contacted",
+                "any_grasped",
+                "any_lifted",
+            ),
+            rubric=rubric,
         )
 
     def build_instruction_context(
@@ -210,11 +368,22 @@ class PickTask(TaskBase):
         env: Any,
         *,
         actor_description_seed: int,
+        context: ValidatorContext | None = None,
     ) -> dict[str, InstructionActor]:
+        """Describe whichever object the pick role names right now."""
+        if context is None:
+            raise ValueError(
+                "PickTask.build_instruction_context() requires a "
+                "ValidatorContext to resolve role bindings."
+            )
         if self.instruction is None:
             return {}
+        counterfactual_actors = counterfactual_instruction_actors(self)
+        if counterfactual_actors is not None:
+            return counterfactual_actors
 
-        pick_object = env.scene[self.pick_object.scene_name]
+        target = context.role_registry.resolve_one(PICK_ROLE)
+        pick_object = env.scene[target.scene_name]
         attribute_name = self.instruction.attribute_name
         if attribute_name is not None:
             actor = InstructionActor.from_rigid_object_with_attribute(

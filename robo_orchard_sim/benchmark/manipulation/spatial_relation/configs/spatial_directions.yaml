@@ -1,0 +1,81 @@
+scene:
+  type: room_table
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: panda_droid
+  initial_pos: [0.0, 0.0, 0.0]
+  init_joint_noise_std: 0.05
+
+instruction:
+  template: spatial_pick_default
+  template_mode: fixed
+  actor_description_mode: raw
+
+# Every candidate is the same asset on purpose: the task asks which
+# object the instruction means, so telling them apart has to come from
+# where each one sits and nothing else. `same_as` shares one draw across
+# the slots, which is otherwise impossible -- slots are de-duplicated so
+# that scenes come out varied.
+#
+# Sharing a draw rather than naming a uuid keeps the split in force, so
+# an evaluation can still be pointed at unseen assets.
+#
+# Keys double as scene names -- `prim_name` is filled in from them, so
+# the names here, the placements below and the runtime logs all agree.
+asset_configs:
+  pick_front:
+    filter: {tags: [has_interactive_poses]}
+    split: seen
+  pick_left:
+    same_as: pick_front
+  pick_behind:
+    same_as: pick_front
+  pick_right:
+    same_as: pick_front
+  ref:
+    filter: {tags: [has_interactive_poses]}
+    anchor: pick_front
+    differ: [category]
+    prim_name_prefix: ref
+    min_count: 1
+    max_count: 1
+    #split: seen
+
+task:
+  params:
+    pose_reset:
+      # Candidates are placed around wherever the reference landed, not
+      # at absolute coordinates, so the reference is free to move
+      # without eating into the clearance its neighbours rely on.
+      anchor_range: {x: [0.45, 0.60], y: [-0.08, 0.08]}
+      workspace:    {x: [0.25, 0.80], y: [-0.40, 0.40]}
+
+      # Directions are read outward from the arm: an object "in front
+      # of" the reference is the one further from the arm, not the one
+      # nearer the viewer. `axis` says which way each object lies, in
+      # degrees anticlockwise from that outward direction.
+      axis_jitter: 35
+      min_separation: 0.03
+
+      # Naming an axis holds the object in that direction while its
+      # distance varies -- the opposite of how
+      # spatial_near_far describes its targets, where the axis
+      # is left out and redealt every episode. Both come out of the same
+      # arrangement.
+      candidates:
+        pick_front:  {relation: front_of, axis: 0,   radius: [0.15, 0.4]}
+        pick_left:   {relation: left_of,  axis: 90,  radius: [0.15, 0.4]}
+        pick_behind: {relation: behind,   axis: 180, radius: [0.15, 0.4]}
+        pick_right:  {relation: right_of, axis: 270, radius: [0.15, 0.4]}
+
+    light_reset:
+      enabled: false
+      preset: default_distant_light
+    texture_reset:
+      enabled: false
+      preset: default_table_texture

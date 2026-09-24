@@ -33,10 +33,12 @@ from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import SimulationCfg
 from robo_orchard_sim.ext.envs.manager_based_env import IsaacManagerBasedEnvCfg
 from robo_orchard_sim.ext.envs.managers.record import (
     NoOpRecordControllerCfg,
+    ParallelRecordManagerCfg,
     RecordControllerCfg,
     RecordManagerCfg,
     RecordTermBaseCfg,
 )
+from robo_orchard_sim.ext.envs.managers.record.mcap import McapImageTermCfg
 from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
 from robo_orchard_sim.ext.models.scenes.asset_scene import AssetSceneCfg
 from robo_orchard_sim.orchard_env.embodiments.embodiment_base import (
@@ -150,33 +152,10 @@ class EnvBuilder:
                             "assets."
                         )
                     merged[namespace][asset_name] = asset_cfg
-        merged = self._maybe_inject_inactive_pool_storage(merged)
         return {
             namespace: GroupAssetCfg(**group_assets)
             for namespace, group_assets in merged.items()
         }
-
-    @staticmethod
-    def _maybe_inject_inactive_pool_storage(
-        merged: dict[str, dict],
-    ) -> dict[str, dict]:
-        """Insert the inactive-pool storage shelf when any role is pooled."""
-        any_pool = any(
-            "_pool_" in name for group in merged.values() for name in group
-        )
-        if not any_pool:
-            return merged
-        from robo_orchard_sim.orchard_env.env_builder.inactive_pool_storage import (  # noqa: E501
-            INACTIVE_POOL_STORAGE_NAME,
-            make_inactive_pool_storage_cfg,
-        )
-
-        merged.setdefault("objects", {})
-        if INACTIVE_POOL_STORAGE_NAME not in merged["objects"]:
-            merged["objects"][INACTIVE_POOL_STORAGE_NAME] = (
-                make_inactive_pool_storage_cfg()
-            )
-        return merged
 
     def _merge_observation_cfg(
         self,
@@ -195,10 +174,7 @@ class EnvBuilder:
                 if key in groups:
                     raise ValueError(f"Duplicate observation group '{key}'.")
                 groups[key] = value
-        return ObservationManagerCfg(
-            concatenate_terms=False,
-            groups=groups,
-        )
+        return ObservationManagerCfg(groups=groups)
 
     def _merge_action_cfg(self, *fragments: Any) -> ActionManagerCfg:
         terms: dict[str, Any] = {}
@@ -242,10 +218,34 @@ class EnvBuilder:
             for key, value in fragment.items():
                 if key in terms:
                     raise ValueError(f"Duplicate record term '{key}'.")
-                terms[key] = value
+                terms[key] = self._with_scene_fps(value)
 
-        return RecordManagerCfg(
+        return ParallelRecordManagerCfg(
             file_path=self.record_file_path,
             controller=self.record_controller,
             terms=terms,
         )
+
+    def _with_scene_fps(self, cfg: RecordTermBaseCfg) -> RecordTermBaseCfg:
+        """Let the scene's clock decide every step-mode record rate.
+
+        Terms declare an fps where they are constructed, but the scene
+        owns the simulation clock, so that declaration is advisory: a
+        term left at 30 while the scene runs at 60 would silently
+        sample at a rate the simulation never runs at.
+
+        Only image generation follows the render clock. Everything
+        else -- including camera poses -- is rigid-body state that
+        updates every simulation step. Non-step modes never consult
+        fps, so they are left alone.
+        """
+        if cfg.record_mode != "step":
+            return cfg
+        fps = float(
+            self.scene.render_fps
+            if isinstance(cfg, McapImageTermCfg)
+            else self.scene.step_fps
+        )
+        if fps == cfg.fps:
+            return cfg
+        return cfg.model_copy(update={"fps": fps})

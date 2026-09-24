@@ -40,6 +40,7 @@ def _urdf(
     aabb_min: tuple[float, float, float] | None = None,
     aabb_max: tuple[float, float, float] | None = None,
     caption_link: str | None = None,
+    spec_type: str | None = None,
 ) -> str:
     tags_csv = ", ".join(tags)
     if aabb_min is not None and aabb_max is not None:
@@ -56,6 +57,11 @@ def _urdf(
     caption_block = (
         f"      <caption_candidates>{caption_link}</caption_candidates>\n    "
         if caption_link is not None
+        else ""
+    )
+    spec_type_block = (
+        f"      <spec_type>{spec_type}</spec_type>\n    "
+        if spec_type is not None
         else ""
     )
     return dedent(
@@ -86,7 +92,7 @@ def _urdf(
               <version>v0.1.0</version>
               <generate_time>20260414000000</generate_time>
               <tags>{tags_csv}</tags>
-        {aabb_block}{caption_block}</extra_info>
+        {aabb_block}{caption_block}{spec_type_block}</extra_info>
           </link>
         </robot>
         """

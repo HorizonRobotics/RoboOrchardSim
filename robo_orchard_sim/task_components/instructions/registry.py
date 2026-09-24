@@ -77,8 +77,59 @@ def build_instruction_wrapper(
 
 
 register_instruction_template(
+    "empty",
+    {
+        "counterfactual_condition": "empty",
+        "fixed": "",
+        "variants": [""],
+    },
+)
+
+register_instruction_template(
+    "generic_object",
+    {
+        "counterfactual_condition": "generic_object",
+        "fixed": "Pick an object",
+        "variants": [
+            "Pick an object",
+            "Pick up an object",
+            "Lift an object",
+        ],
+    },
+)
+
+register_instruction_template(
+    "absent_object",
+    {
+        "counterfactual_condition": "absent_object",
+        "fixed": "Pick up {actor1.description}",
+        "variants": [
+            "Pick up {actor1.description}",
+            "Grab {actor1.description}",
+            "Lift {actor1.description}",
+        ],
+    },
+)
+
+register_instruction_template(
+    "place_a2b_generic_object",
+    {
+        "counterfactual_condition": "generic_object",
+        "fixed": "Pick up an object and place it into a container",
+        "variants": [
+            "Pick up an object and place it into a container",
+        ],
+    },
+)
+
+
+register_instruction_template(
     "place_a2b_default",
     {
+        "actor_descriptions": {
+            "pick": "{actor1.description}",
+            "place": "{actor2.description}",
+        },
         "fixed": (
             "Pick up {actor1.description} and place in {actor2.description}"
         ),
@@ -150,6 +201,7 @@ register_instruction_template(
 register_instruction_template(
     "pick_default",
     {
+        "actor_descriptions": {"pick": "{actor1.description}"},
         "fixed": "Pick up {actor1.description}",
         "variants": [
             "Pick up {actor1.description}.",
@@ -165,8 +217,29 @@ register_instruction_template(
 )
 
 register_instruction_template(
+    "articulated_operation",
+    {
+        "fixed": (
+            "{operation_verb} the {joint_description} of the {description}."
+        ),
+    },
+)
+
+register_instruction_template(
+    "stack_cubes_color_order",
+    {
+        "fixed": (
+            "Stack the cubes bottom-to-top: "
+            "{actor1[color]}, {actor2[color]}, "
+            "{actor3[color]}, {actor4[color]}."
+        ),
+    },
+)
+
+register_instruction_template(
     "spatial_pick_default",
     {
+        "actor_descriptions": {"pick": "{obj.category}"},
         "fixed": (
             "Pick up the {obj.category} {spatial_relation} "
             "the {ref_obj.category}."
@@ -203,6 +276,9 @@ register_instruction_template(
 register_instruction_template(
     "pick_attribute",
     {
+        "actor_descriptions": {
+            "pick": "{actor1.attribute_value} {actor1.category}"
+        },
         "fixed": "Pick {actor1.attribute_value} {actor1.category}",
         "variants": [
             "Pick up {actor1.attribute_value} {actor1.category}.",

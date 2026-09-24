@@ -8,6 +8,9 @@ pytest-asyncio
 pytest-mock
 allure-pytest
 packaging>=24.0
+# pandas: used by asset_manager tests to convert pyarrow Tables to DataFrames.
+# Business code does not import it; kept in dev-env only.
+pandas
 
 # pre-commit
 pre-commit

@@ -10,8 +10,8 @@ Example:
     python3 tools/asset_pipeline/run_caption_labeller.py \\
         --asset-root outputs/labelled \\
         --config tools/asset_pipeline/configs/gpt_config.yaml \\
-        --seen-count 15 \\
-        --unseen-count 5
+        --seen-count 3-5 \\
+        --unseen-count 1-2
 """
 
 import argparse
@@ -33,6 +33,24 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
+def _count_range(s):
+    """Parse a count spec into a ``(min, max)`` tuple.
+
+    Accepts a single int (``"5"`` -> ``(5, 5)``) or a range with a ``-``
+    or ``~`` separator (``"3-5"`` / ``"1~2"`` -> ``(3, 5)``). A range
+    floats per object: fewer salient phrases for simple objects.
+    """
+    s = s.strip().replace("~", "-")
+    if "-" in s:
+        lo, hi = s.split("-", 1)
+        lo, hi = int(lo), int(hi)
+    else:
+        lo = hi = int(s)
+    if lo < 0 or hi < lo:
+        raise argparse.ArgumentTypeError(f"invalid count range: {s!r}")
+    return (lo, hi)
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Caption candidates labeller")
     p.add_argument(
@@ -48,8 +66,21 @@ def _parse_args() -> argparse.Namespace:
             "gpt_config.yaml",
         ),
     )
-    p.add_argument("--seen-count", type=int, default=15)
-    p.add_argument("--unseen-count", type=int, default=5)
+    p.add_argument(
+        "--seen-count",
+        type=_count_range,
+        default="3-5",
+        metavar="N | MIN-MAX",
+        help='seen phrases; single int is fixed, a range (e.g. "3-5") '
+        "floats per object, keeping fewer for simple objects",
+    )
+    p.add_argument(
+        "--unseen-count",
+        type=_count_range,
+        default="1-2",
+        metavar="N | MIN-MAX",
+        help='unseen phrases, e.g. "1-2"',
+    )
     p.add_argument("--force", action="store_true")
     p.add_argument("--max-workers", type=int, default=4)
     p.add_argument("--dry-run", action="store_true")

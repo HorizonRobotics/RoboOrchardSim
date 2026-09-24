@@ -20,7 +20,6 @@ import torch
 from isaaclab.assets.articulation import Articulation
 from isaaclab.assets.deformable_object import DeformableObject
 from isaaclab.assets.rigid_object import RigidObject
-from robo_orchard_core.envs.manager_based_env import ResetEvent
 from robo_orchard_core.envs.managers.events.event_term import (
     EventTermBase,
     EventTermBaseCfg,
@@ -30,6 +29,7 @@ from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg as LabSceneEntityCfg,
 )
 from robo_orchard_sim.ext.envs.env_base import IsaacEnvType_co
+from robo_orchard_sim.ext.envs.manager_based_env import ResetEvent
 from robo_orchard_sim.utils.config import ClassType_co
 
 __all__ = ["DefaultResetTerm", "DefaultResetTermCfg"]

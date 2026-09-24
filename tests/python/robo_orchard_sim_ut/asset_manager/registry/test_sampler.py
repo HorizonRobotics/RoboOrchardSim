@@ -355,46 +355,6 @@ def test_sample_target_pool_raises_when_pool_too_small(mini_asset_root: Path):
         sampler.sample_target_pool(f, k=1, rng=np.random.default_rng(0))
 
 
-def test_sample_distractor_pool_returns_distinct_matching_anchor(
-    mini_asset_root: Path,
-):
-    """sample_distractor_pool draws distinct members honouring match."""
-    reg = AssetRegistry(str(mini_asset_root))
-    sampler = AssetSampler(reg)
-    anchor = reg.get_by_asset_id("apple_001")
-    spec = DistractorSpec(
-        min_count=1,
-        max_count=10,
-        match=("super_category",),
-    )
-    pool = sampler.sample_distractor_pool(
-        anchor, spec, pool_size=2, rng=np.random.default_rng(0)
-    )
-    assert len(pool) == 2 and len({m.uuid for m in pool}) == 2
-    for m in pool:
-        assert m.super_category == anchor.super_category
-        assert m.uuid != anchor.uuid
-
-
-def test_sample_distractor_pool_raises_when_pool_too_small(
-    mini_asset_root: Path,
-):
-    """pool_size > available_candidates raises InsufficientPoolError."""
-    reg = AssetRegistry(str(mini_asset_root))
-    sampler = AssetSampler(reg)
-    anchor = reg.get_by_asset_id("apple_001")
-    spec = DistractorSpec(
-        min_count=0,
-        max_count=2,
-        match=("super_category",),
-        differ=("category",),
-    )
-    with pytest.raises(InsufficientPoolError):
-        sampler.sample_distractor_pool(
-            anchor, spec, pool_size=2, rng=np.random.default_rng(0)
-        )
-
-
 # ---------------------------------------------------------------------------
 # Multi-value color sampler scenarios
 # ---------------------------------------------------------------------------

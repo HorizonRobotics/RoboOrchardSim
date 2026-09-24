@@ -15,8 +15,10 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
+from typing import Any
 
 import robo_orchard_core.utils.math as math_utils
+import torch
 from isaaclab.assets.articulation import Articulation
 from isaaclab.assets.rigid_object import RigidObject
 from robo_orchard_core.datatypes.geometry import BatchFrameTransform
@@ -31,6 +33,9 @@ from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg as LabSceneEntityCfg,
 )
 from robo_orchard_sim.ext.envs.env_base import IsaacEnvType_co
+from robo_orchard_sim.ext.models.assets.articulation import (
+    Articulation as ElementArticulation,
+)
 from robo_orchard_sim.ext.models.assets.rigid_object import (
     RigidObject as ElementRigidObject,
 )
@@ -44,6 +49,14 @@ FrameTransformTermCfg_co = TypeVar(
     covariant=True,
 )
 
+WORLD_FRAME_ID = "world"
+"""Fixed frame id for the env-local world frame.
+
+Not user-configurable: downstream consumers (e.g. the sim mcap packer)
+already normalize parent frames to this literal name, and letting each
+caller pick its own name would silently fracture the TF tree.
+"""
+
 
 class FrameTransformTerm(
     ObservationTermBase[
@@ -54,18 +67,30 @@ class FrameTransformTerm(
         super().__init__(cfg, env)
         self._env = env
 
-        self.cfg.asset_cfg.resolve(env.scene)
+        if cfg.world_parent and cfg.asset_cfg is not None:
+            raise ValueError(
+                "world_parent=True means the parent is the env-local "
+                "world frame; asset_cfg must be left None."
+            )
+        if not cfg.world_parent and cfg.asset_cfg is None:
+            raise ValueError("asset_cfg is required unless world_parent=True.")
+
         self.cfg.child_asset_cfg.resolve(env.scene)
-
-        self._parent_asset = env.scene[cfg.asset_cfg.name]
         self._child_asset = env.scene[cfg.child_asset_cfg.name]
-
-        self._parent_names = self._get_asset_names(
-            self._parent_asset, self.cfg.asset_cfg
-        )
         self._child_names = self._get_asset_names(
             self._child_asset, self.cfg.child_asset_cfg
         )
+
+        if cfg.world_parent:
+            self._parent_asset = None
+            self._parent_names = [WORLD_FRAME_ID] * len(self._child_names)
+        else:
+            assert cfg.asset_cfg is not None  # validated above
+            self.cfg.asset_cfg.resolve(env.scene)
+            self._parent_asset = env.scene[cfg.asset_cfg.name]
+            self._parent_names = self._get_asset_names(
+                self._parent_asset, self.cfg.asset_cfg
+            )
 
         self._validate_and_build_name_pairs()
 
@@ -75,7 +100,9 @@ class FrameTransformTerm(
             RigidObject: self.__rigid_object_impl,
             ElementRigidObject: self.__rigid_object_impl,
             Articulation: self.__rigid_object_impl,
+            ElementArticulation: self.__rigid_object_impl,
             Camera: self.__camera_impl,
+            type(None): self.__world_impl,
         }
 
         # parent_data is:(Batch, target, 3/4)
@@ -219,17 +246,38 @@ class FrameTransformTerm(
         quat = asset.data.quat_w_ros
         return pos.unsqueeze(1), quat.unsqueeze(1)
 
+    def __world_impl(self, asset: None, cfg: Any):
+        """Identity pose for the env-local world frame.
 
-class FrameTransformTermCfg(
-    ObservationTermCfg[FrameTransformTerm[IsaacEnvType_co], LabSceneEntityCfg]
-):
+        Other impls already subtract ``env_origins``, so the world
+        origin in that local frame is zero -- not ``env_origins``
+        again.
+        """
+        device = self._env.device
+        num_envs = self._env.num_envs
+        pos = torch.zeros(num_envs, 1, 3, device=device)
+        quat = torch.zeros(num_envs, 1, 4, device=device)
+        quat[..., 0] = 1.0
+        return pos, quat
+
+
+class FrameTransformTermCfg(ObservationTermCfg[FrameTransformTerm, Any]):
     # class_type: type = FrameTransformer
-    class_type: ClassType_co[FrameTransformTerm[IsaacEnvType_co]] = (
-        FrameTransformTerm[IsaacEnvType_co]
-    )
+    class_type: ClassType_co[FrameTransformTerm] = FrameTransformTerm
+
+    asset_cfg: Any = None
+    """Parent asset. Required unless ``world_parent`` is True, in which
+    case the parent is the env-local world frame and this must be
+    left None."""
 
     child_asset_cfg: LabSceneEntityCfg
     """Configuration for the child asset in the frame transform term."""
+
+    world_parent: bool = False
+    """Use the env-local world frame as parent instead of ``asset_cfg``.
+
+    Mutually required with ``asset_cfg``: exactly one of the two must
+    be set."""
 
     bidirectional: bool = True
     """Whether to add mirrored (inverse) edges in the graph. Default True."""

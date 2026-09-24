@@ -1,2 +1,11 @@
-protobuf==5.29.5
+# Packages installed with `pip install --no-deps` because their upstream
+# metadata pins conflict with the IsaacSim 5.1 / IsaacLab 2.3.2 stack:
+#
+#   - robo_orchard_schemas 0.2.0 pins protobuf<6.0, but the IsaacLab 2.3.2
+#     ecosystem (isaaclab, onnx, tensorboard, mcap-protobuf-support) requires
+#     protobuf 7.x. We install schemas with `--no-deps` so its protobuf<6
+#     constraint is skipped; the generated `_pb2.py` modules are compatible
+#     with protobuf 7.x at runtime.
+#
+# See `install-runtime-constraints` in the top-level Makefile.
 robo_orchard_schemas==0.2.0

@@ -130,6 +130,7 @@ def _make_logic_term() -> TextureResetTerm:
         sim=SimpleNamespace(stage=None),
     )
     term.generator = torch.Generator(device="cpu")
+    term._missing_asset_names = set()
     return term
 
 
@@ -379,6 +380,84 @@ class TestTextureResetTerm:
             term._select_asset_variants(stage, term.generator, env_ids=[0])
 
         select_variants.assert_not_called()
+
+    def test_select_asset_variants_skips_assets_missing_from_scene(self):
+        term = _make_logic_term()
+        term._cfg.asset_cfgs = [
+            SimpleNamespace(name="background/workbench"),
+            SimpleNamespace(name="background/table"),
+        ]
+        term._env.scene = {
+            "background/table": SimpleNamespace(
+                cfg=SimpleNamespace(prim_path="/World/env_.*/table")
+            )
+        }
+        stage = _FakeStage(
+            [
+                _FakePrim(
+                    "/World/env_0/table/Looks/material_0/material_0",
+                    variant_names=["texture_0000", "texture_0001"],
+                )
+            ]
+        )
+
+        with patch(SELECT_USD_VARIANTS_PATCH_TARGET) as select_variants:
+            term._select_asset_variants(stage, term.generator, env_ids=[0])
+
+        select_variants.assert_called_once()
+        _, kwargs = select_variants.call_args
+        assert (
+            kwargs["prim_path"]
+            == "/World/env_0/table/Looks/material_0/material_0"
+        )
+        assert term._missing_asset_names == {"background/workbench"}
+
+    def test_select_asset_variants_reports_missing_asset_only_once(self):
+        term = _make_logic_term()
+        term._cfg.asset_cfgs = [SimpleNamespace(name="background/workbench")]
+        term._env.scene = {}
+        stage = _FakeStage([])
+
+        with patch("builtins.print") as printed:
+            for _ in range(3):
+                term._select_asset_variants(stage, term.generator, env_ids=[0])
+
+        warnings = [
+            call
+            for call in printed.call_args_list
+            if "background/workbench" in str(call)
+        ]
+        assert len(warnings) == 1
+
+    def test_select_asset_variants_finds_workbench_top_surface(self):
+        term = _make_logic_term()
+        term._cfg.asset_cfgs = [SimpleNamespace(name="background/workbench")]
+        term._env.scene = {
+            "background/workbench": SimpleNamespace(
+                cfg=SimpleNamespace(prim_path="/World/env_.*/workbench")
+            )
+        }
+        stage = _FakeStage(
+            [
+                _FakePrim(
+                    "/World/env_0/workbench/Looks/TopSurface/Texture",
+                    variant_names=["texture_0000", "texture_0001"],
+                ),
+                # The feet keep a static look and expose no variant set.
+                _FakePrim("/World/env_0/workbench/Looks/Rubber/Texture"),
+            ]
+        )
+
+        with patch(SELECT_USD_VARIANTS_PATCH_TARGET) as select_variants:
+            term._select_asset_variants(stage, term.generator, env_ids=[0])
+
+        select_variants.assert_called_once()
+        _, kwargs = select_variants.call_args
+        assert (
+            kwargs["prim_path"]
+            == "/World/env_0/workbench/Looks/TopSurface/Texture"
+        )
+        assert kwargs["variants"]["Look"] in {"texture_0000", "texture_0001"}
 
     def test_select_asset_variants_only_updates_requested_envs(self):
         term = _make_logic_term()

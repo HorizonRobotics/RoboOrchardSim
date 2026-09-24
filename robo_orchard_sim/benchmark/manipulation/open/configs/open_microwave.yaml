@@ -1,0 +1,53 @@
+scene:
+  type: room_table_workbench
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: panda_droid
+  initial_pos: [0.0, 0.0, 0.0]
+  init_joint_noise_std: 0.05
+  init_joint_pos:
+    panda_joint1: 0.0
+    panda_joint2: -0.95
+    panda_joint3: 0.0
+    panda_joint4: -1.82
+    panda_joint5: 0.0
+    panda_joint6: 1.31
+    panda_joint7: 0.0
+    finger_joint: 0.0
+
+instruction:
+  template: articulated_operation
+  template_mode: fixed
+  actor_description_mode: raw
+
+task:
+  params:
+    # Turn the +X door face toward the arm at the origin.
+    # The asset bottom is at local z=0.0002149, so this root height puts
+    # it on the workbench top at z=0.25. Its body is about 0.453 m wide;
+    # the y range leaves clearance inside the 0.60 m workbench span.
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.66, 0.70]
+        y: [-0.04, 0.04]
+        z: [0.2497851, 0.2497851]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [3.14159, 3.14159]
+
+asset_configs:
+  primary:
+    usd_path: /horizon-bucket/robot_lab/users/ziang.li/assets/wuwen/microwave_oven_handled/microwave_oven_handled.usd
+    # Path-pinned targets do not consult the registry, so the sidecar has to
+    # be named explicitly for the door handle to resolve.
+    interaction_path: /horizon-bucket/robot_lab/users/ziang.li/assets/wuwen/microwave_oven_handled/interaction.json
+    spec_type: usd.articulation
+    category: microwave_oven
+    prim_name: microwave

@@ -26,17 +26,49 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from robo_orchard_sim.contracts.policy_binding import CanonicalPolicyInput
+from robo_orchard_sim.contracts.policy_binding import (
+    CanonicalPolicyInput,
+    ManipulatorBinding,
+    PolicyBindingSchema,
+)
+from robo_orchard_sim.policy.action_layout import compile_action_layout
 from robo_orchard_sim.policy.dummy import DummyPolicyCfg
 
 
-def test_dummy_policy_act_given_canonical_input_returns_fixed_action():
+def _single_arm_layout():
+    return compile_action_layout(
+        PolicyBindingSchema(
+            schema_version="1",
+            embodiment_type="panda_droid",
+            manipulator_slots={
+                "single_arm": ManipulatorBinding(
+                    joint_position_obs_key="joint_position",
+                    arm_joint_name_specs=("panda_joint[1-7]",),
+                    gripper_joint_name_specs=("finger_joint",),
+                )
+            },
+        )
+    )
+
+
+def test_dummy_policy_act_given_canonical_input_holds_joint_position():
     policy = DummyPolicyCfg()()
-    observations = CanonicalPolicyInput()
+    joint_position = torch.arange(8, dtype=torch.float32).reshape(1, 8)
+    observations = CanonicalPolicyInput(
+        manipulators={"single_arm": {"joint_position": joint_position}},
+        action_layout=_single_arm_layout(),
+    )
 
     action = policy.act(observations)
 
-    assert torch.equal(
-        action["left_robot_joint_position"],
-        torch.zeros((1, 6), dtype=torch.float32),
+    assert action.joint_names == (
+        "panda_joint1",
+        "panda_joint2",
+        "panda_joint3",
+        "panda_joint4",
+        "panda_joint5",
+        "panda_joint6",
+        "panda_joint7",
+        "finger_joint",
     )
+    assert torch.equal(action.values, joint_position)

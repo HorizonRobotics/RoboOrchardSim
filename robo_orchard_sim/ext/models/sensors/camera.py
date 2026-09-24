@@ -54,6 +54,67 @@ from robo_orchard_sim.utils.config import (
 
 CameraType = TypeVar("CameraType", bound="Camera | TiledCamera")
 
+_FRANKA_CAMERA_PRIM_PATH_MARKERS = (
+    "/franka_panda/",
+    "/panda_droid/",
+)
+
+
+def _restore_fabric_local_xform(view) -> None:
+    """Restore fixed Franka-family camera mounts from USD local transforms.
+
+    At PLAY, USD world poses can lag behind PhysX and corrupt the derived
+    camera mount. Restore authored local poses, including over runtime pose
+    overrides. Write the existing Fabric attribute: SetLocalXformFromUsd()
+    changes Fabric buckets and invalidates cached Warp selections.
+    """
+    if not any(
+        marker in prim_path
+        for prim_path in view.prim_paths
+        for marker in _FRANKA_CAMERA_PRIM_PATH_MARKERS
+    ):
+        return
+
+    import usdrt
+    from pxr import Usd, UsdGeom
+    from usdrt import Gf as RtGf
+
+    if not view._use_fabric:
+        return
+
+    # Avoid first-read USD sync, whose app.update() can stall during PLAY.
+    if not view._fabric_initialized:
+        view._initialize_fabric()
+
+    fabric_stage = usdrt.Usd.Stage.Attach(stage_utils.get_current_stage_id())
+    hierarchy = usdrt.hierarchy.IFabricHierarchy().get_fabric_hierarchy(
+        fabric_stage.GetFabricId(),
+        fabric_stage.GetStageIdAsStageId(),
+    )
+    for usd_prim, prim_path in zip(
+        view.prims,
+        view.prim_paths,
+        strict=True,
+    ):
+        usd_local = UsdGeom.Xformable(usd_prim).GetLocalTransformation(
+            Usd.TimeCode.Default()
+        )
+        rows = [
+            [usd_local[row][column] for column in range(4)] for row in range(4)
+        ]
+        fabric_local = RtGf.Matrix4d(*[value for row in rows for value in row])
+
+        fabric_prim = fabric_stage.GetPrimAtPath(prim_path)
+        local_attr = fabric_prim.GetAttribute("omni:fabric:localMatrix")
+        if not local_attr or not local_attr.IsValid():
+            raise RuntimeError(
+                f"Fabric local matrix is unavailable for '{prim_path}'."
+            )
+        local_attr.Set(fabric_local)
+    hierarchy.update_world_xforms()
+    # Keep subsequent reads from syncing stale USD world poses again.
+    view._fabric_usd_sync_done = True
+
 
 class Camera(_Camera, IsaacCameraMixin):
     """Wrapper class for isaac lab Camera.
@@ -104,7 +165,9 @@ class Camera(_Camera, IsaacCameraMixin):
         #     )
         #     return
 
-        return super()._initialize_impl()
+        result = super()._initialize_impl()
+        _restore_fabric_local_xform(self._view)
+        return result
 
 
 class TiledCamera(_TiledCamera, IsaacCameraMixin):
@@ -135,7 +198,9 @@ class TiledCamera(_TiledCamera, IsaacCameraMixin):
     def _initialize_impl(self):
         # clear the sensor prims to avoid timeline bug.
         self._sensor_prims = []
-        return super()._initialize_impl()
+        result = super()._initialize_impl()
+        _restore_fabric_local_xform(self._view)
+        return result
 
 
 class CameraOffset(Config):
@@ -297,6 +362,17 @@ class CameraCfg(SensorBaseCfg[CameraType], CameraBaseCfg[CameraType]):
 
     data_types: list[str] = ["rgb"]
     """List of sensor names/types to enable for the camera. """
+
+    update_latest_camera_pose: bool = True
+    """Whether to refresh the camera pose every step.
+
+    IsaacLab 2.3.2 defaults this to ``False`` to save compute cost, in which
+    case ``asset.data.quat_w_world`` stays initialized as ``[0, 0, 0, 0]``
+    (an invalid quaternion) and any downstream consumer of ``quat_w_ros`` /
+    ``quat_w_opengl`` gets NaN via convention conversion.  Our observation
+    terms (see ``ext/envs/managers/observations/transform_frame.py``) read
+    ``quat_w_ros`` at each step, so we opt in to per-step pose refresh here.
+    """
 
 
 class SemanticCameraCfg(CameraCfg[Camera]):

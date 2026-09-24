@@ -49,6 +49,45 @@ def _load_task_base_with_stubbed_dependencies(
         record_module,
     )
 
+    mcap_module = types.ModuleType(
+        "robo_orchard_sim.ext.envs.managers.record.mcap"
+    )
+    mcap_module.McapDictTermCfg = type("McapDictTermCfg", (), {})
+    mcap_module.McapMultiTFTermCfg = type("McapMultiTFTermCfg", (), {})
+    monkeypatch.setitem(
+        sys.modules,
+        "robo_orchard_sim.ext.envs.managers.record.mcap",
+        mcap_module,
+    )
+
+    observations_name = "robo_orchard_sim.ext.envs.managers.observations"
+    monkeypatch.setitem(
+        sys.modules, observations_name, types.ModuleType(observations_name)
+    )
+    transform_frame_module = types.ModuleType(
+        f"{observations_name}.transform_frame"
+    )
+    transform_frame_module.FrameTransformTermCfg = type(
+        "FrameTransformTermCfg", (), {}
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        f"{observations_name}.transform_frame",
+        transform_frame_module,
+    )
+
+    scene_entity_name = (
+        "robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg"
+    )
+    for name in (
+        "robo_orchard_sim.ext.cfg_wrappers",
+        "robo_orchard_sim.ext.cfg_wrappers.managers",
+    ):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    scene_entity_module = types.ModuleType(scene_entity_name)
+    scene_entity_module.SceneEntityCfg = type("SceneEntityCfg", (), {})
+    monkeypatch.setitem(sys.modules, scene_entity_name, scene_entity_module)
+
     asset_cfg_module = types.ModuleType(
         "robo_orchard_sim.ext.models.assets.asset_cfg"
     )
@@ -72,7 +111,6 @@ def _load_task_base_with_stubbed_dependencies(
     assets_module = types.ModuleType("robo_orchard_sim.orchard_env.assets")
     assets_module.AssetSpec = type("AssetSpec", (), {})
     assets_module.ObjectSpec = type("ObjectSpec", (), {})
-    assets_module.PoolSpec = type("PoolSpec", (), {})
     monkeypatch.setitem(
         sys.modules,
         "robo_orchard_sim.orchard_env.assets",
@@ -97,6 +135,26 @@ def _load_task_base_with_stubbed_dependencies(
     return task_base_module.TaskBase
 
 
+class _StubAssets:
+    """Stands in for TaskAssets, which cannot be imported without Isaac."""
+
+    role_candidates: dict = {}
+
+    def by_role(self, role_id: str) -> list:
+        del role_id
+        return []
+
+    def with_default_namespace(self, namespace: str) -> "_StubAssets":
+        del namespace
+        return self
+
+    def flatten(self) -> dict:
+        return {}
+
+    def all_scene_names(self) -> list:
+        return []
+
+
 def test_task_base_subclass_without_instruction_can_be_instantiated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -104,13 +162,16 @@ def test_task_base_subclass_without_instruction_can_be_instantiated(
 
     class _TaskWithoutInstruction(task_base):
         def __init__(self) -> None:
-            super().__init__(assets={})
+            super().__init__(assets=_StubAssets())
+
+        def get_role_candidates(
+            self, role_id: str, *, swap: bool = False
+        ) -> list:
+            del role_id, swap
+            return []
 
         def get_event_cfg(self) -> EventManagerCfg:
             return EventManagerCfg(terms={})
-
-        def get_validator_actor_names(self) -> list[str]:
-            return []
 
         def build_validator(
             self,

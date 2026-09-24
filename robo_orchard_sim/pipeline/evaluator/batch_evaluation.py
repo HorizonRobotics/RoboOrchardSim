@@ -32,7 +32,10 @@ from robo_orchard_sim.pipeline.evaluator.base import (
     MultiEvaluationResult,
     TaskEvaluationResult,
 )
-from robo_orchard_sim.pipeline.evaluator.evaluator import EvaluatorCfg
+from robo_orchard_sim.pipeline.evaluator.evaluator import (
+    EvaluatorCfg,
+    SwapConfig,
+)
 from robo_orchard_sim.pipeline.evaluator.multi_evaluator import (
     EvaluationRunEntry,
     MultiEvaluator,
@@ -48,6 +51,7 @@ def build_evaluator_cfgs_for_group(
     output_root_dir: str,
     max_steps: int,
     enable_recording: bool = False,
+    swap: SwapConfig | None = None,
     snapshot_path: Path | None = None,
     splits_path: Path | None = None,
 ) -> list[EvaluationRunEntry]:
@@ -82,6 +86,7 @@ def build_evaluator_cfgs_for_group(
                         group.seed + config_index * plan.episodes_per_config
                     ),
                     episode_num=plan.episodes_per_config,
+                    swap=swap or SwapConfig(),
                     max_steps=max_steps,
                     snapshot_path=snapshot_path,
                     splits_path=splits_path,
@@ -228,11 +233,17 @@ def run_group_evaluation(
     policy_or_cfg: Any,
     max_steps: int,
     enable_recording: bool = False,
+    swap: SwapConfig | None = None,
     snapshot_path: Path | None = None,
     splits_path: Path | None = None,
     continue_on_task_error: bool = True,
+    runtime: Any = None,
 ) -> MultiEvaluationResult:
-    """Run one batch-plan group through the multi-config evaluator."""
+    """Run one batch-plan group through the multi-config evaluator.
+
+    Pass ``runtime`` to reuse a caller-owned Isaac app; group outputs are then
+    written while that app is still alive.
+    """
     entries = build_evaluator_cfgs_for_group(
         plan=plan,
         group_id=group_id,
@@ -240,6 +251,7 @@ def run_group_evaluation(
         output_root_dir=output_root_dir,
         max_steps=max_steps,
         enable_recording=enable_recording,
+        swap=swap,
         snapshot_path=snapshot_path,
         splits_path=splits_path,
     )
@@ -252,7 +264,7 @@ def run_group_evaluation(
             entries=entries,
             continue_on_task_error=continue_on_task_error,
         )
-    ).evaluate(policy_or_cfg)
+    ).evaluate(policy_or_cfg, runtime=runtime)
     write_group_outputs(
         output_dir=output_root_dir,
         plan=plan,

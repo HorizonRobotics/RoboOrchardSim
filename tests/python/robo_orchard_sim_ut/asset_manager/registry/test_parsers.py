@@ -18,7 +18,7 @@
 
 import pytest
 
-from robo_orchard_sim.asset_manager.registry.urdf_parser import (
+from robo_orchard_sim.asset_manager.metadata.urdf import (
     ParsedUrdf,
     parse_urdf_extra_info,
 )

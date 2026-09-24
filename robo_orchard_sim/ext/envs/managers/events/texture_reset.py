@@ -20,7 +20,6 @@ from typing import List
 import isaaclab.sim as sim_utils
 import torch
 from pxr import Usd
-from robo_orchard_core.envs.manager_based_env import ResetEvent
 from robo_orchard_core.envs.managers.events.event_term import (
     EventTermBase,
     EventTermBaseCfg,
@@ -30,6 +29,7 @@ from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg as LabSceneEntityCfg,
 )
 from robo_orchard_sim.ext.envs.env_base import IsaacEnvType_co
+from robo_orchard_sim.ext.envs.manager_based_env import ResetEvent
 from robo_orchard_sim.utils.config import ClassType_co
 
 __all__ = ["TextureResetTerm", "TextureResetTermCfg"]
@@ -45,6 +45,7 @@ class TextureResetTerm(
         self._cfg = cfg
         self._env = env
         self.generator = torch.Generator(device="cpu")
+        self._missing_asset_names: set[str] = set()
 
     def __call__(self, event_msg: ResetEvent):
         # Seed the RNG directly from the event payload.
@@ -124,7 +125,16 @@ class TextureResetTerm(
 
         for _asset_idx, asset_cfg in enumerate(self._cfg.asset_cfgs):
             # Resolve the asset root prim path from the scene configuration.
-            scene_item = self._env.scene[asset_cfg.name]
+            try:
+                scene_item = self._env.scene[asset_cfg.name]
+            except KeyError:
+                if asset_cfg.name not in self._missing_asset_names:
+                    self._missing_asset_names.add(asset_cfg.name)
+                    print(
+                        f"[TextureReset] Asset '{asset_cfg.name}' is not in "
+                        "this scene; skipping its texture randomization."
+                    )
+                continue
             root_path = scene_item.cfg.prim_path
 
             prim_paths = self._find_variant_prims_under(

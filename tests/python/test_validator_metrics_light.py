@@ -2,19 +2,24 @@
 
 import importlib
 import inspect
+import types
 
-import numpy as np
 import pytest
 import torch
 
+from robo_orchard_sim.task_components.role_registry import RoleRegistry
 from robo_orchard_sim.task_components.validators.base import (
     GripperRange,
     Validator,
-    ValidatorActor,
 )
 from robo_orchard_sim.task_components.validators.context import (
-    build_validator_context,
+    ValidatorContext,
+    ValidatorRobotContext,
 )
+from robo_orchard_sim.task_components.validators.physical_entity import (
+    resolve_rigid_body_prim_path,
+)
+from robo_orchard_sim.task_components.validators.role_scope import RoleScope
 
 
 class _DummyObjectData:
@@ -29,6 +34,12 @@ class _DummyObjectData:
         )
         self.root_state_w[:, :3] = self.root_pos_w
         self.root_state_w[:, 3] = 1.0
+        self.root_lin_vel_w = torch.zeros(
+            (len(positions), 3), dtype=torch.float32
+        )
+        self.root_ang_vel_w = torch.zeros(
+            (len(positions), 3), dtype=torch.float32
+        )
         self.default_root_state = torch.zeros(
             (len(default_heights), 13), dtype=torch.float32
         )
@@ -81,15 +92,22 @@ class _DummyScene(dict):
 
 
 class _DummyManipulatorProfile:
-    def __init__(self, ee_body_name, gripper_joint_names=()):
+    def __init__(
+        self,
+        ee_body_name,
+        gripper_joint_names=(),
+        gripper_body_names=(),
+    ):
         self.ee_body_name = ee_body_name
         self.gripper_joint_names = tuple(gripper_joint_names)
+        self.gripper_body_names = tuple(gripper_body_names)
 
 
 class _DummyRobotInfo:
     def __init__(
         self, manipulator_profile, gripper_open_val, gripper_close_val
     ):
+        self.t_standard_tcp_to_robot_ee = torch.eye(4).tolist()
         self.manipulator_profile = manipulator_profile
         self.gripper_open_val = list(gripper_open_val)
         self.gripper_close_val = list(gripper_close_val)
@@ -123,11 +141,44 @@ def test_checkers_can_be_imported_without_pxr():
     module = importlib.import_module(
         "robo_orchard_sim.task_components.validators.checkers"
     )
-    assert hasattr(module, "lift")
+    assert hasattr(module, "LiftChecker")
 
 
-def test_build_validator_context_uses_runtime_embodiment_robot_metadata():
-    context = build_validator_context(_DummyEmbodiment())
+class _FakeRigidAsset:
+    def __init__(self, configured, prim_paths=None):
+        self.cfg = types.SimpleNamespace(prim_path=configured)
+        if prim_paths is not None:
+            self.root_physx_view = types.SimpleNamespace(prim_paths=prim_paths)
+
+
+def test_rigid_body_prim_path_prefers_physx_owning_prim():
+    asset = _FakeRigidAsset(
+        "/World/envs/env_.*/pick_object",
+        [
+            "/World/envs/env_0/pick_object/geometry/mesh",
+            "/World/envs/env_1/pick_object/geometry/mesh",
+        ],
+    )
+
+    assert (
+        resolve_rigid_body_prim_path(asset, 1)
+        == "/World/envs/env_1/pick_object/geometry/mesh"
+    )
+
+
+def test_rigid_body_prim_path_falls_back_to_configured_path():
+    asset = _FakeRigidAsset("/World/envs/env_.*/pick_object")
+
+    assert (
+        resolve_rigid_body_prim_path(asset, 0)
+        == "/World/envs/env_0/pick_object"
+    )
+
+
+def test_from_embodiment_uses_runtime_embodiment_robot_metadata():
+    context = ValidatorContext.from_embodiment(
+        _DummyEmbodiment(), RoleRegistry()
+    )
 
     assert context.robot is not None
     assert context.robot.robot_name == "robots/dualarm_piperx"
@@ -148,11 +199,6 @@ def test_validator_forwards_env_idx_to_criteria():
         return env_idx == 1
 
     validator = Validator(
-        actors=[
-            ValidatorActor(
-                name="objects/cube", uuid="", category="", actor_type=""
-            )
-        ],
         criteria=[criterion],
         criteria_name=["criterion"],
     )
@@ -181,11 +227,6 @@ def test_validator_does_not_treat_plain_second_arg_as_env_idx():
             return True
 
     validator = Validator(
-        actors=[
-            ValidatorActor(
-                name="objects/cube", uuid="", category="", actor_type=""
-            )
-        ],
         criteria=[_Criterion()],
         criteria_name=["criterion"],
     )
@@ -200,13 +241,16 @@ def test_lift_checker_reads_requested_env_index():
     checkers = importlib.import_module(
         "robo_orchard_sim.task_components.validators.checkers"
     )
-    actor = ValidatorActor(name="objects/cube")
-    actor.init_state = np.array(
-        [
-            [0.0, 0.0, 0.50, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.50, 1.0, 0.0, 0.0, 0.0],
-        ]
+    initial_env = _DummyEnv(
+        scene={
+            "objects/cube": _DummyObject(
+                positions=[(0.0, 0.0, 0.50), (0.0, 0.0, 0.50)],
+                default_heights=[0.50, 0.50],
+            )
+        }
     )
+    context = ValidatorContext(robot=None, role_registry=RoleRegistry())
+    context.capture_init_states(initial_env, ["objects/cube"])
     env = _DummyEnv(
         scene={
             "objects/cube": _DummyObject(
@@ -216,23 +260,31 @@ def test_lift_checker_reads_requested_env_index():
         }
     )
 
-    checker = checkers.lift(actor, threshold=0.05)
+    checker = checkers.LiftChecker(threshold=0.05)
+    scope = RoleScope.from_entities(("objects/cube",))
 
-    assert not checker(env, env_idx=0)
-    assert checker(env, env_idx=1)
+    assert not checker.evaluate(env, context, scope, env_idx=0).unary[
+        "lifted"
+    ]["objects/cube"]
+    assert checker.evaluate(env, context, scope, env_idx=1).unary["lifted"][
+        "objects/cube"
+    ]
 
 
 def test_lift_checker_uses_per_env_init_height():
     checkers = importlib.import_module(
         "robo_orchard_sim.task_components.validators.checkers"
     )
-    actor = ValidatorActor(name="objects/cube")
-    actor.init_state = np.array(
-        [
-            [0.0, 0.0, 0.50, 1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.60, 1.0, 0.0, 0.0, 0.0],
-        ]
+    initial_env = _DummyEnv(
+        scene={
+            "objects/cube": _DummyObject(
+                positions=[(0.0, 0.0, 0.50), (0.0, 0.0, 0.60)],
+                default_heights=[0.10, 0.10],
+            )
+        }
     )
+    context = ValidatorContext(robot=None, role_registry=RoleRegistry())
+    context.capture_init_states(initial_env, ["objects/cube"])
     env = _DummyEnv(
         scene={
             "objects/cube": _DummyObject(
@@ -242,17 +294,27 @@ def test_lift_checker_uses_per_env_init_height():
         }
     )
 
-    checker = checkers.lift(actor, threshold=0.05)
+    checker = checkers.LiftChecker(threshold=0.05)
+    scope = RoleScope.from_entities(("objects/cube",))
 
-    assert checker(env, env_idx=0) is True
-    assert checker(env, env_idx=1) is False
+    assert (
+        checker.evaluate(env, context, scope, env_idx=0).unary["lifted"][
+            "objects/cube"
+        ]
+        is True
+    )
+    assert (
+        checker.evaluate(env, context, scope, env_idx=1).unary["lifted"][
+            "objects/cube"
+        ]
+        is False
+    )
 
 
-def test_lift_checker_missing_init_state_raises_value_error():
+def test_lift_checker_missing_init_state_raises_runtime_error():
     checkers = importlib.import_module(
         "robo_orchard_sim.task_components.validators.checkers"
     )
-    actor = ValidatorActor(name="objects/cube")
     env = _DummyEnv(
         scene={
             "objects/cube": _DummyObject(
@@ -262,13 +324,19 @@ def test_lift_checker_missing_init_state_raises_value_error():
         }
     )
 
-    checker = checkers.lift(actor, threshold=0.05)
+    context = ValidatorContext(robot=None, role_registry=RoleRegistry())
+    checker = checkers.LiftChecker(threshold=0.05)
 
-    with pytest.raises(ValueError, match="init_state is not set"):
-        checker(env, env_idx=0)
+    with pytest.raises(RuntimeError, match="not captured"):
+        checker.evaluate(
+            env,
+            context,
+            RoleScope.from_entities(("objects/cube",)),
+            env_idx=0,
+        )
 
 
-def test_reach_checker_reads_requested_env_index():
+def test_reach_checker_multiple_envs_uses_requested_index():
     checkers = importlib.import_module(
         "robo_orchard_sim.task_components.validators.checkers"
     )
@@ -290,15 +358,26 @@ def test_reach_checker_reads_requested_env_index():
         }
     )
 
-    checker = checkers.reach(
-        "objects/cube",
-        threshold=0.05,
-        robot_name="robots/robot",
-        ee_links=("left_link6",),
+    robot_data = env.scene["robots/robot"].data
+    robot_data.body_pos_w = robot_data.body_com_pos_w.clone()
+    robot_data.body_quat_w = torch.tensor([[[1.0, 0.0, 0.0, 0.0]] * 2] * 2)
+    checker = checkers.ReachChecker(threshold=0.05)
+    context = ValidatorContext(
+        robot=ValidatorRobotContext(
+            robot_name="robots/robot",
+            ee_links=("left_link6",),
+            tcp_offsets=(("left_link6", (0, 0, 0)),),
+        ),
+        role_registry=RoleRegistry(),
     )
+    scope = RoleScope.from_entities(("objects/cube",))
 
-    assert not checker(env, env_idx=0)
-    assert checker(env, env_idx=1)
+    assert not checker.evaluate(env, context, scope, env_idx=0).unary[
+        "reached"
+    ]["objects/cube"]
+    assert checker.evaluate(env, context, scope, env_idx=1).unary["reached"][
+        "objects/cube"
+    ]
 
 
 def test_alignment_xy_checker_reads_requested_env_index():
@@ -318,14 +397,25 @@ def test_alignment_xy_checker_reads_requested_env_index():
         }
     )
 
-    checker = checkers.is_alignment_xy(
-        "objects/cube",
-        "objects/goal",
+    checker = checkers.AlignmentXYChecker(
+        "pick",
+        "place",
         eps=(0.02, 0.02),
     )
+    context = ValidatorContext(robot=None, role_registry=RoleRegistry())
+    scope = RoleScope.from_role_members(
+        {
+            "pick": ("objects/cube",),
+            "place": ("objects/goal",),
+        }
+    )
 
-    assert not checker(env, env_idx=0)
-    assert checker(env, env_idx=1)
+    assert not checker.evaluate(env, context, scope, env_idx=0).binary[
+        "alignment_xy"
+    ][("objects/cube", "objects/goal")]
+    assert checker.evaluate(env, context, scope, env_idx=1).binary[
+        "alignment_xy"
+    ][("objects/cube", "objects/goal")]
 
 
 def test_alignment_xyz_checker_reads_requested_env_index():
@@ -345,15 +435,86 @@ def test_alignment_xyz_checker_reads_requested_env_index():
         }
     )
 
-    checker = checkers.is_alignment_xyz(
-        "objects/base",
-        "objects/stack",
+    checker = checkers.AlignmentXYZChecker(
+        "pick",
+        "place",
         eps=(0.02, 0.02, 0.02),
         target_height_offset=0.04,
     )
+    context = ValidatorContext(robot=None, role_registry=RoleRegistry())
+    scope = RoleScope.from_role_members(
+        {
+            "pick": ("objects/base",),
+            "place": ("objects/stack",),
+        }
+    )
 
-    assert not checker(env, env_idx=0)
-    assert checker(env, env_idx=1)
+    assert not checker.evaluate(env, context, scope, env_idx=0).binary[
+        "alignment_xyz"
+    ][("objects/base", "objects/stack")]
+    assert checker.evaluate(env, context, scope, env_idx=1).binary[
+        "alignment_xyz"
+    ][("objects/base", "objects/stack")]
+
+
+def test_axis_align_checker_multiple_entities_returns_complete_mapping():
+    checkers = importlib.import_module(
+        "robo_orchard_sim.task_components.validators.checkers"
+    )
+    upright = _DummyObject([(0.0, 0.0, 0.0)], [0.0])
+    tipped = _DummyObject([(0.0, 0.0, 0.0)], [0.0])
+    tipped.data.root_quat_w[0] = torch.tensor((0.7071068, 0.7071068, 0.0, 0.0))
+    env = _DummyEnv(
+        scene={
+            "objects/upright": upright,
+            "objects/tipped": tipped,
+        }
+    )
+    scope = RoleScope.from_entities(("objects/upright", "objects/tipped"))
+
+    metrics = checkers.AxisAlignChecker(
+        local_axis=(0.0, 0.0, 1.0),
+        world_target=(0.0, 0.0, 1.0),
+        max_deg=15.0,
+    ).evaluate(
+        env,
+        ValidatorContext(robot=None, role_registry=RoleRegistry()),
+        scope,
+    )
+
+    assert metrics.unary["axis_aligned"] == {
+        "objects/upright": True,
+        "objects/tipped": False,
+    }
+
+
+def test_stationary_checker_multiple_entities_returns_complete_mapping():
+    checkers = importlib.import_module(
+        "robo_orchard_sim.task_components.validators.checkers"
+    )
+    stationary = _DummyObject([(0.0, 0.0, 0.0)], [0.0])
+    moving = _DummyObject([(0.0, 0.0, 0.0)], [0.0])
+    moving.data.root_lin_vel_w[0, 0] = 0.5
+    env = _DummyEnv(
+        scene={
+            "objects/stationary": stationary,
+            "objects/moving": moving,
+        }
+    )
+    scope = RoleScope.from_entities(("objects/stationary", "objects/moving"))
+
+    metrics = checkers.StationaryChecker(
+        linear_threshold=0.01,
+    ).evaluate(
+        env,
+        ValidatorContext(robot=None, role_registry=RoleRegistry()),
+        scope,
+    )
+
+    assert metrics.unary["stationary"] == {
+        "objects/stationary": True,
+        "objects/moving": False,
+    }
 
 
 def test_gripper_checkers_read_requested_env_index():
@@ -378,19 +539,41 @@ def test_gripper_checkers_read_requested_env_index():
     right_spec = GripperRange(
         name="right_joint7", open_val=0.05, close_val=0.0
     )
-    left_checker = checkers.is_gripper_open(
-        left_spec,
-        robot_name="robots/robot",
+    context = ValidatorContext(
+        robot=ValidatorRobotContext(
+            robot_name="robots/robot",
+            gripper_joints=(left_spec, right_spec),
+        ),
+        role_registry=RoleRegistry(),
     )
-    both_checker = checkers.is_both_gripper_open(
-        gripper_joints=(left_spec, right_spec),
-        robot_name="robots/robot",
-    )
+    scope = RoleScope.from_entities(())
+    left_checker = checkers.GripperOpenChecker("left_joint7")
+    both_checker = checkers.BothGripperOpenChecker()
 
-    assert left_checker(env, env_idx=0) is False
-    assert left_checker(env, env_idx=1) is True
-    assert both_checker(env, env_idx=0) is False
-    assert both_checker(env, env_idx=1) is True
+    assert (
+        left_checker.evaluate(env, context, scope, env_idx=0).global_values[
+            "gripper_open:left_joint7"
+        ]
+        is False
+    )
+    assert (
+        left_checker.evaluate(env, context, scope, env_idx=1).global_values[
+            "gripper_open:left_joint7"
+        ]
+        is True
+    )
+    assert (
+        both_checker.evaluate(env, context, scope, env_idx=0).global_values[
+            "gripper_open"
+        ]
+        is False
+    )
+    assert (
+        both_checker.evaluate(env, context, scope, env_idx=1).global_values[
+            "gripper_open"
+        ]
+        is True
+    )
 
 
 def test_within_xy_checker_uses_asset_prim_path(monkeypatch):
@@ -432,9 +615,24 @@ def test_within_xy_checker_uses_asset_prim_path(monkeypatch):
         )
     )
 
-    checker = checkers.is_within_xy("objects/cube", "objects/goal")
+    checker = checkers.WithinXYChecker(
+        "pick",
+        "place",
+    )
+    context = ValidatorContext(robot=None, role_registry=RoleRegistry())
+    scope = RoleScope.from_role_members(
+        {
+            "pick": ("objects/cube",),
+            "place": ("objects/goal",),
+        }
+    )
 
-    assert checker(env, env_idx=1) is True
+    assert (
+        checker.evaluate(env, context, scope, env_idx=1).binary["within_xy"][
+            ("objects/cube", "objects/goal")
+        ]
+        is True
+    )
     assert captured["stage"] is stage
     assert captured["prim_path"] == "/World/envs/env_1/PlaceObject"
     assert captured["idx_env"] == 1
@@ -448,11 +646,6 @@ def test_validator_reports_current_and_cumulative_criteria():
         return state["met"]
 
     validator = Validator(
-        actors=[
-            ValidatorActor(
-                name="objects/cube", uuid="", category="", actor_type=""
-            )
-        ],
         criteria=[criterion],
         criteria_name=["criterion"],
     )
@@ -466,64 +659,3 @@ def test_validator_reports_current_and_cumulative_criteria():
     assert first.metrics["criteria_reached"]["criterion"] is True
     assert second.metrics["criteria_met_now"]["criterion"] is False
     assert second.metrics["criteria_reached"]["criterion"] is True
-
-
-def test_validator_actor_from_rigid_object_captures_cfg_and_pose():
-    cube = _DummyObject(
-        positions=[(0.0, 0.0, 0.5)],
-        default_heights=[0.0],
-    )
-    cube.cfg.spawn = type(
-        "SpawnCfg",
-        (),
-        {"semantic_tags": {}},
-    )()
-    cube.cfg.category = "cube"
-    cube.cfg.actor_type = "rigid_object"
-    cube.cfg.uuid = "cube-uuid"
-    actor = ValidatorActor.from_rigid_object("objects/cube", cube)
-    actor.capture_init_state(cube)
-    actor.capture_final_state(cube)
-
-    assert actor.name == "objects/cube"
-    assert actor.category == "cube"
-    assert actor.actor_type == "rigid_object"
-    assert actor.uuid == "cube-uuid"
-    assert actor.init_state is not None
-    assert actor.final_state is not None
-
-
-def test_lift_checker_binds_validator_actor():
-    checkers = importlib.import_module(
-        "robo_orchard_sim.task_components.validators.checkers"
-    )
-    actor = ValidatorActor(name="cube")
-    checker = checkers.lift(actor, threshold=0.05)
-
-    assert checker.actor_name == "cube"
-    assert checker.actor is actor
-
-
-def test_gripper_checker_accepts_plain_robot_identifier():
-    checkers = importlib.import_module(
-        "robo_orchard_sim.task_components.validators.checkers"
-    )
-    checker = checkers.is_gripper_open(
-        GripperRange(name="left_joint7", open_val=0.05, close_val=0.0),
-        robot_name="robot",
-    )
-
-    assert checker.robot_name == "robot"
-
-
-def test_validator_accepts_plain_actor_identifier():
-    validator = Validator(
-        actors=[
-            ValidatorActor(name="cube", uuid="", category="", actor_type="")
-        ],
-        criteria=[lambda _env, env_idx=0: True],
-        criteria_name=["criterion"],
-    )
-
-    assert validator.actor_names == ["cube"]
-    assert [actor.name for actor in validator.actors] == ["cube"]

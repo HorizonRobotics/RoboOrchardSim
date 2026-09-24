@@ -1,0 +1,58 @@
+scene:
+  type: room_table_workbench
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: panda_droid
+  initial_pos: [0.0, 0.0, 0.0]
+  init_joint_noise_std: 0.05
+  init_joint_pos:
+    panda_joint1: 0.0
+    panda_joint2: -0.95
+    panda_joint3: 0.0
+    panda_joint4: -1.82
+    panda_joint5: 0.0
+    panda_joint6: 1.31
+    panda_joint7: 0.0
+    finger_joint: 0.0
+  params:
+    camera_offsets:
+      ext2_camera:
+        xyz: [-0.0843577930, -0.4948429153, 0.4818388331]
+        quat: [0.5941752707, -0.6188753508, 0.3509019516, -0.3752557371]
+        convention: ros
+
+instruction:
+  template: articulated_operation
+  template_mode: fixed
+  actor_description_mode: raw
+
+task:
+  params:
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.73, 0.77]
+        y: [-0.30, 0.30]
+        z: [0.255, 0.255]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [2.8797932657906435, 3.4033920413889427]
+    light_reset:
+      enabled: false
+      preset: default_distant_light
+    texture_reset:
+      enabled: false
+      preset: default_table_texture
+
+asset_configs:
+  primary:
+    filter:
+      tags: [has_multi_joints]
+      spec_type: usd.articulation
+    prim_name: articulation

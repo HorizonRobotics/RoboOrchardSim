@@ -65,8 +65,8 @@ Choose either the local virtual environment or Docker installation path.
 
 ##### Option 1: Local Virtual Environment
 
-Local installation requires Python 3.10, an NVIDIA driver compatible with
-Isaac Sim 4.5.0, and access to the package indexes used by `isaacsim`,
+Local installation requires Python 3.11, an NVIDIA driver compatible with
+Isaac Sim 5.1.0, and access to the package indexes used by `isaacsim`,
 `isaaclab`, and `robo_orchard_core`.
 
 From the repository root:
@@ -74,21 +74,16 @@ From the repository root:
 ```bash
 git clone <repo_url>
 cd robo_orchard_sim
-python3.10 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-make install-editable \
-  PIP_ARGS="--extra-index-url https://pypi.nvidia.com"
+make install PIP_ARGS="--extra-index-url https://pypi.nvidia.com"
 ```
 
-The editable installation reads `pyproject.toml` and installs Isaac Sim 4.5.0
-and Isaac Lab 2.0.2 automatically.
-
-For a non-editable installation, use `make install` with the same package
-index:
+For an editable installation, use the following command instead:
 
 ```bash
-make install PIP_ARGS="--extra-index-url https://pypi.nvidia.com"
+make install-editable PIP_ARGS="--extra-index-url https://pypi.nvidia.com"
 ```
 
 ##### Option 2: Docker (Recommended)
@@ -121,105 +116,69 @@ make test-cluster
 
 ### 3. Run Examples
 
-#### Run `simple_orchard_env_example.py`
 
-The example below builds the default `place_a2b` task via
-`PlaceA2BTaskDefinition.build()`, serializes the generated environment config,
-resets the runtime environment, and steps the simulation for a few frames.
-For the current implementation, scene and embodiment are resolved from
-`place_a2b.yaml`, while task assets are defined in
-`PlaceA2BTaskDefinition.build()`.
+#### Build and Step an Environment
 
-```bash
-python3 examples/manipulation-app/scripts/simple_orchard_env_example.py
-```
-
-By default, the script writes the generated config to:
-
-```bash
-configs/place_a2b_orchard_env_example.json
-```
-
-You can override the output path:
+Select a registered task with `--task`. Its default YAML defines the scene,
+robot, assets, and task settings; `--config path/to/task.yaml` overrides it.
 
 ```bash
 python3 examples/manipulation-app/scripts/simple_orchard_env_example.py \
-  --output configs/place_a2b_orchard_env_example.json
+  --task place_a2b \
+  --asset-root "${ASSETS_DIR}"
 ```
 
-#### Run `data_synthesis_example.py`
+This smoke test resets and steps the environment, and saves its config to
+`configs/orchard_env_example.json` (`--output` overrides the path).
+It does not load asset splits; use synthesis or evaluation for split-based
+sampling.
 
-This example resamples task assets per seed, builds a fresh `OrchardEnv` for
-each episode, executes the task atomic action plan, and optionally records the
-result as MCAP data.
+#### Synthesize Data
 
-If `ORCHARD_ASSET_LIBRARY` is not set, pass the asset library explicitly:
+Sample assets per episode and execute the task's atomic action plan:
 
 ```bash
 python3 examples/manipulation-app/scripts/data_synthesis_example.py \
-  --task place_a2b_easy \
-  --asset-root ${ASSETS_DIR} \
+  --task place_a2b \
+  --asset-root "${ASSETS_DIR}" \
   --episodes 3 \
-  --seed 0
+  --seed 0 \
+  --task-save-root logs/data_synthesis
 ```
 
-By default, recordings are written under:
+Configs and MCAP recordings go to `config/` and `data/` under
+`logs/data_synthesis/place_a2b_<timestamp>/`.
 
-```bash
-logs/data_synthesis/<task>_<timestamp>/
-```
+- `--config path/to/task.yaml`: override the task YAML.
+- `--splits path/to/splits.yaml`: supply the named splits used by the task
+  YAML's `split` fields when sampling assets.
+- `--disable-recording`: run without MCAP output.
 
-and the per-episode serialized env configs are written under:
 
-```bash
-configs/data_synthesis/
-```
+#### Evaluate a Policy
 
-Useful optional flags:
-
-```bash
-python3 examples/manipulation-app/scripts/data_synthesis_example.py \
-  --task place_a2b_easy \
-  --asset-root ${ASSETS_DIR} \
-  --config path/to/task.yaml \
-  --max-steps 300 \
-  --record-dir logs/my_synthesis \
-  --output-config-dir configs/my_synthesis
-```
-
-To run the synthesis loop without MCAP recording:
-
-```bash
-python3 examples/manipulation-app/scripts/data_synthesis_example.py \
-  --task place_a2b_easy \
-  --asset-root ${ASSETS_DIR} \
-  --disable-recording
-```
-
-#### Run `eval_policy.py`
-
-`eval_policy.py` runs multi-task policy evaluation. The entire run —
-policy, per-task settings, splits, batch plans — is described by one
-eval-config YAML; the CLI only carries runtime knobs (output dir, GPUs,
-recording).
+Edit [eval_example.yaml](examples/manipulation-app/configs/eval_example.yaml)
+to set the policy, asset/split paths, and tasks. It defaults to a dummy policy;
+configure your model for actual evaluation. Each task specifies a registered
+`task_type` and optionally a task `yaml`. Set `split_type` to
+`seen`, `unseen_instance`, or `unseen_category` to override the task YAML's
+split selection; omit it to use the task YAML. `split_type` cannot be combined
+with `batch_plan`.
 
 ```bash
 python3 examples/manipulation-app/scripts/eval_policy.py \
   --eval-config examples/manipulation-app/configs/eval_example.yaml \
-  --output-dir XXXXX \
-  --gpus 0,1,2,3 \
-  [--enable-recording]
+  --output-dir eval_result/run_001 \
+  --gpus 0
 ```
 
-- `--eval-config`: eval-config YAML (`policy` / `defaults` / `tasks`).
-- `--output-dir`: top-level output directory; each task writes to
-  `<output-dir>/<task>/`, summary to `<output-dir>/summary.json`.
-- `--gpus`: comma-separated GPU ids; tasks run one per GPU and queue
-  when they exceed cards. Defaults to `CUDA_VISIBLE_DEVICES` or `0`.
-- `--enable-recording`: turn on MCAP recording for every task.
+Use `--gpus 0,1,2,3` for multiple GPUs; sharding and scheduling are automatic.
+Add `--enable-recording --export-video` for MCAP recordings and MP4 previews.
 
-See `examples/manipulation-app/configs/eval_example.yaml` for the YAML
-schema.
+Results go to `eval_result/run_001/`: `summary.json` contains leaderboard
+scores, and each task instance has its own subdirectory.
+To serve a model from a separate Python environment, use
+[robo_orchard_server](robo_orchard_server/README.md).
 
 ## License
 

@@ -20,8 +20,11 @@
 One YAML describes the entire evaluation (policy / output / per-task
 settings). Every task runs as a `BatchPlan`: either loaded from
 `task.batch_plan`, or synthesized from a single task yaml plus
-`episode_num`. Each task runs in its own subprocess on one GPU; results
-are aggregated into `<output_dir>/summary.json`.
+`episode_num`. Every config is compiled into one or more deterministic
+episode shards and dispatched through the same GPU worker scheduler.
+Execution can be serial or parallel on one or more GPUs. Results are
+aggregated into `<output_dir>/summary.json`.
+Sharding is automatic; individual tasks may explicitly set `shards`.
 
 Run:
     PYTHONPATH=$PWD python3 \\
@@ -32,20 +35,24 @@ Run:
 
 CLI flags:
     --eval-config / --output-dir / --gpus / --enable-recording
+    --export-video
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import signal
 import subprocess
+import threading
 import sys
 import tempfile
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from queue import Queue
 from typing import Any
@@ -56,9 +63,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from robo_orchard_sim.pipeline.evaluator.base import (
+    EpisodeResult,
+    EvaluationResult,
+    EvaluationSummary,
+    ShardSummary,
+    SkippedEpisode,
+    TaskSummary,
+)
+from robo_orchard_sim.task_components.selector import SelectorName
+
+
 _POLICY_CONFIG_DIR = _REPO_ROOT / "robo_orchard_sim" / "policy" / "configs"
 _BENCHMARK_ROOT = _REPO_ROOT / "robo_orchard_sim" / "benchmark"
-_SINGLE_TASK_FLAG = "--_single-task"
+_SHARD_MANIFEST_FLAG = "--_shard-manifest"
+_SHARD_ID_FLAG = "--_shard-id"
 
 
 # --------------------------------------------------------------------------- #
@@ -74,12 +93,22 @@ _TASK_FIELDS = {
     "split_type",
     "snapshot",
     "episode_num",
+    "shards",
+    "swap",
     "max_steps",
     "seed",
     "asset_root",
 }
-_DEFAULTS_FIELDS = _TASK_FIELDS - {"task_type", "yaml", "batch_plan"}
-_TOP_LEVEL_FIELDS = {"policy", "defaults", "tasks"}
+_DEFAULTS_FIELDS = _TASK_FIELDS - {"task_type", "yaml", "batch_plan", "shards"}
+_EXECUTION_FIELDS = {"gpus"}
+_TOP_LEVEL_FIELDS = {
+    "policy",
+    "execution",
+    "defaults",
+    "tasks",
+    "evaluation_id",
+    "team_id",
+}
 _VALID_SPLIT_TYPES = ("seen", "unseen_instance", "unseen_category")
 
 
@@ -87,6 +116,68 @@ _VALID_SPLIT_TYPES = ("seen", "unseen_instance", "unseen_category")
 class PolicyCfg:
     model_type: str
     model_yaml: str | None = None
+
+
+@dataclass(frozen=True)
+class ExecutionCfg:
+    """Default local execution resources; CLI options may override them."""
+
+    gpus: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class SwapCfg:
+    """Whether to rotate the task's target between episodes.
+
+    The dispatcher stores only settings; execution.py builds SwapConfig
+    inside the worker process.
+    """
+
+    enabled: bool = False
+    swap_per_scene: int = 1
+    """Episodes one scene serves. Only read when swap is enabled."""
+    selector: SelectorName = "random"
+
+    def to_evaluator_config(self, swap_config_cls: Any) -> Any:
+        """Hand these settings to the evaluator's own config type."""
+        return swap_config_cls(
+            enabled=self.enabled,
+            swap_per_scene=self.swap_per_scene,
+            selector=self.selector,
+        )
+
+
+def _parse_swap(name: str, raw: Any) -> SwapCfg:
+    """Read a task entry's optional `swap` block."""
+    if raw is None:
+        return SwapCfg()
+    if not isinstance(raw, dict):
+        raise SystemExit(
+            f"task {name!r}: `swap` must be a mapping with `enabled`, "
+            f"`selector` and `swap_per_scene`, got {type(raw).__name__}"
+        )
+    unknown = set(raw) - {"enabled", "selector", "swap_per_scene"}
+    if unknown:
+        raise SystemExit(
+            f"task {name!r}: unknown key(s) under `swap`: {sorted(unknown)}"
+        )
+    defaults = SwapCfg()
+    selector = raw.get("selector", defaults.selector)
+    if selector not in ("round_robin", "random"):
+        raise SystemExit(
+            f"task {name!r}: `swap.selector` must be 'round_robin' or "
+            f"'random', got {selector!r}"
+        )
+    enabled = bool(raw.get("enabled", defaults.enabled))
+    per_scene = int(raw.get("swap_per_scene", defaults.swap_per_scene))
+    if per_scene < 1:
+        raise SystemExit(
+            f"task {name!r}: `swap.swap_per_scene` must be >= 1, "
+            f"got {per_scene}"
+        )
+    return SwapCfg(
+        enabled=enabled, swap_per_scene=per_scene, selector=selector
+    )
 
 
 @dataclass(frozen=True)
@@ -106,6 +197,8 @@ class TaskCfg:
     asset_root: str
     seed: int = 0
     episode_num: int = 20
+    shards: int | None = None
+    swap: SwapCfg = field(default_factory=lambda: SwapCfg())
     max_steps: int = 1000
     splits: str | None = None
     split_type: str | None = None
@@ -119,8 +212,11 @@ class TaskCfg:
 @dataclass(frozen=True)
 class EvalConfig:
     policy: PolicyCfg
+    execution: ExecutionCfg
     tasks: list[TaskCfg]
     source_path: str = ""
+    evaluation_id: str = ""
+    team_id: str = ""
 
     def task(self, name: str) -> TaskCfg:
         for t in self.tasks:
@@ -171,6 +267,7 @@ def load_eval_config(path: str | Path) -> EvalConfig:
         )
 
     policy = _parse_policy(_require(raw, "policy", src, dict), src)
+    execution = _parse_execution(raw.get("execution") or {}, src)
     defaults = _parse_defaults(raw.get("defaults") or {}, src)
 
     tasks_raw = _require(raw, "tasks", src, dict)
@@ -181,7 +278,17 @@ def load_eval_config(path: str | Path) -> EvalConfig:
         for name, spec in tasks_raw.items()
     ]
 
-    return EvalConfig(policy=policy, tasks=tasks, source_path=str(src))
+    identifiers = {
+        key: _require(raw, key, src, str) if key in raw else ""
+        for key in ("evaluation_id", "team_id")
+    }
+    return EvalConfig(
+        policy=policy,
+        execution=execution,
+        tasks=tasks,
+        source_path=str(src),
+        **identifiers,
+    )
 
 
 def _require(d: dict, key: str, src: Path, ty: type) -> Any:
@@ -203,6 +310,30 @@ def _parse_policy(raw: dict, src: Path) -> PolicyCfg:
     return PolicyCfg(model_type=model_type, model_yaml=model_yaml)
 
 
+def _parse_execution(raw: dict, src: Path) -> ExecutionCfg:
+    unknown = set(raw) - _EXECUTION_FIELDS
+    if unknown:
+        raise ValueError(
+            f"unknown execution fields {sorted(unknown)} in {src}; "
+            f"allowed: {sorted(_EXECUTION_FIELDS)}"
+        )
+    raw_gpus = raw.get("gpus")
+    if raw_gpus is None:
+        gpus = None
+    elif isinstance(raw_gpus, (str, int)):
+        gpus = tuple(
+            gpu.strip() for gpu in str(raw_gpus).split(",") if gpu.strip()
+        )
+    elif isinstance(raw_gpus, list):
+        gpus = tuple(str(gpu) for gpu in raw_gpus)
+    else:
+        raise ValueError(f"execution.gpus must be a list or string: {src}")
+    if gpus == ():
+        raise ValueError(f"execution.gpus must not be empty: {src}")
+
+    return ExecutionCfg(gpus=gpus)
+
+
 def _parse_defaults(raw: dict, src: Path) -> dict:
     unknown = set(raw) - _DEFAULTS_FIELDS
     if unknown:
@@ -221,6 +352,10 @@ def _parse_task(*, name: str, raw: dict, defaults: dict, src: Path) -> TaskCfg:
             f"allowed: {sorted(_TASK_FIELDS)}"
         )
     merged = {**defaults, **raw}
+    if isinstance(defaults.get("swap"), dict) and isinstance(
+        raw.get("swap"), dict
+    ):
+        merged["swap"] = {**defaults["swap"], **raw["swap"]}
 
     if not raw.get("task_type"):
         raise ValueError(
@@ -251,6 +386,13 @@ def _parse_task(*, name: str, raw: dict, defaults: dict, src: Path) -> TaskCfg:
             f"task {name!r}: `asset_root` must be set in defaults or task "
             f"({src})"
         )
+    shards = merged.get("shards")
+    if shards is not None:
+        shards = int(shards)
+        if shards < 1:
+            raise ValueError(
+                f"task {name!r}: `shards` must be >= 1, got {shards} ({src})"
+            )
 
     return TaskCfg(
         name=name,
@@ -258,6 +400,8 @@ def _parse_task(*, name: str, raw: dict, defaults: dict, src: Path) -> TaskCfg:
         asset_root=str(merged["asset_root"]),
         seed=int(merged.get("seed", 0)),
         episode_num=int(merged.get("episode_num", 20)),
+        shards=shards,
+        swap=_parse_swap(name, merged.get("swap")),
         max_steps=int(merged.get("max_steps", 1000)),
         splits=_opt_str(merged.get("splits")),
         split_type=_opt_str(merged.get("split_type")),
@@ -306,10 +450,23 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable MCAP recording for every task in this run.",
     )
+    p.add_argument(
+        "--export-video",
+        action="store_true",
+        help="Export MP4s and backfill summary after evaluation; "
+        "requires --enable-recording.",
+    )
     # Internal: marks the worker subprocess.
     p.add_argument(
-        _SINGLE_TASK_FLAG,
-        dest="_single_task",
+        _SHARD_MANIFEST_FLAG,
+        dest="_shard_manifest",
+        type=str,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    p.add_argument(
+        _SHARD_ID_FLAG,
+        dest="_shard_id",
         type=str,
         default=None,
         help=argparse.SUPPRESS,
@@ -317,9 +474,14 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _resolve_gpus(cli_arg: str | None) -> list[str]:
+def _resolve_gpus(
+    cli_arg: str | None,
+    configured: tuple[str, ...] | None = None,
+) -> list[str]:
     if cli_arg:
         gpus = [g.strip() for g in cli_arg.split(",") if g.strip()]
+    elif configured is not None:
+        gpus = list(configured)
     elif env := os.environ.get("CUDA_VISIBLE_DEVICES", "").strip():
         gpus = [g.strip() for g in env.split(",") if g.strip()]
     else:
@@ -358,8 +520,8 @@ def _rewrite_split(yaml_path: str, split_type: str, dest: Path) -> str:
     Instruction fields (e.g. actor_description_mode) are intentionally
     left untouched — they control language, not the dataset split.
 
-    The rewritten yaml is what actually gets run; `batch_evaluation` copies
-    it into each config's output dir, so no extra durable copy is needed
+    The rewritten yaml is what actually gets run; the shared execution layer
+    copies it into the config's output dir, so no extra durable copy is needed
     here — `dest` is expected to be a scratch path.
     """
     src = Path(yaml_path)
@@ -469,6 +631,46 @@ def _task_log(output_dir: Path, task_name: str) -> Path:
     return _task_dir(output_dir, task_name) / "stdout.log"
 
 
+def _print_worker_error_log(
+    output_dir: Path,
+    task_name: str,
+    reason: str,
+    *,
+    scan_lines: int = 400,
+    fallback_lines: int = 80,
+) -> None:
+    """Print only failed-worker logs; successful workers stay file-only."""
+    log_path = _task_log(output_dir, task_name)
+    print(
+        f"\n--- worker error: task={task_name}: {reason} ---",
+        file=sys.stderr,
+        flush=True,
+    )
+    if not log_path.exists():
+        print(f"worker log not found: {log_path}", file=sys.stderr, flush=True)
+        return
+    with log_path.open("r", encoding="utf-8", errors="replace") as log:
+        tail = list(deque(log, maxlen=scan_lines))
+    traceback_starts = [
+        i
+        for i, line in enumerate(tail)
+        if line.startswith("Traceback (most recent call last):")
+    ]
+    excerpt = (
+        tail[traceback_starts[-1] :]
+        if traceback_starts
+        else tail[-fallback_lines:]
+    )
+    print(
+        f"--- error excerpt from {log_path} ---",
+        file=sys.stderr,
+        flush=True,
+    )
+    for line in excerpt:
+        print(line, end="", file=sys.stderr)
+    print("--- end worker error log ---\n", file=sys.stderr, flush=True)
+
+
 def _resolve_model_yaml(policy: PolicyCfg) -> Path:
     if policy.model_yaml:
         return Path(policy.model_yaml)
@@ -476,7 +678,7 @@ def _resolve_model_yaml(policy: PolicyCfg) -> Path:
 
 
 # --------------------------------------------------------------------------- #
-# Worker: --_single-task
+# Shared shard worker
 # --------------------------------------------------------------------------- #
 
 
@@ -487,6 +689,7 @@ def _load_model_cfg(policy: PolicyCfg) -> dict:
     loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(loaded, dict):
         raise ValueError(f"Model yaml must contain a mapping: {path}")
+    loaded = _expand_env(loaded, src=path)
     declared = loaded.get("policy")
     if declared is not None and declared != policy.model_type:
         raise ValueError(
@@ -498,82 +701,32 @@ def _load_model_cfg(policy: PolicyCfg) -> dict:
     return cfg
 
 
-def _build_policy(policy_cfg: PolicyCfg):
-    from robo_orchard_core.policy.base import PolicyConfig
-    from robo_orchard_sim.policy.factory import create_policy_from_model_cfg
-
-    obj = create_policy_from_model_cfg(_load_model_cfg(policy_cfg))
-    return obj() if isinstance(obj, PolicyConfig) else obj
-
-
-def _run_single_task(
-    eval_cfg: EvalConfig,
-    task_name: str,
-    output_dir: Path,
-    enable_recording: bool,
-) -> int:
-    """Worker entry: build the plan for one task and execute every group."""
-    from robo_orchard_core.utils.logging import LoggerManager
-    from robo_orchard_sim.pipeline.evaluator.batch_evaluation import (
-        run_group_evaluation,
-    )
-
-    logger = LoggerManager().get_child(__name__)
-    task = eval_cfg.task(task_name)
-    task_out = _task_dir(output_dir, task.name)
-    task_out.mkdir(parents=True, exist_ok=True)
-
-    plan = _build_plan(task)
-    snapshot = Path(task.snapshot) if task.snapshot else None
-    splits = Path(task.splits) if task.splits else None
-
-    policy = _build_policy(eval_cfg.policy)
+def _stop_process(process: subprocess.Popen) -> None:
+    """Stop and reap a process group created by this dispatcher."""
+    if process.poll() is not None:
+        return
     try:
-        total_eps = ok_eps = 0
-        config_summaries: list[dict[str, Any]] = []
-        for group in plan.groups:
-            result = run_group_evaluation(
-                plan=plan,
-                group_id=group.group_id,
-                asset_root=task.asset_root,
-                output_root_dir=str(task_out),
-                policy_or_cfg=policy,
-                max_steps=task.max_steps,
-                enable_recording=enable_recording,
-                snapshot_path=snapshot,
-                splits_path=splits,
-            )
-            total_eps += result.total_episodes
-            ok_eps += result.success_episodes
-            config_summaries.extend(
-                _config_summary_payload(task_result)
-                for task_result in result.task_results
-            )
-            logger.info(
-                "[%s] group=%s: %d/%d episodes succeeded",
-                task.name,
-                group.group_id,
-                result.success_episodes,
-                result.total_episodes,
-            )
-        logger.info(
-            "[%s] done: %d groups, %d/%d episodes succeeded",
-            task.name,
-            len(plan.groups),
-            ok_eps,
-            total_eps,
-        )
-        _write_task_eval_summary(
-            task_out=task_out,
-            task=task,
-            plan_groups=len(plan.groups),
-            configs=config_summaries,
-        )
-        return 0
-    finally:
-        close = getattr(policy, "close", None)
-        if callable(close):
-            close()
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
+def _shard_dir(output_dir: Path, task_name: str, shard_id: str) -> Path:
+    return _task_dir(output_dir, task_name) / "shards" / shard_id
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    from robo_orchard_sim.pipeline.evaluator.execution import write_json_atomic
+
+    write_json_atomic(path, payload)
 
 
 # --------------------------------------------------------------------------- #
@@ -581,10 +734,12 @@ def _run_single_task(
 # --------------------------------------------------------------------------- #
 
 
-def _build_worker_cmd(
-    task_name: str,
+def _build_shard_worker_cmd(
+    *,
     eval_config_path: str,
     output_dir: Path,
+    manifest_path: Path,
+    shard_id: str,
     enable_recording: bool,
 ) -> list[str]:
     cmd = [
@@ -594,49 +749,88 @@ def _build_worker_cmd(
         eval_config_path,
         "--output-dir",
         str(output_dir),
-        _SINGLE_TASK_FLAG,
-        task_name,
+        _SHARD_MANIFEST_FLAG,
+        str(manifest_path),
+        _SHARD_ID_FLAG,
+        shard_id,
     ]
     if enable_recording:
         cmd.append("--enable-recording")
     return cmd
 
 
-def _run_worker(
+def _run_shard_worker(
+    *,
     task_name: str,
+    shard_id: str,
+    manifest_path: Path,
     eval_config_path: str,
     output_dir: Path,
     enable_recording: bool,
     gpu_q: Queue,
-) -> tuple[str, int, str | None]:
-    """Wait for a GPU, exec the worker subprocess, free the GPU."""
+    cancelled: threading.Event,
+) -> tuple[str, str, int, str | None]:
+    """Run one shard subprocess on the next available GPU worker slot."""
     gpu = gpu_q.get()
     try:
-        task_out = _task_dir(output_dir, task_name)
-        task_out.mkdir(parents=True, exist_ok=True)
-        log_path = _task_log(output_dir, task_name)
-        env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu)}
-        cmd = _build_worker_cmd(
-            task_name, eval_config_path, output_dir, enable_recording
+        shard_out = _shard_dir(output_dir, task_name, shard_id)
+        shard_out.mkdir(parents=True, exist_ok=True)
+        log_path = shard_out / "stdout.log"
+        summary_path = shard_out / "shard_summary.json"
+        summary_path.unlink(missing_ok=True)
+        env = {
+            **os.environ,
+            "CUDA_VISIBLE_DEVICES": str(gpu),
+        }
+        cmd = _build_shard_worker_cmd(
+            eval_config_path=eval_config_path,
+            output_dir=output_dir,
+            manifest_path=manifest_path,
+            shard_id=shard_id,
+            enable_recording=enable_recording,
         )
         print(
-            f"[dispatch] task={task_name} gpu={gpu} -> {log_path}",
+            f"[dispatch] task={task_name} shard={shard_id} "
+            f"gpu={gpu} -> {log_path}",
             flush=True,
         )
         with log_path.open("w", encoding="utf-8") as log:
             log.write(f"# cmd: {' '.join(cmd)}\n")
             log.write(f"# CUDA_VISIBLE_DEVICES={gpu}\n\n")
             log.flush()
-            rc = subprocess.run(
+            if cancelled.is_set():
+                return task_name, shard_id, 1, "evaluation cancelled"
+            process = subprocess.Popen(
                 cmd,
                 env=env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                check=False,
-            ).returncode
-        err = None if rc == 0 else f"subprocess returncode={rc}"
-        print(f"[done]     task={task_name} gpu={gpu} rc={rc}", flush=True)
-        return task_name, rc, err
+                start_new_session=True,
+            )
+            try:
+                while True:
+                    if cancelled.is_set():
+                        return task_name, shard_id, 1, "evaluation cancelled"
+                    try:
+                        return_code = process.wait(timeout=0.2)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+            finally:
+                _stop_process(process)
+        if return_code != 0:
+            error = f"subprocess returncode={return_code}"
+        elif not summary_path.exists():
+            return_code = 1
+            error = "worker exited without shard_summary.json"
+        else:
+            error = None
+        print(
+            f"[done] task={task_name} shard={shard_id} "
+            f"gpu={gpu} rc={return_code}",
+            flush=True,
+        )
+        return task_name, shard_id, return_code, error
     finally:
         gpu_q.put(gpu)
 
@@ -646,269 +840,323 @@ def _run_worker(
 # --------------------------------------------------------------------------- #
 
 
-def _stage_success_rate(
-    episodes: list[dict[str, Any]],
-) -> dict[str, float]:
-    """Aggregate `criteria_reached` across episodes into per-stage rates."""
-    counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
-    for ep in episodes:
-        reached = (ep.get("metrics") or {}).get("criteria_reached") or {}
-        if not isinstance(reached, dict):
-            continue
-        for name, ok in reached.items():
-            counts[name][1] += 1
-            if bool(ok):
-                counts[name][0] += 1
-    return {name: r / t if t else 0.0 for name, (r, t) in counts.items()}
-
-
-def _success_count(episodes: list[Any]) -> int:
-    return sum(bool(episode.success) for episode in episodes)
-
-
-def _config_summary_payload(task_result: Any) -> dict[str, Any]:
-    """Return config-level completion metadata for a task result."""
-    result = task_result.result
-    episodes = result.episode_results if result is not None else []
-    return {
-        **dict(task_result.user_data),
-        "config_path": task_result.config_path,
-        "error": task_result.error,
-        "eval_result_json": task_result.result_json_path,
-        "seed": result.seed_start if result is not None else None,
-        "episode_num": len(episodes),
-        "success_count": _success_count(episodes),
-        "success_rate": result.success_rate if result is not None else 0.0,
-        "average_progress": (
-            result.average_progress if result is not None else 0.0
-        ),
-        "total": len(episodes),
-    }
-
-
-def _write_task_eval_summary(
-    *,
-    task_out: Path,
-    task: TaskCfg,
-    plan_groups: int,
-    configs: list[dict[str, Any]],
-) -> None:
-    """Persist all config outcomes so parent aggregation sees failures."""
-    failed = [cfg for cfg in configs if cfg.get("error")]
-    payload = {
-        "task_name": task.name,
-        "task_type": task.task_type,
-        "groups": plan_groups,
-        "configs_total": len(configs),
-        "configs_failed": len(failed),
-        "configs_succeeded": len(configs) - len(failed),
-        "configs": configs,
-    }
-    (task_out / "task_eval_summary.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+def _parse_episode_result(raw: dict[str, Any]) -> EpisodeResult:
+    """Validate a worker episode before it reaches public summaries."""
+    seed = raw["seed"]
+    success = raw["success"]
+    steps = raw.get("steps", 0)
+    stop_reason = raw.get("stop_reason", "")
+    instruction = raw.get("instruction", "")
+    stage_scores = raw.get("stage_scores", {})
+    metrics = raw.get("metrics") or {}
+    if type(seed) is not int or type(steps) is not int or steps < 0:
+        raise ValueError("episode seed/steps must be integers; steps >= 0")
+    if type(success) is not bool or not isinstance(stop_reason, str):
+        raise ValueError("episode success/stop_reason have invalid types")
+    if not isinstance(instruction, str) or not isinstance(stage_scores, dict):
+        raise ValueError("episode instruction/stage_scores have invalid types")
+    if not isinstance(metrics, dict):
+        raise ValueError("episode metrics must be a mapping")
+    if any(not isinstance(name, str) for name in stage_scores):
+        raise ValueError("stage names must be strings")
+    return EpisodeResult(
+        seed=seed,
+        success=success,
+        progress=_score(raw["progress"]),
+        steps=steps,
+        stop_reason=stop_reason,
+        metrics=metrics,
+        checker_summary=raw.get("checker_summary"),
+        instruction=instruction,
+        stage_scores={
+            name: _score(value) for name, value in stage_scores.items()
+        },
     )
 
 
-def _load_task_eval_summary(task_out: Path) -> dict[str, Any] | None:
-    summary_path = task_out / "task_eval_summary.json"
-    if not summary_path.exists():
-        return None
-    return json.loads(summary_path.read_text(encoding="utf-8"))
+def _read_shard_summary(
+    output_dir: Path,
+    shard: Any,
+    worker_error: str | None,
+) -> ShardSummary:
+    from robo_orchard_sim.pipeline.evaluator.distributed import (
+        validate_shard_result,
+    )
 
-
-def _load_config_eval_result(
-    config: dict[str, Any],
-) -> tuple[dict[str, Any] | None, str | None]:
-    result_json = config.get("eval_result_json")
-    if not result_json:
-        return None, "missing eval_result_json"
-    path = Path(result_json)
-    if not path.exists():
-        return None, f"missing eval_result.json: {path}"
+    outcome = ShardSummary(shard=shard)
     try:
-        return json.loads(path.read_text(encoding="utf-8")), None
-    except Exception as exc:
-        return None, f"failed to load eval_result.json: {exc}"
-
-
-def _summarize_config_results(
-    configs: list[dict[str, Any]],
-) -> tuple[
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    list[dict[str, Any]],
-    int,
-]:
-    episodes: list[dict[str, Any]] = []
-    per_config: list[dict[str, Any]] = []
-    failed_configs: list[dict[str, Any]] = []
-    skipped = 0
-
-    for config in configs:
-        config_record = dict(config)
+        if worker_error:
+            raise ValueError(worker_error)
+        path = _shard_dir(output_dir, shard.task_name, shard.shard_id)
+        summary = json.loads((path / "shard_summary.json").read_text())
+        if not isinstance(summary, dict):
+            raise ValueError("shard summary must be a JSON object")
+        if summary.get("shard") != shard.to_payload():
+            raise ValueError("manifest metadata mismatch")
+        configs = summary.get("configs") or []
+        if len(configs) != 1:
+            raise ValueError("expected one config result")
+        config = configs[0]
+        if not isinstance(config, dict):
+            raise ValueError("config result must be a JSON object")
         if config.get("error"):
-            failed_configs.append(config_record)
-            per_config.append(config_record)
-            continue
+            raise ValueError(config["error"])
+        outcome.result_json_path = config.get("eval_result_json")
+        if not outcome.result_json_path:
+            raise ValueError("missing eval_result.json")
+        data = json.loads(Path(outcome.result_json_path).read_text())
+        validate_shard_result(shard, data)
+        episodes = [
+            _parse_episode_result(ep) for ep in data["episode_results"]
+        ]
+        outcome.result = EvaluationResult(
+            episode_num=len(episodes),
+            seed_start=shard.seed_start,
+            success_rate=sum(ep.success for ep in episodes) / len(episodes)
+            if episodes
+            else 0.0,
+            average_progress=sum(ep.progress for ep in episodes)
+            / len(episodes)
+            if episodes
+            else 0.0,
+            episode_results=episodes,
+            skipped_episodes=[
+                SkippedEpisode(**ep) for ep in data.get("skipped_episodes", [])
+            ],
+            attempted_scene_seeds=data.get("attempted_scene_seeds", []),
+        )
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        outcome.error = f"{shard.shard_id}: {exc}"
+    return outcome
 
-        data, load_error = _load_config_eval_result(config)
-        if load_error is not None:
-            config_record["error"] = load_error
-            failed_configs.append(config_record)
-            per_config.append(config_record)
-            continue
 
-        assert data is not None
-        eps = data.get("episode_results") or []
-        episodes.extend(eps)
-        skipped += len(data.get("skipped_episodes") or [])
-        config_record.update(
+def _merge_task_shard_summaries(
+    *,
+    output_dir: Path,
+    task: TaskCfg,
+    shards: list[Any],
+    shard_errors: dict[str, str] | None = None,
+) -> TaskSummary:
+    """Load validated worker outcomes and persist the public task summary."""
+    summary = TaskSummary(
+        task.name,
+        [
+            _read_shard_summary(
+                output_dir, shard, (shard_errors or {}).get(shard.shard_id)
+            )
+            for shard in shards
+        ],
+    )
+    # Keep merged per-config result files for existing result consumers.
+    configs: dict[tuple[str, int], list[ShardSummary]] = defaultdict(list)
+    for item in summary.shards:
+        configs[(item.shard.group_id, item.shard.config_index)].append(item)
+    config_payloads = []
+    for (group, index), parts in configs.items():
+        result = TaskSummary(task.name, parts)
+        metrics = result.metrics
+        completed = [s.result for s in parts if s.result is not None]
+        combined = EvaluationResult(
+            episode_num=metrics.episodes,
+            seed_start=parts[0].shard.seed_start
+            - parts[0].shard.episode_offset
+            // parts[0].shard.episodes_per_scene,
+            success_rate=metrics.success_rate,
+            average_progress=metrics.avg_progress,
+            episode_results=[
+                ep for r in completed for ep in r.episode_results
+            ],
+            skipped_episodes=[
+                ep for r in completed for ep in r.skipped_episodes
+            ],
+            attempted_scene_seeds=[
+                seed for r in completed for seed in r.attempted_scene_seeds
+            ],
+        )
+        result_path = (
+            _task_dir(output_dir, task.name)
+            / group
+            / f"config_{index:04d}"
+            / "eval_result.json"
+        )
+        _write_json_atomic(result_path, asdict(combined))
+        config_payloads.append(
             {
-                "episodes": len(eps),
-                "success_rate": data.get("success_rate", 0.0),
-                "avg_progress": data.get("average_progress", 0.0),
+                "group_id": group,
+                "config_index": index,
+                "config_path": parts[0].shard.config_path,
+                "error": result.to_payload()["error"],
+                "eval_result_json": str(result_path),
+                "seed": combined.seed_start,
+                "episode_num": metrics.episodes,
+                "success_count": metrics.successes,
+                "success_rate": metrics.success_rate,
+                "average_progress": metrics.avg_progress,
+                "total": metrics.episodes,
             }
         )
-        per_config.append(config_record)
-
-    return episodes, per_config, failed_configs, skipped
-
-
-def _summarize_task(
-    task_out: Path, rc: int, err: str | None
-) -> dict[str, Any]:
-    """Merge per-config metrics while preserving config-level failures."""
-    if rc != 0:
-        return {"status": "error", "error": err or f"returncode={rc}"}
-
-    task_summary = _load_task_eval_summary(task_out)
-    if task_summary is None:
-        return {
-            "status": "error",
-            "error": f"missing task_eval_summary.json under {task_out}",
-        }
-
-    configs = task_summary.get("configs") or []
-    episodes, per_config, failed_configs, skipped = _summarize_config_results(
-        configs
+    _write_json_atomic(
+        _task_dir(output_dir, task.name) / "task_eval_summary.json",
+        {
+            **summary.to_payload(),
+            "task_type": task.task_type,
+            "groups": len({shard.group_id for shard in shards}),
+            "configs": config_payloads,
+        },
     )
+    return summary
 
-    total = len(episodes)
-    success = sum(1 for ep in episodes if ep.get("success"))
-    progress = sum(float(ep.get("progress", 0.0)) for ep in episodes)
-    configs_failed = len(failed_configs)
-    configs_total = len(configs)
-    if configs_total == 0:
-        return {
-            "status": "error",
-            "error": f"task_eval_summary.json has no configs under {task_out}",
-        }
-    configs_succeeded = configs_total - configs_failed
-    if configs_failed:
-        status = "partial_error" if configs_succeeded else "error"
-    else:
-        status = "ok"
-    return {
-        "status": status,
-        "episodes": total,
-        "success_rate": success / total if total else 0.0,
-        "avg_progress": progress / total if total else 0.0,
-        "stage_success_rate": _stage_success_rate(episodes),
-        "skipped_episodes": skipped,
-        "configs": configs_total,
-        "configs_total": configs_total,
-        "configs_succeeded": configs_succeeded,
-        "configs_failed": configs_failed,
-        "failed_configs": failed_configs,
-        "per_config": per_config,
+
+def _score(value: Any) -> float:
+    if type(value) not in (int, float) or not 0.0 <= value <= 1.0:
+        raise ValueError(f"expected a finite score in [0, 1], got {value!r}")
+    return float(value)
+
+
+def _preview_episode(episode: EpisodeResult, index: int) -> dict[str, Any]:
+    """Project an episode onto the internal leaderboard contract."""
+    failed = episode.stop_reason.startswith("episode_error:")
+    score = _score(episode.progress)
+    stage_scores = {
+        name: _score(value) for name, value in episode.stage_scores.items()
     }
+    return {
+        "episode_index": index,
+        "seed": episode.seed,
+        "status": "failed" if failed else "succeeded",
+        "success": False if failed else episode.success,
+        "score": 0.0 if failed else score,
+        "steps": episode.steps,
+        "stop_reason": episode.stop_reason,
+        "instruction": episode.instruction,
+        "stage_scores": (
+            {name: 0.0 for name in stage_scores} if failed else stage_scores
+        ),
+        "video": "",
+    }
+
+
+def _leaderboard_task_result(task: TaskSummary) -> dict[str, Any]:
+    """Count every planned episode, including missing shard results."""
+    total = sum(shard.shard.episode_count for shard in task.shards)
+    episodes = [
+        _preview_episode(episode, index)
+        for index, episode in enumerate(
+            episode
+            for shard in task.shards
+            if shard.result is not None
+            for episode in shard.result.episode_results
+        )
+    ]
+    failed = total - sum(ep["status"] == "succeeded" for ep in episodes)
+    return {
+        "status": "failed" if failed or task.status != "ok" else "succeeded",
+        "episode_count": total,
+        "failed_episode_count": failed,
+        "score": (
+            math.fsum(ep["score"] for ep in episodes) / total if total else 0.0
+        ),
+        "success_rate": (
+            sum(ep["success"] for ep in episodes) / len(episodes)
+            if episodes
+            else 0.0
+        ),
+        "stage_success_rate": task.metrics.stage_success_rate,
+        "preview_episodes": episodes[:10],
+    }
+
+
+def _format_summary_json(data: dict[str, Any], level: int = 0) -> str:
+    """Indent leaderboard objects and keep preview episodes on one line."""
+    if not data:
+        return "{}"
+    indent = "  " * level
+    fields = []
+    for key, value in data.items():
+        if isinstance(value, dict):
+            rendered = _format_summary_json(value, level + 1)
+        elif key == "preview_episodes" and value:
+            episodes = ",\n".join(
+                f"{indent}    {json.dumps(episode, allow_nan=False)}"
+                for episode in value
+            )
+            rendered = f"[\n{episodes}\n{indent}  ]"
+        else:
+            rendered = json.dumps(value, allow_nan=False)
+        fields.append(f"{indent}  {json.dumps(key)}: {rendered}")
+    return "{\n" + ",\n".join(fields) + f"\n{indent}}}"
 
 
 def _write_summary(
     output_dir: Path,
     eval_cfg: EvalConfig,
-    per_task: dict[str, dict[str, Any]],
+    per_task: dict[str, TaskSummary],
     started_at: float,
+    execution: Any,
 ) -> Path:
-    task_names = [t.name for t in eval_cfg.tasks]
-    ok = [t for t in task_names if per_task[t].get("status") == "ok"]
-    partial = [
-        t for t in task_names if per_task[t].get("status") == "partial_error"
-    ]
-    metric_tasks = [
-        t for t in task_names if per_task[t].get("episodes", 0) > 0
-    ]
-    total_eps = sum(per_task[t]["episodes"] for t in metric_tasks)
-    configs_total = sum(
-        per_task[t].get("configs_total", 0) for t in task_names
+    distributed = EvaluationSummary(list(per_task.values()))
+    _write_json_atomic(
+        output_dir / "distributed_summary.json",
+        {
+            "eval_config": eval_cfg.source_path,
+            "policy": {
+                "model_type": eval_cfg.policy.model_type,
+                "model_yaml": str(_resolve_model_yaml(eval_cfg.policy)),
+            },
+            "execution": {"gpus": list(execution.gpus)},
+            **distributed.to_payload(),
+            "elapsed_seconds": round(time.time() - started_at, 2),
+        },
     )
-    configs_failed = sum(
-        per_task[t].get("configs_failed", 0) for t in task_names
+    task_results = {
+        task.name: _leaderboard_task_result(per_task[task.name])
+        for task in eval_cfg.tasks
+    }
+    task_fields = (
+        "episode_count",
+        "failed_episode_count",
+        "score",
+        "success_rate",
+        "stage_success_rate",
+        "preview_episodes",
     )
-
-    def _weighted(field: str) -> float:
-        if not total_eps:
-            return 0.0
-        return (
-            sum(
-                per_task[t][field] * per_task[t]["episodes"]
-                for t in metric_tasks
+    payload = {
+        "evaluation_id": eval_cfg.evaluation_id,
+        "team_id": eval_cfg.team_id,
+        "status": (
+            "succeeded"
+            if all(
+                task["status"] == "succeeded" for task in task_results.values()
             )
-            / total_eps
-        )
-
-    status = "ok" if len(ok) == len(task_names) else "partial_error"
-    if any(per_task[t].get("status") == "error" for t in task_names):
-        status = "error"
-
-    summary = {
-        "eval_config": eval_cfg.source_path,
-        "policy": {
-            "model_type": eval_cfg.policy.model_type,
-            "model_yaml": str(_resolve_model_yaml(eval_cfg.policy)),
+            else "failed"
+        ),
+        "task_results": {
+            name: {key: task[key] for key in task_fields}
+            for name, task in task_results.items()
         },
-        "tasks": {t: per_task[t] for t in task_names},
-        "overall": {
-            "status": status,
-            "ok_tasks": len(ok),
-            "partial_error_tasks": len(partial),
-            "total_tasks": len(task_names),
-            "total_episodes": total_eps,
-            "success_rate": _weighted("success_rate"),
-            "avg_progress": _weighted("avg_progress"),
-            "configs_total": configs_total,
-            "configs_failed": configs_failed,
-            "configs_succeeded": configs_total - configs_failed,
-        },
-        "elapsed_seconds": round(time.time() - started_at, 2),
+        "overall_score": (
+            math.fsum(task["score"] for task in task_results.values())
+            / len(task_results)
+        ),
     }
     path = output_dir / "summary.json"
-    path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    path.write_text(_format_summary_json(payload) + "\n", encoding="utf-8")
     return path
 
 
 def _print_console_summary(
     eval_cfg: EvalConfig,
-    per_task: dict[str, dict[str, Any]],
+    per_task: dict[str, TaskSummary],
     summary_path: Path,
 ) -> None:
     print(f"\n=== Summary written: {summary_path} ===", flush=True)
     for t in eval_cfg.tasks:
-        s = per_task[t.name]
-        if s["status"] == "error":
-            print(f"  [error] {t.name}: {s.get('error')}", flush=True)
-            continue
-        label = "partial" if s["status"] == "partial_error" else "ok"
-        stages = ", ".join(
-            f"{k}={v:.2f}" for k, v in s["stage_success_rate"].items()
-        )
+        result = _leaderboard_task_result(per_task[t.name])
         print(
-            f"  [{label}] {t.name}: success_rate={s['success_rate']:.4f} "
-            f"avg_progress={s['avg_progress']:.4f} "
-            f"episodes={s['episodes']} "
-            f"configs={s['configs_succeeded']}/{s['configs_total']} "
-            f"failed_configs={s['configs_failed']} stages=[{stages}]",
+            f"  [{result['status']}] {t.name}: "
+            f"score={result['score']:.4f} "
+            f"episodes={result['episode_count']} "
+            f"failed_episodes={result['failed_episode_count']}",
             flush=True,
         )
 
@@ -918,69 +1166,235 @@ def _print_console_summary(
 # --------------------------------------------------------------------------- #
 
 
-def _dispatch(eval_cfg: EvalConfig, args: argparse.Namespace) -> int:
-    output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    gpus = _resolve_gpus(args.gpus)
+def _dispatch_work_items(
+    eval_cfg: EvalConfig,
+    *,
+    output_dir: Path,
+    gpus: list[str],
+    started_at: float,
+    enable_recording: bool,
+) -> int:
+    from robo_orchard_sim.pipeline.evaluator.distributed import (
+        EvaluationExecutionConfig,
+        EvaluationManifest,
+        build_evaluation_shards,
+        write_evaluation_manifest,
+    )
 
-    task_names = [t.name for t in eval_cfg.tasks]
-    started_at = time.time()
+    from robo_orchard_sim.pipeline.evaluator.distributed.scheduling import (
+        EvaluationWorkload,
+        allocate_task_shards,
+    )
 
+    execution = EvaluationExecutionConfig(gpus=tuple(gpus))
+    plans = [_build_plan(task) for task in eval_cfg.tasks]
+    shard_counts = allocate_task_shards(
+        [
+            EvaluationWorkload(
+                episodes_per_config=plan.episodes_per_config,
+                max_steps=task.max_steps,
+                config_count=sum(len(group.configs) for group in plan.groups),
+                episodes_per_scene=(
+                    task.swap.swap_per_scene if task.swap.enabled else 1
+                ),
+                shards=task.shards,
+            )
+            for task, plan in zip(eval_cfg.tasks, plans, strict=True)
+        ],
+        len(gpus),
+    )
+    task_manifests = {}
+    jobs = []
+    job_costs = {}
+    for task, plan, shards_per_config in zip(
+        eval_cfg.tasks, plans, shard_counts, strict=True
+    ):
+        shards = build_evaluation_shards(
+            plan=plan,
+            task_name=task.name,
+            shards_per_config=shards_per_config,
+            episodes_per_scene=(
+                task.swap.swap_per_scene if task.swap.enabled else 1
+            ),
+        )
+        manifest = EvaluationManifest(
+            run_id=output_dir.name,
+            policy_id=eval_cfg.policy.model_type,
+            shards=tuple(shards),
+        )
+        manifest_path = write_evaluation_manifest(
+            manifest,
+            _task_dir(output_dir, task.name) / "evaluation_manifest.json",
+        )
+        task_manifests[task.name] = (manifest, manifest_path)
+        jobs.extend(
+            (task.name, shard.shard_id, manifest_path)
+            for shard in manifest.shards
+        )
+
+        for shard in manifest.shards:
+            job_costs[(task.name, shard.shard_id)] = (
+                shard.episode_count * task.max_steps
+            )
+
+    # Longest estimated processing time first; ties preserve input order.
+    jobs.sort(key=lambda job: job_costs[(job[0], job[1])], reverse=True)
     gpu_q: Queue = Queue()
-    for g in gpus:
-        gpu_q.put(g)
+    for gpu in execution.gpu_slots():
+        gpu_q.put(gpu)
 
-    results: dict[str, tuple[int, str | None]] = {}
-    with ThreadPoolExecutor(
-        max_workers=min(len(task_names), len(gpus))
-    ) as pool:
+    worker_results = {}
+    max_workers = execution.concurrency(len(jobs))
+    print(
+        f"[plan] work_items={len(jobs)} "
+        f"gpus={list(execution.gpus)} "
+        f"concurrency={max_workers}",
+        flush=True,
+    )
+    cancelled = threading.Event()
+    pool = ThreadPoolExecutor(max_workers=max_workers)
+    try:
         futures = [
             pool.submit(
-                _run_worker,
-                name,
-                eval_cfg.source_path,
-                output_dir,
-                args.enable_recording,
-                gpu_q,
+                _run_shard_worker,
+                task_name=task_name,
+                shard_id=shard_id,
+                manifest_path=manifest_path,
+                eval_config_path=eval_cfg.source_path,
+                output_dir=output_dir,
+                enable_recording=enable_recording,
+                gpu_q=gpu_q,
+                cancelled=cancelled,
             )
-            for name in task_names
+            for task_name, shard_id, manifest_path in jobs
         ]
-        for fut in futures:
-            task, rc, err = fut.result()
-            results[task] = (rc, err)
+        for future in futures:
+            task_name, shard_id, return_code, error = future.result()
+            worker_results[(task_name, shard_id)] = (return_code, error)
+    finally:
+        cancelled.set()
+        pool.shutdown(wait=True, cancel_futures=True)
 
-    per_task = {
-        name: _summarize_task(_task_dir(output_dir, name), *results[name])
-        for name in task_names
-    }
+    per_task = {}
+    for task in eval_cfg.tasks:
+        manifest, _ = task_manifests[task.name]
+        shard_errors = {
+            shard.shard_id: error or f"returncode={return_code}"
+            for shard in manifest.shards
+            for return_code, error in [
+                worker_results[(task.name, shard.shard_id)]
+            ]
+            if return_code != 0
+        }
+        per_task[task.name] = _merge_task_shard_summaries(
+            output_dir=output_dir,
+            task=task,
+            shards=list(manifest.shards),
+            shard_errors=shard_errors,
+        )
+    for task_summary in per_task.values():
+        for shard_summary in task_summary.shards:
+            if shard_summary.status != "ok":
+                _print_worker_error_log(
+                    output_dir,
+                    f"{task_summary.task_name}/shards/"
+                    f"{shard_summary.shard.shard_id}",
+                    shard_summary.error or shard_summary.status,
+                )
     summary_path = _write_summary(
         output_dir=output_dir,
         eval_cfg=eval_cfg,
         per_task=per_task,
         started_at=started_at,
+        execution=execution,
     )
     _print_console_summary(eval_cfg, per_task, summary_path)
-
-    has_worker_error = any(rc != 0 for rc, _ in results.values())
-    has_config_error = any(
-        task.get("status") != "ok" for task in per_task.values()
+    return int(
+        any(task_summary.status != "ok" for task_summary in per_task.values())
     )
-    return 1 if has_worker_error or has_config_error else 0
+
+
+def _dispatch(eval_cfg: EvalConfig, args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    gpus = _resolve_gpus(args.gpus, eval_cfg.execution.gpus)
+    started_at = time.time()
+    return _dispatch_work_items(
+        eval_cfg=eval_cfg,
+        output_dir=output_dir,
+        gpus=gpus,
+        started_at=started_at,
+        enable_recording=args.enable_recording,
+    )
 
 
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
+    if args.export_video and not args.enable_recording:
+        parser.error("--export-video requires --enable-recording")
     eval_cfg = load_eval_config(args.eval_config)
-    if args._single_task is not None:
+    if args._shard_id is not None:
+        if args._shard_manifest is None:
+            raise SystemExit(f"{_SHARD_MANIFEST_FLAG} is required")
+        from robo_orchard_sim.pipeline.evaluator.distributed import (
+            read_evaluation_manifest,
+        )
+        from robo_orchard_sim.pipeline.evaluator.execution import run_shard
+
+        manifest = read_evaluation_manifest(args._shard_manifest)
+        if manifest.policy_id != eval_cfg.policy.model_type:
+            raise ValueError("manifest policy differs from evaluation config")
+        shard = next(
+            shard
+            for shard in manifest.shards
+            if shard.shard_id == args._shard_id
+        )
+        output_dir = Path(args.output_dir).resolve()
+        policy_config = _load_model_cfg(eval_cfg.policy)
         sys.exit(
-            _run_single_task(
-                eval_cfg,
-                args._single_task,
-                Path(args.output_dir).resolve(),
-                args.enable_recording,
+            run_shard(
+                manifest=manifest,
+                shard=shard,
+                task_settings=asdict(eval_cfg.task(shard.task_name)),
+                policy_config=policy_config,
+                output_dir=output_dir,
+                enable_recording=args.enable_recording,
             )
         )
-    sys.exit(_dispatch(eval_cfg, args))
+
+    def terminate(signum, frame):
+        raise SystemExit(128 + signum)
+
+    previous_handler = signal.signal(signal.SIGTERM, terminate)
+    try:
+        result = _dispatch(eval_cfg, args)
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+    if args.export_video:
+        print(
+            "\n=== Exporting MP4 videos and updating summary ===", flush=True
+        )
+        try:
+            export_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(_REPO_ROOT / "tools" / "mcap_to_video.py"),
+                    str(Path(args.output_dir).resolve()),
+                ],
+                check=False,
+            ).returncode
+        except OSError as exc:
+            print(f"[error] Cannot start video export: {exc}", flush=True)
+            export_result = 1
+        if export_result:
+            print(
+                "[error] Video export/backfill failed; "
+                "evaluation status and scores are unchanged.",
+                flush=True,
+            )
+            result = 1
+    sys.exit(result)
 
 
 if __name__ == "__main__":

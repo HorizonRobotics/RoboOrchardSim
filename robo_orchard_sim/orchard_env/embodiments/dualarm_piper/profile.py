@@ -114,6 +114,7 @@ DUALARM_PIPER_ROBOT_INFO_CFGS = {
         manipulator_profile=ManipulatorProfile(
             arm_joint_names=("left_joint[1-6]",),
             gripper_joint_names=("left_joint7", "left_joint8"),
+            gripper_body_names=("left_link7", "left_link8"),
             body_names=(
                 "left_base_link",
                 "left_link1",
@@ -137,6 +138,7 @@ DUALARM_PIPER_ROBOT_INFO_CFGS = {
         manipulator_profile=ManipulatorProfile(
             arm_joint_names=("right_joint[1-6]",),
             gripper_joint_names=("right_joint7", "right_joint8"),
+            gripper_body_names=("right_link7", "right_link8"),
             body_names=(
                 "right_base_link",
                 "right_link1",

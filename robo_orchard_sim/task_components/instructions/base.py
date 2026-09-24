@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.registry.registry import (
         AssetRegistry,
     )
+    from robo_orchard_sim.ext.models.assets.articulation import Articulation
     from robo_orchard_sim.ext.models.assets.rigid_object import RigidObject
 
 __all__ = [
@@ -104,7 +105,7 @@ def _select_description(
     actor_description_seed: int | None,
 ) -> str:
     if actor_description_mode == "raw":
-        return raw_description
+        return raw_description.replace("_", " ")
     if actor_description_mode not in {"seen", "unseen"}:
         raise InstructionRenderError(
             f"Unsupported actor_description_mode: '{actor_description_mode}'"
@@ -238,39 +239,19 @@ class InstructionActor:
             self.category = "unknown"
 
     @classmethod
-    def from_rigid_object(
+    def _from_runtime_asset(
         cls,
-        rigid_object: "RigidObject",
+        asset: "RigidObject | Articulation",
         *,
         actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
         actor_description_seed: int | None = None,
     ) -> "InstructionActor":
-        """Build an instruction actor from a runtime RigidObject.
-
-        Reads ``caption_path`` / ``uuid`` / ``category`` from
-        ``rigid_object.cfg`` (a ``RigidObjectSpec``) and delegates to the
-        shared caption payload pipeline.
-
-        Args:
-            rigid_object (RigidObject): Runtime rigid object whose ``cfg``
-                carries the asset-library identity.
-            actor_description_mode (
-                Literal["raw", "seen", "unseen"], optional
-            ):
-                Description selection mode. Default is ``"raw"``.
-            actor_description_seed (int | None, optional): Sampling seed
-                used when ``actor_description_mode`` is ``"seen"`` or
-                ``"unseen"``. Default is None.
-
-        Raises:
-            InstructionRenderError: If ``cfg.caption_path`` is unset or
-                cannot be parsed.
-        """
-        cfg = rigid_object.cfg
+        """Build an instruction actor from shared runtime asset metadata."""
+        cfg = asset.cfg
         if cfg.caption_path is None:
             raise InstructionRenderError(
-                "RigidObjectSpec.caption_path is required to build an "
-                "InstructionActor from a RigidObject"
+                "Asset config caption_path is required to build an "
+                "InstructionActor"
             )
         uuid = cfg.uuid or "unknown"
         category = cfg.category or "unknown"
@@ -280,6 +261,36 @@ class InstructionActor:
             category=category,
             payload=payload,
             fallback_description=category,
+            actor_description_mode=actor_description_mode,
+            actor_description_seed=actor_description_seed,
+        )
+
+    @classmethod
+    def from_rigid_object(
+        cls,
+        rigid_object: "RigidObject",
+        *,
+        actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
+        actor_description_seed: int | None = None,
+    ) -> "InstructionActor":
+        """Build an instruction actor from a runtime rigid object."""
+        return cls._from_runtime_asset(
+            rigid_object,
+            actor_description_mode=actor_description_mode,
+            actor_description_seed=actor_description_seed,
+        )
+
+    @classmethod
+    def from_articulation(
+        cls,
+        articulation: "Articulation",
+        *,
+        actor_description_mode: Literal["raw", "seen", "unseen"] = "raw",
+        actor_description_seed: int | None = None,
+    ) -> "InstructionActor":
+        """Build an instruction actor from a runtime articulation."""
+        return cls._from_runtime_asset(
+            articulation,
             actor_description_mode=actor_description_mode,
             actor_description_seed=actor_description_seed,
         )
@@ -487,7 +498,9 @@ class InstructionWrapper:
         strict: bool = True,
     ) -> None:
         self.template = template
-        self.actor_description_mode = actor_description_mode
+        self.actor_description_mode: Literal["raw", "seen", "unseen"] = (
+            actor_description_mode
+        )
         self.attribute_name = attribute_name
         self.strict = strict
         self._formatter = string.Formatter()
@@ -615,11 +628,48 @@ class InstructionWrapper:
             InstructionRenderError: If strict mode is enabled and placeholders
                 cannot be resolved.
         """
+        text, _ = self._render_with_actor_descriptions(
+            actors=actors,
+            template_seed=template_seed,
+            actor_description_seed=actor_description_seed,
+        )
+        return text
+
+    def render_with_actor_descriptions(
+        self,
+        actors: Mapping[str, Any] | None = None,
+        template_seed: int | None = None,
+        actor_description_seed: int | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        """Render instruction text and role-bound actor descriptions."""
+        return self._render_with_actor_descriptions(
+            actors=actors,
+            template_seed=template_seed,
+            actor_description_seed=actor_description_seed,
+        )
+
+    def _render_with_actor_descriptions(
+        self,
+        *,
+        actors: Mapping[str, Any] | None,
+        template_seed: int | None,
+        actor_description_seed: int | None,
+    ) -> tuple[str, dict[str, str]]:
         context = self._build_context(
             actors=actors,
             actor_description_seed=actor_description_seed,
         )
         template = self._select_template(seed=template_seed)
+        text = self._render_template(template=template, context=context)
+        actor_descriptions = self._render_actor_descriptions(context)
+        return text, actor_descriptions
+
+    def _render_template(
+        self,
+        *,
+        template: str,
+        context: dict[str, Any],
+    ) -> str:
         if self.strict:
             missing = sorted(
                 field
@@ -635,6 +685,36 @@ class InstructionWrapper:
             context=context,
             allow_partial=False,
         )
+
+    def _render_actor_descriptions(
+        self,
+        context: dict[str, Any],
+    ) -> dict[str, str]:
+        templates = self._template_payload.get("actor_descriptions")
+        if templates is None:
+            return {}
+        if not isinstance(templates, Mapping):
+            raise InstructionRenderError(
+                "Template payload field 'actor_descriptions' must be a mapping"
+            )
+
+        descriptions: dict[str, str] = {}
+        for role_id, template in templates.items():
+            if not isinstance(role_id, str) or not isinstance(template, str):
+                raise InstructionRenderError(
+                    "Template payload field actor_descriptions must map "
+                    "role strings to template strings"
+                )
+            description = self._render_template(
+                template=template,
+                context=context,
+            )
+            if not description.strip():
+                raise InstructionRenderError(
+                    f"Actor description for role {role_id!r} must be non-empty"
+                )
+            descriptions[role_id] = description
+        return descriptions
 
     def _placeholders_from_template(self, template: str) -> set[str]:
         fields: set[str] = set()

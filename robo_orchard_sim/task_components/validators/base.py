@@ -14,17 +14,23 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+from __future__ import annotations
 import inspect
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Callable, ClassVar
 
-import numpy as np
+from robo_orchard_sim.task_components.validators.metrics import MetricStore
 
 if TYPE_CHECKING:
     from robo_orchard_sim.ext.envs.manager_based_env import (
         IsaacManagerBasedEnv,
     )
-    from robo_orchard_sim.ext.models.assets.rigid_object import RigidObject
+    from robo_orchard_sim.task_components.validators.checkers import (
+        SceneCheckerSuite,
+    )
+    from robo_orchard_sim.task_components.validators.context import (
+        ValidatorContext,
+    )
 
 
 @dataclass
@@ -34,6 +40,9 @@ class ValidatorOutput:
     success: bool  # Binary task success
     progress: float  # Progress score 0.0 - 1.0
     metrics: dict[str, Any]  # Additional metrics for logging
+    # Actual rubric contributions, before the success-to-full-score override.
+    # Validators with only a terminal rubric leave this empty.
+    stage_scores: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,48 +54,9 @@ class GripperRange:
     close_val: float
 
 
-@dataclass(slots=True)
-class ValidatorActor:
-    """Validator-side actor snapshot for metadata and boundary state."""
-
-    # TODO: Add ValidatorContext for step-wise checker evaluation.
-
-    name: str
-    uuid: str = "unknown"
-    category: str = "unknown"
-    actor_type: str = "unknown"
-    init_state: np.ndarray | None = None
-    final_state: np.ndarray | None = None
-
-    @classmethod
-    def from_rigid_object(
-        cls,
-        name: str,
-        rigid_object: "RigidObject",
-    ) -> "ValidatorActor":
-        """Create a validator snapshot shell from a runtime rigid object."""
-        cfg = rigid_object.cfg
-        return cls(
-            name=name,
-            uuid=cfg.uuid or "unknown",
-            category=cfg.category or "unknown",
-            actor_type=cfg.actor_type or "unknown",
-        )
-
-    def capture_init_state(self, rigid_object: "RigidObject") -> None:
-        """Capture the actor's initial world-pose snapshot."""
-        self.init_state = get_world_pose(rigid_object)
-
-    def capture_final_state(self, rigid_object: "RigidObject") -> None:
-        """Capture the actor's final world-pose snapshot."""
-        self.final_state = get_world_pose(rigid_object)
-
-
-def get_world_pose(rigid_object: "RigidObject") -> np.ndarray:
-    """Return concatenated world pose as [pos, quat]."""
-    obj_pos = rigid_object.data.root_pos_w.cpu().numpy()
-    obj_quat = rigid_object.data.root_quat_w.cpu().numpy()  # w, x, y, z
-    return np.concatenate([obj_pos, obj_quat], axis=-1)
+# ---------------------------------------------------------------------
+# Validator runtime and rubrics
+# ---------------------------------------------------------------------
 
 
 class Validator:
@@ -96,32 +66,91 @@ class Validator:
 
     """
 
+    fixed_horizon: ClassVar[bool] = False
+
     def __init__(
         self,
-        actors: list[ValidatorActor],
         criteria: list[Callable | tuple[Callable, list[int]]],
         criteria_name: list[str],
+        success_criteria: list[int] | None = None,
+        *,
+        progress_criteria: list[int] | None = None,
+        independent_criteria: list[Callable] | None = None,
+        context: ValidatorContext | None = None,
+        checker_suite: SceneCheckerSuite | None = None,
+        metric_store: MetricStore | None = None,
         **kwargs,
     ):
         """Initialize the validator rubric.
 
         Args:
-            actors (list[ValidatorActor]): Validator actor snapshots.
             criteria (list[Callable | tuple[Callable, list[int]]]): Criteria
                 callables or dependency tuples used to compute progress.
             criteria_name (list[str]): Human-readable names for each
                 criterion.
+            success_criteria (list[int] | None): Indices of the criteria
+                that decide success. A task may treat some criteria as
+                milestones rather than requirements. Defaults to requiring
+                all of them.
+            progress_criteria (list[int] | None): Indices of the criteria
+                that contribute to progress. Diagnostic criteria remain in
+                the output but can be excluded from the progress score.
+                Defaults to including all criteria.
+            independent_criteria (list[Callable] | None): Optional independent
+                observations, one per named criterion. Stateful selectors must
+                be separate instances from scoring selectors so diagnostic
+                evaluation cannot advance scoring dwell counters.
+            context (ValidatorContext | None): Runtime context used by
+                scene-wide checkers.
+            checker_suite (SceneCheckerSuite | None): Optional scene-wide
+                checker suite evaluated before criteria.
+            metric_store (MetricStore | None): Optional store shared with
+                metric selectors.
             **kwargs: Task-specific validator configuration.
         """
-        self.actors = list(actors)
+        scene_runtime = (context, checker_suite, metric_store)
+        if any(value is not None for value in scene_runtime) and not all(
+            value is not None for value in scene_runtime
+        ):
+            raise ValueError(
+                "context, checker_suite, and metric_store must be "
+                "provided together."
+            )
+        if independent_criteria is not None and len(
+            independent_criteria
+        ) != len(criteria_name):
+            raise ValueError(
+                "independent_criteria must match criteria_name length."
+            )
+        self.independent_criteria = independent_criteria
+        self.independent_criteria_reached = [False] * len(criteria_name)
         self.config = kwargs
         self.criteria = criteria
         self.criteria_reached = [False] * len(criteria)
         self.criteria_name = criteria_name
-
-    @property
-    def actor_names(self) -> list[str]:
-        return [actor.name for actor in self.actors]
+        self.context = context
+        self.checker_suite = checker_suite
+        self.metric_store = metric_store
+        if success_criteria is None:
+            success_criteria = list(range(len(criteria)))
+        out_of_range = [
+            idx for idx in success_criteria if not 0 <= idx < len(criteria)
+        ]
+        if out_of_range:
+            raise ValueError(
+                f"success_criteria has out-of-range indices: {out_of_range}."
+            )
+        self.success_criteria = tuple(success_criteria)
+        if progress_criteria is None:
+            progress_criteria = list(range(len(criteria)))
+        out_of_range = [
+            idx for idx in progress_criteria if not 0 <= idx < len(criteria)
+        ]
+        if out_of_range:
+            raise ValueError(
+                f"progress_criteria has out-of-range indices: {out_of_range}."
+            )
+        self.progress_criteria = tuple(progress_criteria)
 
     def _call_criterion(self, criterion: Callable, env, env_idx: int) -> bool:
         """Call criteria with env_idx when the callable supports it."""
@@ -148,9 +177,23 @@ class Validator:
 
         Returns the current-frame criterion status in
         ``metrics["criteria_met_now"]`` and the cumulative latched state in
-        ``metrics["criteria_reached"]``.
+        ``metrics["criteria_reached"]``. These retain dependency-gated scoring
+        semantics. When configured, ``criteria_independent_met_now`` and
+        ``criteria_independent_reached`` report independent current and
+        cumulative observations without affecting success or progress.
 
         """
+        if self.checker_suite is not None:
+            assert self.context is not None
+            assert self.metric_store is not None
+            observed_metrics = self.checker_suite.evaluate(
+                env,
+                self.context,
+                self.metric_store.scope,
+                env_idx=env_idx,
+            )
+            self.metric_store.update(observed_metrics)
+
         metrics = {}
         num_criteria = len(self.criteria)
         metrics["criteria_met_now"] = {}
@@ -180,22 +223,77 @@ class Validator:
 
         num_met_now = sum(criteria_met_now)
         num_reached_ever = sum(self.criteria_reached)
-        progress = num_reached_ever / num_criteria if num_criteria > 0 else 0.0
+        num_progress_criteria = len(self.progress_criteria)
+        num_progress_reached = sum(
+            self.criteria_reached[idx] for idx in self.progress_criteria
+        )
+        progress = (
+            num_progress_reached / num_progress_criteria
+            if num_progress_criteria > 0
+            else 0.0
+        )
         metrics["criteria_met_now_count"] = num_met_now
         metrics["criteria_ever_reached"] = num_reached_ever
         metrics["criteria_total"] = num_criteria
+        metrics["progress_criteria_reached"] = num_progress_reached
+        metrics["progress_criteria_total"] = num_progress_criteria
         for idx, c in enumerate(self.criteria_name):
             metrics["criteria_reached"][c] = self.criteria_reached[idx]
 
-        success = num_reached_ever == num_criteria
+        if self.independent_criteria is not None:
+            independent_now = {}
+            independent_reached = {}
+            for idx, criterion in enumerate(self.independent_criteria):
+                result = self._call_criterion(criterion, env, env_idx)
+                self.independent_criteria_reached[idx] |= result
+                name = self.criteria_name[idx]
+                independent_now[name] = result
+                independent_reached[name] = self.independent_criteria_reached[
+                    idx
+                ]
+            metrics["criteria_independent_met_now"] = independent_now
+            metrics["criteria_independent_reached"] = independent_reached
+
+        success = self.check_success()
+        if success:
+            progress = 1.0
         return ValidatorOutput(
-            success=success, progress=progress, metrics=metrics
+            success=success,
+            progress=progress,
+            metrics=metrics,
+            stage_scores={
+                self.criteria_name[idx]: (
+                    float(self.criteria_reached[idx]) / num_progress_criteria
+                )
+                for idx in self.progress_criteria
+            },
         )
 
     def reset(self):
-        """Called when environment resets. Override for stateful rubrics."""
+        """Clear latched progress and every stateful criterion."""
         self.criteria_reached = [False] * len(self.criteria)
+        self.independent_criteria_reached = [False] * len(self.criteria_name)
+        for criterion in [
+            *self.criteria,
+            *(self.independent_criteria or []),
+        ]:
+            checker = (
+                criterion[0] if isinstance(criterion, tuple) else criterion
+            )
+            reset_hook = getattr(checker, "reset", None)
+            if callable(reset_hook):
+                reset_hook()
+        if self.checker_suite is not None:
+            self.checker_suite.reset()
+        if self.metric_store is not None:
+            self.metric_store.reset()
 
     def check_success(self) -> bool:
-        """Return whether all criteria have been met."""
-        return all(self.criteria_reached)
+        """Return whether every success criterion has been met."""
+        return all(self.criteria_reached[idx] for idx in self.success_criteria)
+
+    def finalize(self) -> ValidatorOutput:
+        """Return the result of fixed-horizon validation."""
+        raise RuntimeError(
+            f"{type(self).__name__} does not support finalization."
+        )

@@ -30,6 +30,7 @@ from robo_orchard_core.envs.managers.observations.observation_manager import (
 from robo_orchard_sim.ext.cfg_wrappers.envs.env_cfg import ViewerCfg
 from robo_orchard_sim.ext.cfg_wrappers.sim.simulation_cfg import (
     PhysxCfg,
+    RenderCfg,
     SimulationCfg,
 )
 from robo_orchard_sim.ext.envs.managers.record import RecordTermBaseCfg
@@ -50,8 +51,27 @@ class SceneBase(ABC):
         self.num_envs = num_envs
         self.env_spacing = env_spacing
         self.physics_fps = physics_fps
-        self.render_fps = render_fps
-        self.step_fps = step_fps
+        self._render_fps = render_fps
+        self._step_fps = step_fps
+
+    @property
+    def render_fps(self) -> int:
+        """Rate at which cameras produce a frame.
+
+        Also drives ``render_interval``. Recording terms that emit
+        images follow this clock.
+        """
+        return self._render_fps
+
+    @property
+    def step_fps(self) -> int:
+        """Rate at which the simulation advances one step.
+
+        Also drives ``decimation``. Everything recorded that is not an
+        image -- joint states, transforms, object poses -- follows this
+        clock, since those are state that updates every step.
+        """
+        return self._step_fps
 
     @abstractmethod
     def get_assets_cfg(self) -> dict[str, GroupAssetCfg]:
@@ -64,6 +84,7 @@ class SceneBase(ABC):
             render_interval=self.get_render_interval(),
             dt=1.0 / self.physics_fps,
             physx=PhysxCfg(enable_ccd=True),
+            render=RenderCfg(enable_translucency=True),
         )
 
     def get_viewer_cfg(self) -> ViewerCfg:
@@ -75,11 +96,11 @@ class SceneBase(ABC):
 
     def get_render_interval(self) -> int:
         """Return render interval from fps settings."""
-        return int(self.physics_fps / self.render_fps)
+        return int(self.physics_fps / self._render_fps)
 
     def get_decimation(self) -> int:
         """Return decimation from fps settings."""
-        return int(self.physics_fps / self.step_fps)
+        return int(self.physics_fps / self._step_fps)
 
     def get_num_envs(self) -> int:
         """Return number of environments."""

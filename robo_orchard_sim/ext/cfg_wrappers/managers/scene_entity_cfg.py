@@ -14,9 +14,9 @@
 # you may not use this file except in compliance with the License.
 
 from isaaclab.managers.scene_entity_cfg import (
-    InteractiveScene,
     SceneEntityCfg as _SceneEntityCfg,
 )
+from isaaclab.scene import InteractiveScene
 from robo_orchard_core.envs.managers.scene_entity_cfg import (
     SceneEntityCfg as OrchardSceneEntityCfg,
 )

@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pick Failure Analysis",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "seed",
+    "instruction",
+    "target",
+    "evidence_window",
+    "attribution",
+    "evidence",
+    "evaluation",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "seed": {"type": "integer"},
+    "instruction": {"type": "string"},
+    "target": {
+      "type": "object",
+      "required": ["category", "uuid"],
+      "properties": {
+        "category": {"type": ["string", "null"]},
+        "uuid": {"type": ["string", "null"]}
+      }
+    },
+    "evidence_window": {
+      "type": "object",
+      "required": ["start_frame", "end_frame", "frames", "views"],
+      "properties": {
+        "start_frame": {"type": "integer"},
+        "end_frame": {"type": "integer"},
+        "frames": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {"type": "integer"}
+        },
+        "views": {
+          "type": "array",
+          "items": {"enum": ["ext1", "ext2", "wrist"]}
+        }
+      }
+    },
+    "attribution": {
+      "type": "object",
+      "required": [
+        "target_selection",
+        "gripper_action",
+        "target_interaction",
+        "object_outcome",
+        "cause"
+      ],
+      "properties": {
+        "target_selection": {"enum": ["CORRECT", "WRONG_OBJECT", "UNCERTAIN"]},
+        "gripper_action": {"enum": ["CLOSE_ATTEMPTED", "NO_CLOSE_ATTEMPT", "UNKNOWN"]},
+        "target_interaction": {"enum": ["NO_CONTACT", "CONTACT_NO_GRASP", "TRANSIENT_GRASP", "STABLE_GRASP", "UNKNOWN"]},
+        "object_outcome": {"enum": ["STATIONARY", "PUSHED_AWAY", "LIFTED_SUCCESSFULLY", "LIFTED_THEN_DROPPED", "LIFTED_INSUFFICIENTLY", "UNKNOWN"]},
+        "cause": {
+          "enum": [
+            "NONE",
+            "SELECTED_DISTRACTOR",
+            "OFF_TARGET_APPROACH",
+            "NO_CLOSE_ATTEMPT",
+            "MISALIGNED_GRASP",
+            "UNSTABLE_GRASP",
+            "PREMATURE_GRIPPER_OPENING",
+            "INSUFFICIENT_LIFT_MOTION",
+            "UNKNOWN"
+          ]
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["summary", "target_visible_frames", "interaction_visible_frames", "outcome_frames"],
+      "properties": {
+        "summary": {"type": "string"},
+        "target_visible_frames": {"type": "array", "items": {"type": "integer"}},
+        "interaction_visible_frames": {"type": "array", "items": {"type": "integer"}},
+        "outcome_frames": {"type": "array", "items": {"type": "integer"}},
+        "distractor_interaction_frames": {"type": "array", "items": {"type": "integer"}}
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "required": ["success", "progress", "reach_pick", "lift_pick", "steps", "stop_reason"],
+      "properties": {
+        "success": {"type": ["boolean", "null"]},
+        "progress": {"type": ["number", "null"]},
+        "reach_pick": {"type": ["boolean", "null"]},
+        "lift_pick": {"type": ["boolean", "null"]},
+        "steps": {"type": ["integer", "null"]},
+        "stop_reason": {"type": ["string", "null"]},
+        "source": {
+          "enum": ["EVAL_RESULT", "MCAP_TASK_PROGRESS"]
+        },
+        "mcap_task_progress": {"type": ["number", "null"]},
+        "mcap_task_success": {"type": ["boolean", "null"]},
+        "overrode_external_result": {"type": "boolean"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source", "analysis_version"],
+      "properties": {
+        "source": {"const": "LLM_RULE_HYBRID"},
+        "analysis_version": {"type": "string"}
+      }
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["frame", "view", "kind", "geometry"],
+        "properties": {
+          "frame": {"type": "integer"},
+          "view": {"enum": ["ext1", "ext2", "wrist"]},
+          "kind": {"enum": ["box", "arrow", "label"]},
+          "geometry": {"type": "array", "items": {"type": "number"}},
+          "text": {"type": "string"},
+          "color": {"type": "array", "items": {"type": "integer"}}
+        }
+      }
+    }
+  }
+}

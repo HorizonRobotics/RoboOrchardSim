@@ -22,6 +22,14 @@ import yaml
 
 from robo_orchard_sim.benchmark import base as task_base
 from robo_orchard_sim.benchmark.base import TaskDefinition
+from robo_orchard_sim.benchmark.manipulation.affordance import (
+    AffordanceTaskDefinition,
+)
+from robo_orchard_sim.benchmark.manipulation.close import CloseTaskDefinition
+from robo_orchard_sim.benchmark.manipulation.joint_direction import (
+    JointDirectionTaskDefinition,
+)
+from robo_orchard_sim.benchmark.manipulation.open import OpenTaskDefinition
 from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import ArticulationCfg
 from robo_orchard_sim.ext.cfg_wrappers.sim.spawners import UsdFileCfg
 from robo_orchard_sim.ext.models.assets.asset_cfg import GroupAssetCfg
@@ -251,6 +259,106 @@ def test_resolve_embodiment_panda_droid_type_returns_droid_embodiment(
     assert isinstance(embodiment, PandaDroidEmbodiment)
 
 
+def test_resolve_embodiment_panda_droid_camera_override_returns_requested_pose(
+    tmp_path: Path,
+) -> None:
+    expected_xyz = (-0.08, -0.49, 0.48)
+    expected_quat = (0.59, -0.62, 0.35, -0.38)
+
+    class YamlEmbodimentTaskDefinition(DummyTaskDefinition):
+        config_path = _write_task_config(
+            tmp_path,
+            {
+                "embodiment": {
+                    "type": "panda_droid",
+                    "params": {
+                        "camera_offsets": {
+                            "ext2_camera": {
+                                "xyz": expected_xyz,
+                                "quat": expected_quat,
+                                "convention": "ros",
+                            }
+                        }
+                    },
+                }
+            },
+        )
+
+    embodiment = YamlEmbodimentTaskDefinition.resolve_embodiment()
+    ext2_offset = embodiment.get_assets_cfg()["cameras"]["ext2_camera"].offset
+
+    assert tuple(ext2_offset.xyz) == expected_xyz
+    assert tuple(ext2_offset.quat) == expected_quat
+
+
+def test_panda_droid_camera_override_after_custom_preserves_default_pose() -> (
+    None
+):
+    overridden = PandaDroidEmbodiment(
+        camera_offsets={
+            "ext2_camera": {
+                "xyz": (-0.08, -0.49, 0.48),
+                "quat": (0.59, -0.62, 0.35, -0.38),
+            }
+        }
+    )
+    overridden.get_assets_cfg()
+
+    default = PandaDroidEmbodiment()
+    ext2_offset = default.get_assets_cfg()["cameras"]["ext2_camera"].offset
+
+    assert tuple(ext2_offset.xyz) == (
+        0.2596757315060087,
+        -0.36626259649963777,
+        0.24849304837972613,
+    )
+
+
+def test_panda_droid_camera_override_unknown_camera_raises_value_error() -> (
+    None
+):
+    with pytest.raises(ValueError, match="unknown_camera"):
+        PandaDroidEmbodiment(
+            camera_offsets={
+                "unknown_camera": {
+                    "xyz": (0.0, 0.0, 0.0),
+                    "quat": (1.0, 0.0, 0.0, 0.0),
+                }
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "task_definition",
+    [
+        OpenTaskDefinition,
+        CloseTaskDefinition,
+        AffordanceTaskDefinition,
+        JointDirectionTaskDefinition,
+    ],
+)
+def test_articulation_task_camera_override_configured_task_returns_medium_pose(
+    task_definition: type[TaskDefinition],
+) -> None:
+    embodiment = task_definition.resolve_embodiment()
+    ext2_offset = embodiment.get_assets_cfg()["cameras"]["ext2_camera"].offset
+
+    assert (
+        *tuple(ext2_offset.xyz),
+        *tuple(ext2_offset.quat),
+        ext2_offset.convention,
+    ) == (
+        -0.084357793,
+        -0.4948429153,
+        0.4818388331,
+        0.5941752707,
+        -0.6188753508,
+        0.3509019516,
+        -0.3752557371,
+        "ros",
+    )
+
+
 def test_resolve_embodiment_dualarm_piperx_type_returns_piperx_embodiment(
     tmp_path: Path,
 ) -> None:
@@ -328,33 +436,16 @@ def test_resolve_instruction_yaml_attribute_name_is_preserved(
     assert instruction.attribute_name == "color"
 
 
-@pytest.mark.parametrize(
-    ("task_class_name", "expected_namespace", "expected_config_suffix"),
-    [
-        (
-            "PlaceA2BEasyTaskDefinition",
-            "place_a2b_easy",
-            "place_a2b_easy.yaml",
-        ),
-        (
-            "PlaceA2BHardTaskDefinition",
-            "place_a2b_hard",
-            "place_a2b_hard.yaml",
-        ),
-    ],
-)
-def test_place_a2b_task_definition_registers_namespace_and_config(
-    task_class_name: str,
-    expected_namespace: str,
-    expected_config_suffix: str,
-) -> None:
+def test_place_a2b_task_definition_registers_namespace_and_config() -> None:
     from robo_orchard_sim.benchmark.manipulation.place_a2b import (
         place_a2b_env,
     )
 
-    task_class = getattr(place_a2b_env, task_class_name)
-    assert task_class.namespace == expected_namespace
-    assert task_class.config_path.endswith(expected_config_suffix)
+    task_class = place_a2b_env.PlaceA2BTaskDefinition
+    assert task_class.namespace == "place_a2b"
+    assert task_class.config_path.endswith("place_a2b.yaml")
+    assert not hasattr(place_a2b_env, "PlaceA2BEasyTaskDefinition")
+    assert not hasattr(place_a2b_env, "PlaceA2BHardTaskDefinition")
 
 
 def test_resolve_task_params_reads_yaml_task_section(

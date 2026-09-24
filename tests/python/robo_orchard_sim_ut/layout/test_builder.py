@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from robo_orchard_sim.orchard_env.assets.object_spec import RigidObjectSpec
-from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
 from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
 from robo_orchard_sim.orchard_env.layout.loader import (
     Layout,
@@ -65,8 +64,8 @@ def test_named_roles_map_to_slots_rest_become_distractors_in_order():
     # named roles -> declared slots; other roles (ref, distractor_0) ->
     # distractor_0, distractor_1 in insertion order.
     assert set(assets) == {"pick", "place", "distractor_0", "distractor_1"}
-    # role_member_by_category stays keyed by UPSTREAM json role.
-    assert set(builder.role_member_by_category) == {
+    # scene_name_by_role stays keyed by the upstream JSON role.
+    assert set(builder.scene_name_by_role) == {
         "src",
         "ref",
         "dest",
@@ -80,10 +79,10 @@ def test_single_category_role_yields_object_spec():
     assert isinstance(assets["pick"], RigidObjectSpec)
 
 
-def test_multi_category_role_yields_pool_spec():
+def test_layout_builder_multi_category_role_raises_validation_error():
     seq = _seq({"src": "bread"}, {"src": "toast"})
-    assets, _ = LayoutBuilder.build(seq, _resolver(), {"src": "pick"})
-    assert isinstance(assets["pick"], PoolSpec)
+    with pytest.raises(LayoutValidationError, match="multiple categories"):
+        LayoutBuilder.build(seq, _resolver(), {"src": "pick"})
 
 
 def test_named_role_absent_from_entry_raises():
@@ -250,27 +249,6 @@ def test_slot_filters_merges_multiple_dimensions():
         "category": "bread",
         "tags": ["is_graspable"],
         "color": "red",
-    }
-
-
-def test_slot_filters_applies_to_each_pool_member():
-    """Multi-category role → each pool member gets the overlay."""
-    seq = _seq({"src": "bread"}, {"src": "toast"})
-    resolver = _resolver()
-    LayoutBuilder.build(
-        seq,
-        resolver,
-        {"src": "pick"},
-        slot_filters={"pick": {"filter": {"tags": ["is_graspable"]}}},
-    )
-    asset_configs = resolver.resolve.call_args[0][0]
-    keys = sorted(asset_configs)
-    assert keys == ["pick_pool_0", "pick_pool_1"]
-    for k in keys:
-        assert asset_configs[k]["filter"]["tags"] == ["is_graspable"]
-    assert {asset_configs[k]["filter"]["category"] for k in keys} == {
-        "bread",
-        "toast",
     }
 
 

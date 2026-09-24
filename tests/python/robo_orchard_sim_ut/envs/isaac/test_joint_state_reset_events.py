@@ -26,12 +26,17 @@ from typing import Any
 
 import pytest
 import torch
-from robo_orchard_core.envs.manager_based_env import ResetEvent
 
+from robo_orchard_sim.asset_manager.metadata import (
+    ArticulationOperationMeta,
+    JointOperationMeta,
+)
+from robo_orchard_sim.ext.envs.manager_based_env import ResetEvent
 from robo_orchard_sim.ext.envs.managers.events.joint_state_reset import (
     JointStateResetTerm,
     JointStateResetTermCfg,
 )
+from robo_orchard_sim.task_components.role_registry import TargetRef
 
 
 class _FakeArticulationData:
@@ -57,9 +62,11 @@ class _FakeArticulation:
         joint_names: list[str],
         default_joint_pos: torch.Tensor,
         soft_joint_pos_limits: torch.Tensor,
+        joint_operations: tuple[JointOperationMeta, ...] = (),
     ) -> None:
         self.name = name
         self.joint_names = list(joint_names)
+        self.cfg = SimpleNamespace(joint_operations=joint_operations)
         num_envs, num_joints = default_joint_pos.shape
         self.num_instances = num_envs
         self.data = _FakeArticulationData(
@@ -69,6 +76,7 @@ class _FakeArticulation:
             joint_pos=torch.zeros_like(default_joint_pos),
             joint_vel=torch.zeros_like(default_joint_pos),
         )
+        self.data.joint_pos_target = torch.zeros_like(default_joint_pos)
         self.write_joint_state_calls: list[dict[str, Any]] = []
         self.set_joint_position_target_calls: list[dict[str, Any]] = []
         self.set_joint_velocity_target_calls: list[dict[str, Any]] = []
@@ -95,6 +103,7 @@ class _FakeArticulation:
         joint_pos: torch.Tensor,
         env_ids: torch.Tensor,
     ) -> None:
+        self.data.joint_pos_target[env_ids] = joint_pos.clone()
         self.set_joint_position_target_calls.append(
             {
                 "joint_pos": joint_pos.clone(),
@@ -114,6 +123,7 @@ def _make_articulation(
     limit_low: float = -2.0,
     limit_high: float = 2.0,
     name: str = "robot",
+    joint_operations: tuple[JointOperationMeta, ...] = (),
 ) -> _FakeArticulation:
     joint_names = joint_names or [f"joint{i}" for i in range(4)]
     num_joints = len(joint_names)
@@ -128,6 +138,7 @@ def _make_articulation(
         joint_names=joint_names,
         default_joint_pos=default_pos,
         soft_joint_pos_limits=limits,
+        joint_operations=joint_operations,
     )
 
 
@@ -142,6 +153,7 @@ def _make_term(
     write_joint_state: bool = True,
     write_joint_position_target: bool = True,
     reset_joint_velocity_to_default: bool = True,
+    operation_role_id: str | None = None,
 ) -> JointStateResetTerm:
     """Build a term instance with mocked env/articulations.
 
@@ -157,6 +169,8 @@ def _make_term(
         per_joint_noise_std=per_joint_noise_std,
         noise_excluded_joint_names=noise_excluded_joint_names,
         init_joint_pos=init_joint_pos,
+        operation_role_id=operation_role_id,
+        operation_start_mode="metadata",
         clamp_to_joint_limits=clamp_to_joint_limits,
         write_joint_state=write_joint_state,
         write_joint_position_target=write_joint_position_target,
@@ -190,6 +204,7 @@ class TestJointStateResetTermCfg:
         assert cfg.write_joint_position_target is True
         assert cfg.clamp_to_joint_limits is True
         assert cfg.reset_joint_velocity_to_default is True
+        assert cfg.operation_role_id is None
 
     def test_default_cfg_has_no_init_joint_pos_override(self):
         cfg = JointStateResetTermCfg(trigger_topic="reset")
@@ -519,4 +534,254 @@ class TestJointStateResetTermInitJointPos:
         torch.testing.assert_close(
             call["joint_pos"],
             torch.full_like(call["joint_pos"], 0.1),
+        )
+
+
+def _laptop_joint_operation() -> JointOperationMeta:
+    return JointOperationMeta(
+        joint_name="hinge_joint",
+        semantic_name="lid",
+        outcome_link="lid_link",
+        operations={
+            "open": ArticulationOperationMeta(
+                interaction_link="button_link",
+                initial_joint_position=-0.576,
+                target_joint_fraction=0.0,
+            ),
+            "close": ArticulationOperationMeta(
+                interaction_link="lid_link",
+                initial_joint_position=-1.75,
+                target_joint_fraction=1.0,
+            ),
+        },
+    )
+
+
+class TestJointStateResetTermOperationBinding:
+    @pytest.mark.parametrize(
+        ("operation", "expected_position"),
+        [
+            ("open", -0.576),
+            ("close", -1.75),
+        ],
+    )
+    def test_operation_binding_valid_target_uses_metadata_initial_position(
+        self,
+        operation: str,
+        expected_position: float,
+    ) -> None:
+        articulation = _make_articulation(
+            name="objects/laptop",
+            joint_names=["base_joint", "hinge_joint"],
+            default_pos_value=0.25,
+            joint_operations=(_laptop_joint_operation(),),
+        )
+        term = _make_term(
+            [articulation],
+            init_joint_pos={"hinge_joint": 0.9},
+            operation_role_id="primary",
+        )
+
+        term(
+            ResetEvent(
+                seed=None,
+                env_ids=None,
+                role_bindings={
+                    "primary": TargetRef(
+                        "objects/laptop",
+                        "lid",
+                        operation,
+                    )
+                },
+            )
+        )
+
+        joint_pos = articulation.write_joint_state_calls[0]["joint_pos"]
+        torch.testing.assert_close(
+            joint_pos[:, 1],
+            torch.full((2,), expected_position),
+        )
+
+    def test_operation_binding_absent_bindings_uses_static_override(
+        self,
+    ) -> None:
+        articulation = _make_articulation(
+            name="objects/laptop",
+            joint_names=["hinge_joint"],
+            joint_operations=(_laptop_joint_operation(),),
+        )
+        term = _make_term(
+            [articulation],
+            init_joint_pos={"hinge_joint": 0.4},
+            operation_role_id="primary",
+        )
+
+        term(ResetEvent(seed=None, env_ids=None, role_bindings=None))
+
+        joint_pos = articulation.write_joint_state_calls[0]["joint_pos"]
+        torch.testing.assert_close(
+            joint_pos,
+            torch.full_like(joint_pos, 0.4),
+        )
+
+    def test_operation_binding_many_targets_raises_type_error(self) -> None:
+        articulation = _make_articulation(
+            name="objects/laptop",
+            joint_names=["hinge_joint"],
+            joint_operations=(_laptop_joint_operation(),),
+        )
+        term = _make_term(
+            [articulation],
+            operation_role_id="primary",
+        )
+
+        with pytest.raises(TypeError, match="exactly one TargetRef"):
+            term(
+                ResetEvent(
+                    seed=None,
+                    env_ids=None,
+                    role_bindings={
+                        "primary": [TargetRef("objects/laptop", "lid", "open")]
+                    },
+                )
+            )
+
+    def test_operation_binding_unconfigured_scene_raises_value_error(
+        self,
+    ) -> None:
+        articulation = _make_articulation(
+            name="objects/laptop",
+            joint_names=["hinge_joint"],
+            joint_operations=(_laptop_joint_operation(),),
+        )
+        term = _make_term(
+            [articulation],
+            operation_role_id="primary",
+        )
+
+        with pytest.raises(ValueError, match="not configured"):
+            term(
+                ResetEvent(
+                    seed=None,
+                    env_ids=None,
+                    role_bindings={
+                        "primary": TargetRef(
+                            "objects/cabinet",
+                            "lid",
+                            "open",
+                        )
+                    },
+                )
+            )
+
+
+@pytest.mark.parametrize("pair", [("open", "close"), ("pull", "push")])
+@pytest.mark.parametrize("clipped", [False, True])
+def test_midpoint_reset_rebound_joint_preserves_other_envs_and_defaults(
+    pair, clipped
+):
+    left = _laptop_joint_operation()
+    right = left.model_copy(
+        deep=True,
+        update={"joint_name": "right_joint", "semantic_name": "right"},
+    )
+    left.operations = dict(zip(pair, left.operations.values(), strict=True))
+    right.operations = dict(zip(pair, right.operations.values(), strict=True))
+    right.operations[pair[0]].initial_joint_position = 0.2
+    right.operations[pair[1]].initial_joint_position = 1.0
+    articulation = _make_articulation(
+        name="objects/cabinet",
+        joint_names=["right_joint", "base_joint", "hinge_joint"],
+        default_pos_value=0.25,
+        joint_operations=(left, right),
+    )
+    if clipped:
+        articulation.data.soft_joint_pos_limits[0, 2] = torch.tensor(
+            [-1.0, 0.0]
+        )
+        articulation.data.soft_joint_pos_limits[1, 0] = torch.tensor(
+            [0.0, 0.4]
+        )
+    before = [joint.model_dump() for joint in (left, right)]
+    env = SimpleNamespace(
+        device=torch.device("cpu"),
+        num_envs=2,
+        scene=SimpleNamespace(articulations={articulation.name: articulation}),
+    )
+    term = JointStateResetTerm(
+        JointStateResetTermCfg(
+            trigger_topic="reset",
+            operation_role_id="primary",
+            operation_start_mode="opposing_midpoint",
+        ),
+        env,
+    )
+    expected = torch.zeros((2, 3))
+    # Reuse the term while switching joint, direction, and reset environment.
+    for operation in pair:
+        for env_id, semantic_name in [(0, "lid"), (1, "right")]:
+            term(
+                ResetEvent(
+                    seed=None,
+                    env_ids=[env_id],
+                    role_bindings={
+                        "primary": TargetRef(
+                            "objects/cabinet", semantic_name, operation
+                        )
+                    },
+                )
+            )
+            expected[env_id] = torch.tensor(
+                [0.25, 0.25, -1.0 if clipped else -1.163]
+                if env_id == 0
+                else [0.4 if clipped else 0.6, 0.25, 0.25]
+            )
+            torch.testing.assert_close(articulation.data.joint_pos, expected)
+            torch.testing.assert_close(
+                articulation.data.joint_pos_target, expected
+            )
+    assert [joint.model_dump() for joint in (left, right)] == before
+
+
+@pytest.mark.parametrize("operation", ["open", "close"])
+def test_midpoint_reset_pair_split_across_joints_raises_value_error(operation):
+    left = _laptop_joint_operation()
+    right = left.model_copy(
+        deep=True,
+        update={"joint_name": "right_joint", "semantic_name": "right"},
+    )
+    del left.operations["close"]
+    del right.operations["open"]
+    articulation = _make_articulation(
+        name="objects/cabinet",
+        joint_names=["hinge_joint", "right_joint"],
+        joint_operations=(left, right),
+    )
+    env = SimpleNamespace(
+        device=torch.device("cpu"),
+        num_envs=2,
+        scene=SimpleNamespace(articulations={articulation.name: articulation}),
+    )
+    term = JointStateResetTerm(
+        JointStateResetTermCfg(
+            trigger_topic="reset",
+            operation_role_id="primary",
+            operation_start_mode="opposing_midpoint",
+        ),
+        env,
+    )
+
+    with pytest.raises(ValueError, match="same joint"):
+        term(
+            ResetEvent(
+                seed=None,
+                env_ids=None,
+                role_bindings={
+                    "primary": TargetRef(
+                        "objects/cabinet",
+                        "lid" if operation == "open" else "right",
+                        operation,
+                    )
+                },
+            )
         )

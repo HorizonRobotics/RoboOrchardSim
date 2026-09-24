@@ -1,0 +1,52 @@
+scene:
+  type: room_table_workbench
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: panda_droid
+  initial_pos: [0.0, 0.0, 0.0]
+  init_joint_noise_std: 0.05
+  init_joint_pos:
+    panda_joint1: 0.0
+    panda_joint2: -0.95
+    panda_joint3: 0.0
+    panda_joint4: -1.82
+    panda_joint5: 0.0
+    panda_joint6: 1.31
+    panda_joint7: 0.0
+    finger_joint: 0.0
+
+instruction:
+  template: articulated_operation
+  template_mode: fixed
+  actor_description_mode: raw
+
+task:
+  params:
+    # The cabinet front faces -Y; turn it toward the arm at the origin.
+    # Its base is at local z=0, resting on the workbench top at z=0.25.
+    # Keep its 0.40 m width inside the rotated workbench's 0.60 m span.
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.62, 0.66]
+        y: [-0.04, 0.04]
+        z: [0.25, 0.25]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [-1.5708, -1.5708]
+
+asset_configs:
+  primary:
+    usd_path: /horizon-bucket/robot_lab/users/ziang.li/assets/wuwen/two_drawer_cabinet_handled/two_drawer_cabinet_handled.usd
+    # Path-pinned targets do not consult the registry, so the sidecar has to
+    # be named explicitly for the drawer handles to resolve.
+    interaction_path: /horizon-bucket/robot_lab/users/ziang.li/assets/wuwen/two_drawer_cabinet_handled/interaction.json
+    spec_type: usd.articulation
+    category: cabinet
+    prim_name: cabinet

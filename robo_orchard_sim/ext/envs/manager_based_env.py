@@ -19,12 +19,14 @@
 
 from __future__ import annotations
 import datetime
-from typing import Generic
+from collections.abc import Mapping
+from typing import Any, Generic
 
 import torch
 from isaaclab.envs import ManagerBasedEnv
 from robo_orchard_core.envs.env_base import EnvStepReturn
 from robo_orchard_core.envs.manager_based_env import (
+    ResetEvent as _BaseResetEvent,
     TermManagerBasedEnv,
     TermManagerBasedEnvCfg,
 )
@@ -45,7 +47,7 @@ from typing_extensions import Dict, Sequence, TypeAlias, TypeVar
 from robo_orchard_sim.ext.cfg_wrappers.scenes_cfg import InteractiveSceneCfg
 from robo_orchard_sim.ext.envs.env_base import IsaacEnv, IsaacEnvCfg
 from robo_orchard_sim.ext.envs.managers.record import (
-    RecordManager,
+    ParallelRecordManagerCfg,
     RecordManagerCfg,
     RecordTermBaseCfg,
 )
@@ -56,6 +58,20 @@ RewardsType: TypeAlias = (
     None  # Placeholder for rewards type, can be extended later
 )
 EnvReturnType: TypeAlias = EnvStepReturn[ObsReturnType, RewardsType]
+
+
+class ResetEvent(_BaseResetEvent):
+    """Reset event carrying per-episode role bindings from the caller.
+
+    ``role_bindings`` maps role_id to whatever the caller bound for this
+    episode. Terms that care about a role interpret the value
+    themselves; the event never inspects it.
+
+    Callers that have nothing to say leave it ``None``, which every term
+    reads as "reset the way the config says".
+    """
+
+    role_bindings: Mapping[str, Any] | None = None
 
 
 IsaacManagerBasedEnvType_co = TypeVar(
@@ -86,11 +102,13 @@ class IsaacManagerBasedEnv(
 
     """
 
+    RESET: tuple[str, type[ResetEvent]] = ("reset", ResetEvent)
+
     def __init__(self, cfg: IsaacManagerBasedEnvCfg):
         IsaacEnv.__init__(self, cfg=cfg)
         self._load_managers()
         self._step_count = 0
-        self.record_manager = RecordManager(self.cfg.records, self)
+        self.record_manager = self.cfg.records(env=self)
         # allocate dictionary to store metrics
         self.extras = {}
 
@@ -154,7 +172,11 @@ class IsaacManagerBasedEnv(
         )
 
     def reset(
-        self, seed: int | None = None, env_ids: Sequence[int] | None = None
+        self,
+        seed: int | None = None,
+        env_ids: Sequence[int] | None = None,
+        *,
+        role_bindings: Mapping[str, Any] | None = None,
     ) -> EnvReturnType:
         self.record_manager.record_pre_reset()
 
@@ -164,7 +186,10 @@ class IsaacManagerBasedEnv(
         self._step_count = 0
         # notify the reset event
         self.event_manager.notify(
-            self.RESET[0], self.RESET[1](env_ids=env_ids, seed=seed)
+            self.RESET[0],
+            self.RESET[1](
+                env_ids=env_ids, seed=seed, role_bindings=role_bindings
+            ),
         )
         observations = self.observation_manager.get_observations()
         self.record_manager.record_post_reset(
@@ -237,7 +262,7 @@ class IsaacManagerBasedEnvCfg(
     actions: ActionManagerCfg[ActionTermCfg] = ActionManagerCfg(terms={})
 
     events: EventManagerCfg[EventTermBaseCfg] = EventManagerCfg(terms={})
-    records: RecordManagerCfg[RecordTermBaseCfg] = RecordManagerCfg(
+    records: RecordManagerCfg[RecordTermBaseCfg] = ParallelRecordManagerCfg(
         file_path="",
         terms={},
     )

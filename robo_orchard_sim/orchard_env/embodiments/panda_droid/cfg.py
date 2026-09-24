@@ -36,14 +36,14 @@ PANDA_DROID_CFG = ArticulationCfg(
             f"{ORCHARD_ASSET}/ROBOTS/FRANKA/franka_panda_robotiq_flange.usd"
         ),
         semantic_tags=[("class", "panda_droid")],
-        activate_contact_sensors=False,
+        activate_contact_sensors=True,
         rigid_props=RigidBodyPropertiesCfg(
             disable_gravity=False,
             max_depenetration_velocity=5.0,
         ),
         articulation_props=ArticulationRootPropertiesCfg(
             enabled_self_collisions=False,
-            solver_position_iteration_count=64,
+            solver_position_iteration_count=32,
             solver_velocity_iteration_count=0,
             fix_root_link=True,
         ),

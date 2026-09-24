@@ -1,0 +1,9 @@
+policy: motus
+host: 127.0.0.1
+port: 8123
+logging_tag: motus-franka
+valid_action_step: null
+camera_mapping:
+  static_camera: base
+  left_hand_camera: wrist
+  right_hand_camera: duplicate:left_hand_camera

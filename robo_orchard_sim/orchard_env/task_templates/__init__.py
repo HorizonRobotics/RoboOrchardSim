@@ -14,28 +14,48 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+from robo_orchard_sim.orchard_env.task_templates.articulated import (  # noqa: F401
+    AffordanceTask,
+    AffordanceTaskParams,
+    JointCloseTask,
+    JointDirectionTask,
+    JointDirectionTaskParams,
+    JointOpenTask,
+    JointOperationTask,
+    JointOperationTaskParams,
+)
 from robo_orchard_sim.orchard_env.task_templates.layout_task import (  # noqa: F401
     LayoutSceneRef,
     LayoutTask,
 )
 from robo_orchard_sim.orchard_env.task_templates.pick_task import (  # noqa: F401
-    PickAssets,
     PickTask,
 )
 from robo_orchard_sim.orchard_env.task_templates.place_a2b_task import (  # noqa: F401
     PlaceA2BTask,
-    PlaceA2BTaskAssets,
+)
+from robo_orchard_sim.orchard_env.task_templates.stack_cubes_task import (  # noqa: F401
+    StackCubesTask,
+    StackCubesTaskParams,
 )
 from robo_orchard_sim.orchard_env.task_templates.task_base import (  # noqa: F401
     TaskBase,
 )
 
 __all__ = [
+    "AffordanceTask",
+    "AffordanceTaskParams",
+    "JointCloseTask",
+    "JointDirectionTask",
+    "JointDirectionTaskParams",
+    "JointOpenTask",
+    "JointOperationTask",
+    "JointOperationTaskParams",
     "LayoutSceneRef",
     "LayoutTask",
     "TaskBase",
-    "PickAssets",
     "PickTask",
-    "PlaceA2BTaskAssets",
     "PlaceA2BTask",
+    "StackCubesTask",
+    "StackCubesTaskParams",
 ]

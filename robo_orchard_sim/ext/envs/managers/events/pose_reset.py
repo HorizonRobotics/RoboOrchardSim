@@ -24,7 +24,6 @@ from isaaclab.assets.articulation import Articulation
 from isaaclab.assets.deformable_object import DeformableObject
 from isaaclab.assets.rigid_object import RigidObject
 from pxr import Usd
-from robo_orchard_core.envs.manager_based_env import ResetEvent
 from robo_orchard_core.envs.managers.events.event_term import (
     EventTermBase,
     EventTermBaseCfg,
@@ -35,6 +34,7 @@ from robo_orchard_sim.ext.cfg_wrappers.managers.scene_entity_cfg import (
     SceneEntityCfg as LabSceneEntityCfg,
 )
 from robo_orchard_sim.ext.envs.env_base import IsaacEnvType_co
+from robo_orchard_sim.ext.envs.manager_based_env import ResetEvent
 from robo_orchard_sim.utils.config import ClassType_co
 from robo_orchard_sim.utils.env_utils import sample_poses
 from robo_orchard_sim.utils.usd import get_prim_aabb
@@ -142,10 +142,11 @@ class PoseResetTerm(
                         hz = abs(z_max - z_bot) * 0.5
                 self._asset_xy_extents[tag] = (hx, hy)
                 self._asset_z_half_extents[tag] = hz
-                z_min = getattr(asset.cfg, "aabb_z_min", None)
+                aabb_min = getattr(asset.cfg, "aabb_min", None)
+                z_min = None if aabb_min is None else aabb_min[2]
                 if z_min is None:
                     logger.warning(
-                        "PoseResetTerm: no registry aabb_z_min for '%s'; "
+                        "PoseResetTerm: no registry aabb for '%s'; "
                         "spawn-clearance clamp skipped for it.",
                         tag,
                     )

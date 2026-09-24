@@ -58,6 +58,7 @@ class ManipulatorProfile:
     arm_joint_names: tuple[str, ...]
     ee_body_name: str
     gripper_joint_names: tuple[str, ...] = ()
+    gripper_body_names: tuple[str, ...] = ()
     body_names: tuple[str, ...] = ()
     base_body_name: str | None = None
 
@@ -71,6 +72,11 @@ class ManipulatorProfile:
             self,
             "gripper_joint_names",
             _to_tuple(self.gripper_joint_names),
+        )
+        object.__setattr__(
+            self,
+            "gripper_body_names",
+            _to_tuple(self.gripper_body_names),
         )
         object.__setattr__(self, "body_names", _to_tuple(self.body_names))
         if not self.arm_joint_names:

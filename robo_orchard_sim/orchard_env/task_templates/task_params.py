@@ -119,7 +119,7 @@ _LIGHT_RESET_PRESETS: dict[str, dict[str, object]] = {
 
 _TEXTURE_RESET_PRESETS: dict[str, dict[str, object]] = {
     "default_table_texture": {
-        "asset_names": ["background/table"],
+        "asset_names": ["background/table", "background/workbench"],
     }
 }
 

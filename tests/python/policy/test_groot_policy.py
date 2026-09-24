@@ -230,6 +230,17 @@ def test_groot_adapter_default_instruction_used_when_obs_missing() -> None:
     }
 
 
+def test_groot_adapter_empty_instruction_not_replaced_by_default() -> None:
+    adapter = GrootAdapter(default_instruction="lift the cube")
+    obs = _build_obs().model_copy(update={"instruction": ""})
+
+    model_input = adapter.build_model_input(obs)
+
+    assert model_input["language"] == {
+        "annotation.human.task_description": [[""]]
+    }
+
+
 def test_groot_adapter_missing_camera_slot_raises() -> None:
     adapter = GrootAdapter()
     obs = _build_obs()

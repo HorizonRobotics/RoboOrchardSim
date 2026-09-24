@@ -249,15 +249,16 @@ class PickExecutor(BaseExecutor):
             )
 
         elif grasp_mode == "Top-down":
+            max_tilt = float(self.cfg.top_down_max_tilt_deg)
             result = self._multi_pose_filter(
                 resolved,
                 runtime_state,
                 grasp_pose_origin,
                 reference_axis_world=torch.tensor([0.0, 0.0, -1.0]),
-                angle_range_deg=(0, 45),
+                angle_range_deg=(0, max_tilt),
                 pose_augument_config={
                     "x": (0, 180, 2),
-                    "y": (-45, 45, 5),
+                    "y": (-max_tilt, max_tilt, 5),
                     "z": (0, 180, 2),
                 },
             )
@@ -657,3 +658,13 @@ class PickExecutorCfg(BaseExecutorCfg):
     pre_grasp: PoseGeneratorCfg | None = None
     grasp_mode: GraspMode = "Default"
     close_gripper_steps: int = 20
+
+    top_down_max_tilt_deg: float = 45.0
+    """How far a ``Top-down`` grasp may tilt off vertical, in degrees.
+
+    This bounds the pose augmentation as well as the angle filter, so it
+    shapes the candidates themselves rather than merely trimming them.
+    The grasp orientation is also carried into the following place,
+    because the place target is derived from the grasp transform. Lower
+    it for tasks whose demonstrations should keep the wrist upright.
+    """

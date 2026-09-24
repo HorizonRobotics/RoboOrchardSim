@@ -26,6 +26,9 @@ from isaacsim.core.prims import Articulation as ArticulationView
 from isaacsim.core.utils.types import JointsState
 from pxr import UsdPhysics
 
+from robo_orchard_sim.asset_manager.metadata.joint_operations import (
+    JointOperationMeta,
+)
 from robo_orchard_sim.ext.cfg_wrappers.assets_cfg import (
     ArticulationCfg as _ArticulationCfg,
     SpawnerCfgType_co,
@@ -239,4 +242,29 @@ class Articulation(_Articulation):
 
 
 class ArticulationCfg(_ArticulationCfg[SpawnerCfgType_co, Articulation]):
+    """Configuration class template for all articulations in RoboOrchard.
+
+    Carries the same registry-owned asset metadata as
+    :py:class:`~robo_orchard_sim.ext.models.assets.rigid_object.RigidObjectCfg`,
+    so runtime consumers can read asset identity off
+    ``env.scene[name].cfg`` without caring whether the asset is rigid or
+    articulated.
+    """
+
     class_type: ClassType_co[Articulation] = Articulation
+
+    caption_path: str | None = None
+    uuid: str | None = None
+    category: str | None = None
+    actor_type: str = "object"
+    aabb_min: tuple[float, float, float] | None = None
+    """Bounding-box corner in the asset's local frame, in meters,
+    measured at a single joint configuration."""
+    aabb_max: tuple[float, float, float] | None = None
+
+    joint_operations: tuple[JointOperationMeta, ...] = ()
+    """Semantic joint operations declared by the asset's ``metadata.json``.
+
+    Empty for articulations spawned without task-facing metadata, such as
+    robot embodiments.
+    """

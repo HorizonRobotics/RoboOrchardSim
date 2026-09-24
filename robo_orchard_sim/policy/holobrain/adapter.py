@@ -119,7 +119,7 @@ class HolobrainAdapter:
     @staticmethod
     def _require_instruction(obs: CanonicalPolicyInput) -> str:
         instruction = obs.instruction
-        if not instruction:
+        if instruction is None:
             raise ValueError("Holobrain observation requires instruction")
         return instruction
 

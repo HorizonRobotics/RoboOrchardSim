@@ -19,14 +19,19 @@
 from robo_orchard_sim.pipeline.evaluator.base import (
     EpisodeResult,
     EvaluationResult,
+    EvaluationSummary,
     MultiEvaluationResult,
+    ShardSummary,
+    SummaryMetrics,
     TaskEvaluationResult,
+    TaskSummary,
 )
 from robo_orchard_sim.pipeline.evaluator.evaluator import (
     EvaluationRuntime,
     Evaluator,
     EvaluatorCfg,
     LaunchConfig,
+    evaluation_runtime,
 )
 from robo_orchard_sim.pipeline.evaluator.multi_evaluator import (
     EvaluationRunEntry,
@@ -45,5 +50,10 @@ __all__ = [
     "MultiEvaluatorCfg",
     "EpisodeResult",
     "EvaluationResult",
+    "EvaluationSummary",
+    "ShardSummary",
+    "SummaryMetrics",
+    "TaskSummary",
     "TaskEvaluationResult",
+    "evaluation_runtime",
 ]

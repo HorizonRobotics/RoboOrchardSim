@@ -21,6 +21,7 @@ from typing import Any
 
 from robo_orchard_sim.orchard_env.task_templates.pick_task import PickTask
 from robo_orchard_sim.task_components.instructions.base import InstructionActor
+from robo_orchard_sim.task_components.role_registry import TargetRef
 
 
 class LayoutSceneRef:
@@ -61,15 +62,34 @@ class LayoutTask(PickTask):
         super().__init__(assets=assets, params=params, instruction=instruction)
         self.layout_context = layout_context
 
+    def get_role_candidates(
+        self,
+        role_id: str,
+        *,
+        swap: bool = False,
+    ) -> list[TargetRef]:
+        """Offer only what the layout named for this role.
+
+        The layout fixes which object is the target and the instruction
+        describes it by its neighbours, so widening the pool the way a
+        plain pick task does under swap would contradict the layout.
+        """
+        del swap
+        return [
+            TargetRef(spec.scene_name) for spec in self.assets.by_role(role_id)
+        ]
+
     def build_instruction_context(
         self,
         env,
         *,
         actor_description_seed: int,
+        context=None,
     ) -> dict[str, Any]:
         actors = super().build_instruction_context(
             env,
             actor_description_seed=actor_description_seed,
+            context=context,
         )
 
         if self.layout_context is None or self.instruction is None:

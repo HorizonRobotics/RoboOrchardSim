@@ -17,6 +17,7 @@
 """Base abstractions for task-suite task definitions."""
 
 from __future__ import annotations
+import copy
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from robo_orchard_sim.task_components.instructions.base import (
         InstructionWrapper,
     )
+    from robo_orchard_sim.task_components.role_registry import RoleRegistry
     from robo_orchard_sim.task_components.trajs_gen.base_executor import (
         BaseExecutorCfg,
     )
@@ -139,6 +141,12 @@ def _bootstrap_scene_registry() -> None:
         )
 
         register_scene("room_table", RoomTableScene)
+    if "room_table_workbench" not in SCENE_REGISTRY:
+        from robo_orchard_sim.orchard_env.scene.room_table_workbench_scene import (  # noqa: E501
+            RoomTableWorkbenchScene,
+        )
+
+        register_scene("room_table_workbench", RoomTableWorkbenchScene)
 
 
 def _bootstrap_embodiment_registry() -> None:
@@ -339,7 +347,18 @@ class TaskDefinition(ABC):
         ``asset_configs`` explicitly or fall through to whatever default
         asset path the concrete ``build()`` defines.
         """
-        return cls._load_config(config_path=config_path).asset_configs
+        asset_configs = cls._load_config(config_path=config_path).asset_configs
+        if asset_configs is None:
+            return None
+        resolved = copy.deepcopy(asset_configs)
+        config_dir = cls._config_dir(config_path=config_path)
+        if config_dir is None:
+            return resolved
+        for entry in resolved.values():
+            usd_path = entry.get("usd_path")
+            if isinstance(usd_path, str) and not Path(usd_path).is_absolute():
+                entry["usd_path"] = str((config_dir / usd_path).resolve())
+        return resolved
 
     @classmethod
     def resolve_task_params(
@@ -372,7 +391,9 @@ class TaskDefinition(ABC):
     def build_atomic_action_plan(
         cls,
         orchard_env: "OrchardEnv",
+        *,
+        role_registry: RoleRegistry | None = None,
     ) -> list["BaseExecutorCfg"]:
         """Build the default atomic action plan for this task."""
-        del cls, orchard_env
+        del cls, orchard_env, role_registry
         return []

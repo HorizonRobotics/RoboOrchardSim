@@ -14,7 +14,6 @@ writes the ``caption_candidates.json`` file plus the URDF
 from __future__ import annotations
 import json
 import logging
-import math
 import os
 import random
 import re
@@ -71,6 +70,97 @@ def _strip_code_fence(raw: str) -> str:
     return s.strip()
 
 
+# Function words that must not begin or end a phrase. A phrase like
+# "gray alarm clock with" passes the word-count / category checks but is a
+# grammatically broken dangling connective. (Ported from the caption
+# sentence-structure rewriter's `_CONNECTORS` / `_is_clean`.)
+_CONNECTORS = frozenset(
+    {
+        "with",
+        "on",
+        "in",
+        "of",
+        "and",
+        "for",
+        "at",
+        "to",
+        "by",
+        "from",
+        "or",
+        "a",
+        "an",
+        "the",
+    }
+)
+
+# Bare descriptor adjectives that must not be the LAST word of a phrase: a
+# referring phrase should end on a concrete noun (the category, or a part
+# like handle / lid / cap / grip), not a dangling modifier. This catches
+# constructions like "yellow grip pliers with red" (broken — "with red"
+# has no noun; it should read "... with red grip").
+# Only words that are almost never a head noun in this domain. Deliberately
+# excludes ambiguous words that CAN be the noun a phrase legitimately ends
+# on -- e.g. "light" (an LED light), "glass" (the head of "wine glass"),
+# and bare materials -- to avoid false rejections.
+_TRAILING_ADJECTIVES = frozenset(
+    {
+        # colors / finishes
+        "red",
+        "blue",
+        "green",
+        "yellow",
+        "orange",
+        "purple",
+        "pink",
+        "black",
+        "white",
+        "gray",
+        "grey",
+        "brown",
+        "gold",
+        "golden",
+        "silver",
+        "tan",
+        "beige",
+        "dark",
+        "pale",
+        "clear",
+        "transparent",
+        "translucent",
+        "metallic",
+        "shiny",
+        "matte",
+        # sizes
+        "small",
+        "large",
+        "big",
+        "tall",
+        "short",
+        "wide",
+        "narrow",
+        "long",
+        "thin",
+        "thick",
+        "tiny",
+        "slim",
+        "flat",
+        "tapered",
+        # shapes
+        "square",
+        "oval",
+        "curved",
+        "straight",
+        "cylindrical",
+        "rectangular",
+        "conical",
+        "pointed",
+        "domed",
+        "rounded",
+        "boxy",
+    }
+)
+
+
 def _valid_phrase(phrase) -> bool:
     if not isinstance(phrase, str):
         return False
@@ -79,8 +169,21 @@ def _valid_phrase(phrase) -> bool:
         return False
     if not s.isascii():
         return False
+    # Commas are forbidden: the phrase must be restructured into an
+    # adjective stack or a hyphenated compound, not glued with a comma.
+    if "," in s:
+        return False
     words = s.split()
-    return _MIN_WORDS <= len(words) <= _MAX_WORDS
+    if not (_MIN_WORDS <= len(words) <= _MAX_WORDS):
+        return False
+    # No dangling connective at either end (e.g. "... alarm clock with").
+    if words[0].lower() in _CONNECTORS or words[-1].lower() in _CONNECTORS:
+        return False
+    # Must not END on a bare descriptor adjective ("... pliers with red"):
+    # the last word has to be a noun.
+    if words[-1].lower() in _TRAILING_ADJECTIVES:
+        return False
+    return True
 
 
 _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
@@ -156,6 +259,34 @@ def parse_response(raw: str, category: str) -> list[str]:
     return [p.strip() for p in kept]
 
 
+def salvage_parse(raw: str, category: str) -> list[str]:
+    """Lenient parse that ignores ``parse_response``'s drop-rate gate.
+
+    Returns every structurally-valid, category-bearing phrase in the
+    response. Used only as a fallback for a hard, feature-poor asset
+    whose responses routinely exceed ``_DROP_TOLERANCE`` (the model
+    over-compresses to <4-word phrases, or leans on one broken template):
+    salvage its valid phrases instead of discarding the whole response
+    and leaving the asset with an empty list. Ported from the caption
+    sentence-structure rewriter's ``_salvage_parse``.
+    """
+    text = _strip_code_fence(raw)
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(obj, dict):
+        return []
+    cands = obj.get("candidates")
+    if not isinstance(cands, list):
+        return []
+    return [
+        p.strip()
+        for p in cands
+        if _valid_phrase(p) and _category_in_phrase(p, category)
+    ]
+
+
 _WS_RE = re.compile(r"\s+")
 _JACCARD_THRESHOLD = 0.85
 
@@ -211,36 +342,63 @@ _INITIAL_PROMPT_TEMPLATE = (
     "scene image, match the phrase to THIS object among other "
     "objects on the table, and execute the requested skill on it.\n\n"
     "Asset category: {category}\n"
-    "Number of phrases to generate: {num_candidates}\n\n"
+    "{count_instruction}\n\n"
     "You are given {num_views} rendered views of this asset from "
     "different angles, captured at normal viewing distance.\n\n"
-    "Generate {num_candidates} short noun phrases that a person would "
+    "Generate short noun phrases that a person would "
     "naturally use to refer to THIS specific object on a table. Each "
     "phrase should highlight a distinctive visual feature that helps "
     "tell this object apart from other objects of the same category.\n\n"
     "**TOP PRIORITY — these rules override everything else:**\n"
     "**1. EACH PHRASE MUST BE 4 TO 6 WORDS, INCLUSIVE.** "
-    "Count words before emitting. Phrases outside this range will be "
+    "Count words before emitting. A hyphenated compound "
+    '(e.g. "black-screen") counts as ONE word. If a draft is under 4 '
+    "words, add another plain descriptor (color, size, shape, or "
+    "material) until it reaches 4. Phrases outside this range are "
     "rejected.\n"
-    "**2. EACH PHRASE MUST BE GENUINELY DIFFERENT FROM THE OTHERS.** "
+    "**2. VARY THE SENTENCE STRUCTURE — do NOT reuse one template.** "
+    'At MOST 1 in 3 phrases may use the word "with". The whole point '
+    "is to BREAK the monotony where almost every phrase is "
+    '"<category> with <feature>". Build the rest from a MIX of these '
+    "constructions:\n"
+    "  (a) adjective stack — descriptors straight before the category, "
+    'no connector: "small gray round alarm clock";\n'
+    "  (b) hyphenated compound feature — fuse one feature into a single "
+    'hyphenated modifier: "black-screen alarm clock", '
+    '"twin-bell alarm clock";\n'
+    "  (c) attributive feature-noun — a feature noun before the "
+    'category: "digital display alarm clock";\n'
+    "  (d) other preposition for a genuinely spatial part: "
+    '"alarm clock on round base".\n'
+    "**3. EACH PHRASE MUST BE GENUINELY DIFFERENT FROM THE OTHERS.** "
     "No trivial rewordings, no swapping one synonym, no shuffling word "
     "order. Each phrase must add new visual information (a different "
     "color word, a different distinctive part, a different shape "
     "descriptor) the reader did not already see in earlier phrases.\n"
-    "**3. EACH PHRASE MUST BE A PURE NOUN PHRASE, ACTION-AGNOSTIC.** "
+    "**4. EACH PHRASE MUST BE A PURE NOUN PHRASE, ACTION-AGNOSTIC.** "
     "It must read naturally after ANY of the action verbs above "
     '(e.g. "pick up the ___", "push the ___", "rotate the ___"). '
     "Use the object category ({category}) as the head noun "
-    '(e.g. "the red apple with a stem", '
-    'not just "the small object with white dots"). Do NOT include '
+    '(e.g. "red apple with short stem", '
+    'not just "small object with white dots"). Do NOT include '
     "any verb, action, or grasping/manipulation language inside the "
     'phrase itself (no "to grasp", "for picking", "easy to hold", '
-    "etc.).\n\n"
-    "**4. EVERY PHRASE MUST CONTAIN THE EXACT CATEGORY TOKEN "
+    "etc.).\n"
+    "**5. EVERY PHRASE MUST CONTAIN THE EXACT CATEGORY TOKEN "
     "({category}).** The literal category word(s) must appear, in "
     "order, with no synonyms, paraphrases, or plural variants. "
     'Phrases like "cup" for category "mug", "vessel" for "container", '
     'or "apples" for "apple" will be rejected.\n'
+    "**6. CAMERA-DISTANCE SALIENCE.** These phrases identify the object "
+    "from a robot camera at arm's length (~0.5-1 m), where the object "
+    "is one small item on a table. Prefer features visible at THAT "
+    "distance — overall color, gross shape, size, and large parts "
+    "(lid, handle, stem, cap, screen, button). DROP fine surface "
+    "detail that only reads in a close-up: individual seeds, tiny "
+    "speckles, faint texture, small printed text, subtle shading. When "
+    "you can only find a few genuinely distinct coarse features, return "
+    "just those — do NOT pad the list with micro-detail to reach the "
+    "count.\n"
     "Other constraints on EACH phrase:\n"
     "- Focus on features that visually DISTINGUISH this object from "
     "other objects of the same category — its specific color, "
@@ -250,13 +408,17 @@ _INITIAL_PROMPT_TEMPLATE = (
     "shape (round, flat, long, curved, ...), size "
     "(small, tall, short, ...), and parts "
     "(stem, handle, lid, button, clip, ...).\n"
+    "- NO commas — restructure into an adjective stack or a hyphenated "
+    "compound instead of gluing a fragment on with a comma.\n"
+    "- END every phrase on a concrete NOUN (the category itself, or a "
+    "part like handle, lid, cap, grip, base, stem, screen). NEVER end on "
+    "a dangling connective word or a bare adjective: "
+    '"yellow grip pliers with red" is broken (red what?) — write '
+    '"pliers with red grip" or "red-grip metal pliers" instead. Never '
+    "begin on a connective. No trailing period.\n"
     "- AVOID subjective or aesthetic adjectives that don't describe a "
-    'visible feature: no "elegant", "sleek", "modern", '
+    'visible feature: no "elegant", "sleek", "glossy", "modern", '
     '"compact", "stylish", "pretty", "abstract" (as a feeling), etc.\n'
-    "- AVOID features that need extreme close-up to see "
-    '(no "tiny white specks", "small ridges inside", '
-    '"thin engraved lines"). Favor features visible at normal '
-    "table-viewing distance.\n"
     "- AVOID technical or fancy vocabulary "
     '(no "silhouette", "tapered", "asymmetrical", "ellipsoidal", '
     '"tonal", "imperfections", etc.).\n'
@@ -264,39 +426,57 @@ _INITIAL_PROMPT_TEMPLATE = (
     '(no "top view", "side view", "viewed from above", '
     '"close-up", "front-facing").\n'
     "- Noun phrase, NOT a full sentence "
-    "(no subject/verb, no trailing period).\n"
+    "(no subject/verb).\n"
     "- Lowercase, ASCII only.\n"
     "- Describe what is visually present; do not invent unseen parts.\n\n"
-    "Output style example for a different object (a golden cup with "
-    "floral design). Each phrase below is action-agnostic — it works "
-    'after "pick up the ___", "push the ___", "rotate the ___", '
-    "or any other manipulation verb:\n"
+    "Output style example for a DIFFERENT object (a small gray alarm "
+    "clock). Note the VARIED structure — an adjective stack, hyphenated "
+    'compounds, a feature-noun, and only ONE "with" — and that every '
+    "phrase reads naturally after any manipulation verb:\n"
     '{{"candidates": [\n'
-    '  "shiny golden cup with flowers",\n'
-    '  "golden cup with red pattern",\n'
-    '  "tall golden cup with handle",\n'
-    '  "small golden cup with rim",\n'
-    '  "wide golden cup with curves"\n'
+    '  "small round gray alarm clock",\n'
+    '  "black-screen digital alarm clock",\n'
+    '  "twin-bell metal alarm clock",\n'
+    '  "alarm clock on round base",\n'
+    '  "white alarm clock with legs"\n'
     "]}}\n\n"
-    "Now produce {num_candidates} phrases for THIS asset.\n"
-    "**Before you respond, mentally test each phrase by inserting it "
-    'after several different verbs ("pick up the ___", '
-    '"push the ___", "rotate the ___") and confirm it still sounds '
-    "natural. Re-check rules 1, 2, 3 against every phrase.**\n"
+    "Now produce the phrases for THIS asset.\n"
+    "**Before you respond, check every phrase: (1) 4-6 words, "
+    '(2) at most 1 in 3 uses "with" — vary the structure, '
+    "(3) contains the exact category token, (4) no commas and no "
+    "dangling connective, (5) reads naturally after "
+    '"pick up the ___" / "push the ___" / "rotate the ___".**\n'
     "Respond with a single JSON object, no commentary, "
     "no markdown fence:\n"
     '{{"candidates": ["phrase 1", "phrase 2", '
-    '..., "phrase {num_candidates}"]}}'
+    '..., "phrase {num_example}"]}}'
 )
 
 
 def render_initial_prompt(
-    category: str, num_candidates: int, num_views: int
+    category: str, num_min: int, num_max: int, num_views: int
 ) -> str:
-    """Render the first-round caption generation prompt."""
+    """Render the first-round caption generation prompt.
+
+    ``num_max`` is the upper bound. When ``num_min < num_max`` the count
+    becomes a floating range: the model is told to produce between
+    ``num_min`` and ``num_max`` phrases and to prefer the smaller end for
+    simple objects rather than pad with fine detail.
+    """
+    if num_min < num_max:
+        count_instruction = (
+            f"Produce BETWEEN {num_min} AND {num_max} phrases. Prefer the "
+            "SMALLER end: include a phrase only if it names a genuinely "
+            "distinct, camera-salient feature. It is better to return just "
+            f"{num_min} strong phrases than to pad up to {num_max} with fine "
+            "detail or near-duplicates."
+        )
+    else:
+        count_instruction = f"Generate exactly {num_max} phrases."
     return _INITIAL_PROMPT_TEMPLATE.format(
         category=category.replace("_", " "),
-        num_candidates=num_candidates,
+        count_instruction=count_instruction,
+        num_example=num_max,
         num_views=num_views,
     )
 
@@ -312,12 +492,31 @@ def render_topup_prompt(
     return (
         render_initial_prompt(
             category=category,
-            num_candidates=num_needed,
+            num_min=num_needed,
+            num_max=num_needed,
             num_views=num_views,
         )
         + "\n\nAvoid generating phrases similar to any of the following:\n"
         + existing_block
     )
+
+
+def _as_range(v) -> tuple[int, int]:
+    """Normalise a count spec to a ``(min, max)`` tuple.
+
+    Accepts a single int (``5`` -> ``(5, 5)``) or a ``(min, max)``
+    tuple/list (``(3, 5)``). A range floats per object: the model is told
+    to produce between ``min`` and ``max`` phrases and prefer the smaller
+    end for simple objects, so we top up only to ``min`` and never pad to
+    ``max``.
+    """
+    if isinstance(v, int):
+        lo = hi = v
+    else:
+        lo, hi = int(v[0]), int(v[1])
+    if lo < 0 or hi < lo:
+        raise ValueError(f"invalid count range: {v!r}")
+    return lo, hi
 
 
 @dataclass
@@ -342,21 +541,21 @@ class CaptionLabeller:
     def __init__(
         self,
         gpt_client,
-        seen_count: int = 15,
-        unseen_count: int = 5,
+        seen_count=(3, 5),
+        unseen_count=(1, 2),
         force: bool = False,
     ) -> None:
-        if seen_count < 0 or unseen_count < 0:
-            raise ValueError(
-                "seen_count and unseen_count must be non-negative"
-            )
-        if seen_count + unseen_count == 0:
-            raise ValueError("seen_count + unseen_count must be > 0")
+        # seen_count / unseen_count accept an int (fixed) or a (min, max)
+        # tuple (floating range, e.g. seen 3-5 / unseen 1-2).
+        self.seen_min, self.seen_max = _as_range(seen_count)
+        self.unseen_min, self.unseen_max = _as_range(unseen_count)
+        if self.seen_max + self.unseen_max == 0:
+            raise ValueError("seen + unseen max must be > 0")
         self.gpt_client = gpt_client
-        self.seen_count = seen_count
-        self.unseen_count = unseen_count
-        self.num_candidates = seen_count + unseen_count
         self.force = force
+        # Total pool bounds: top up only to the minimum, cap at the maximum.
+        self.num_candidates_min = self.seen_min + self.unseen_min
+        self.num_candidates_max = self.seen_max + self.unseen_max
 
     def process(self, urdf_path: str) -> ProcessResult:
         """Process a single URDF. Returns a ProcessResult; never raises."""
@@ -377,14 +576,14 @@ class CaptionLabeller:
         if not renders:
             return ProcessResult(status="failed", reason="no_renders")
 
-        # Guardrail A: over-ask 1.5x on the initial round so the typical
-        # combined drop (structure + category) is absorbed without entering
-        # top-up. Truncation later in this function caps the final pool at
-        # the target.
-        ask_n = math.ceil(self.num_candidates * 1.5)
+        # Ask for the range [min, max]; the prompt tells the model to
+        # prefer the smaller end for simple objects. We top up only to the
+        # minimum (below) and cap the pool at the maximum, so simple
+        # objects keep fewer salient phrases instead of being padded.
         prompt = render_initial_prompt(
             category=fields["category"],
-            num_candidates=ask_n,
+            num_min=self.num_candidates_min,
+            num_max=self.num_candidates_max,
             num_views=len(renders),
         )
 
@@ -392,6 +591,7 @@ class CaptionLabeller:
         # times. GPT is non-deterministic, so a fresh call often clears
         # transient failures (drop-rate-too-high, no response).
         phrases: list[str] = []
+        salvaged: list[str] = []
         last_err = "no attempts made"
         for attempt in range(1, MAX_INITIAL_ATTEMPTS + 1):
             raw = self.gpt_client.query(text_prompt=prompt, images=renders)
@@ -410,6 +610,11 @@ class CaptionLabeller:
                 break
             except CaptionParseError as e:
                 last_err = str(e)
+                # Keep any structurally-valid, category-bearing phrases
+                # from this rejected response so a hard, feature-poor
+                # asset is not left empty when every strict attempt trips
+                # the drop-rate gate.
+                salvaged.extend(salvage_parse(raw, fields["category"]))
                 logger.warning(
                     "initial attempt %d/%d parse failed for %s: %s",
                     attempt,
@@ -418,6 +623,19 @@ class CaptionLabeller:
                     e,
                 )
                 continue
+
+        # All strict attempts failed the drop-rate gate: fall back to the
+        # salvaged phrases rather than failing the asset outright.
+        if not phrases and salvaged:
+            phrases = dedup([normalize(p) for p in salvaged])
+            logger.warning(
+                "using %d salvaged phrase(s) for %s (strict parse "
+                "failed all %d attempts: %s)",
+                len(phrases),
+                urdf_path,
+                MAX_INITIAL_ATTEMPTS,
+                last_err,
+            )
 
         if not phrases:
             return ProcessResult(
@@ -428,9 +646,9 @@ class CaptionLabeller:
         # Top-up if short. Retry top-up up to MAX_TOPUP_ATTEMPTS times.
         # Top-up failure is non-fatal (we keep what we have).
         for topup_attempt in range(1, MAX_TOPUP_ATTEMPTS + 1):
-            if len(phrases) >= self.num_candidates:
+            if len(phrases) >= self.num_candidates_min:
                 break
-            deficit = self.num_candidates - len(phrases)
+            deficit = self.num_candidates_min - len(phrases)
             topup_prompt = render_topup_prompt(
                 category=fields["category"],
                 num_needed=deficit,
@@ -461,35 +679,42 @@ class CaptionLabeller:
                 )
                 continue
 
-        phrases = phrases[: self.num_candidates]
-        if len(phrases) < self.num_candidates:
+        phrases = phrases[: self.num_candidates_max]
+        if len(phrases) < self.num_candidates_min:
             logger.warning(
                 "short of target: %s got %d/%d",
                 urdf_path,
                 len(phrases),
-                self.num_candidates,
+                self.num_candidates_min,
             )
 
-        # Slicing below assumes the pool fits inside seen + unseen so the
-        # two lists never overlap; line 412 above caps the pool length.
-        assert len(phrases) <= self.num_candidates
+        # Slicing below caps the pool at seen_max + unseen_max so the two
+        # lists never overlap.
+        assert len(phrases) <= self.num_candidates_max
         # Sort first so the split depends only on (uuid, phrase set), not
         # on GPT's response order. Seed by uuid so re-runs reproduce the
         # same split.
         pool = sorted(phrases)
         random.Random(fields["uuid"]).shuffle(pool)
-        seen = pool[: self.seen_count]
-        unseen = pool[self.seen_count : self.seen_count + self.unseen_count]
-        # Shortage policy: seen fills first, unseen takes the remainder.
-        # Warn separately so operators can tell which list degraded.
-        if len(unseen) < self.unseen_count:
+        # Range split: give unseen its share (>= unseen_min once the pool
+        # is large enough, capped at unseen_max); seen takes the rest up to
+        # seen_max. When the pool is small, seen fills first.
+        pool_n = len(pool)
+        unseen_n = min(
+            self.unseen_max, max(self.unseen_min, pool_n - self.seen_max)
+        )
+        unseen_n = max(0, min(unseen_n, pool_n))
+        seen_n = min(self.seen_max, pool_n - unseen_n)
+        seen = pool[:seen_n]
+        unseen = pool[seen_n : seen_n + unseen_n]
+        if len(seen) < self.seen_min or len(unseen) < self.unseen_min:
             logger.warning(
-                "unseen short: %s got %d/%d (seen=%d/%d)",
+                "below target range: %s seen=%d (min %d) unseen=%d (min %d)",
                 urdf_path,
-                len(unseen),
-                self.unseen_count,
                 len(seen),
-                self.seen_count,
+                self.seen_min,
+                len(unseen),
+                self.unseen_min,
             )
 
         payload = {

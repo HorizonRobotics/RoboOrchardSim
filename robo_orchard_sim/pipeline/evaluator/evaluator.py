@@ -18,10 +18,11 @@
 
 from __future__ import annotations
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generator
 
 import numpy as np
 import torch
@@ -36,6 +37,7 @@ from robo_orchard_core.utils.config import (
 from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
 from robo_orchard_sim.contracts.policy_binding import CanonicalPolicyInput
 from robo_orchard_sim.pipeline.evaluator.base import (
+    RESAMPLE_ATTEMPT_MULTIPLIER,
     EpisodeResult,
     EvaluationResult,
     SkippedEpisode,
@@ -44,13 +46,16 @@ from robo_orchard_sim.policy.canonicalizer import (
     canonicalize_observations,
     validate_policy_compatibility,
 )
+from robo_orchard_sim.task_components.selector import (
+    SelectorName,
+    create_selector,
+)
 from robo_orchard_sim.task_components.validators.base import (
     Validator,
-    ValidatorActor,
     ValidatorOutput,
 )
 from robo_orchard_sim.task_components.validators.context import (
-    build_validator_context,
+    ValidatorContext,
 )
 
 if TYPE_CHECKING:
@@ -67,6 +72,7 @@ __all__ = [
     "EvaluatorCfg",
     "EvaluationRuntime",
     "LaunchConfig",
+    "evaluation_runtime",
 ]
 
 
@@ -152,6 +158,28 @@ class EvaluationRuntime:
     sim_app: Any
 
 
+@contextmanager
+def evaluation_runtime(
+    launch: LaunchConfig | None = None,
+) -> Generator[EvaluationRuntime, None, None]:
+    """Own one Isaac app for the whole ``with`` block.
+
+    The app is closed only on block exit. IsaacSim 5.1 shutdown may hard-exit
+    the process (stage-transition deadlock plus the launcher watchdog), so any
+    result that must survive has to be written inside the block.
+    """
+    launch = launch or LaunchConfig()
+    launcher = _create_launcher(
+        headless=launch.headless,
+        enable_cameras=launch.enable_cameras,
+        virtual_display=launch.virtual_display,
+    )
+    try:
+        yield EvaluationRuntime(sim_app=launcher.app)
+    finally:
+        _close_launcher(launcher)
+
+
 class Evaluator:
     """Evaluator that runs fixed-number episodes with explicit step loops."""
 
@@ -167,13 +195,17 @@ class Evaluator:
         self._env: IsaacManagerBasedEnv | None = None
         self._task: OrchardEnv | None = None
         self._record_run_dir: str | None = None
+        # Built once for role-based tasks and rebound each episode, so
+        # that anything holding a reference follows the current target.
+        self._role_registry: Any = None
         self._active_snapshot_uuids: frozenset[str] | None = None
         self._splits: AssetSplits | None = None
+        self._asset_registry = _create_asset_registry(self.cfg.asset_root)
         if (
             self.cfg.snapshot_path is not None
             or self.cfg.splits_path is not None
         ):
-            _reg = _create_asset_registry(self.cfg.asset_root)
+            _reg = self._asset_registry
             if self.cfg.snapshot_path is not None:
                 from robo_orchard_sim.asset_manager.snapshot import (
                     SnapshotError,
@@ -242,56 +274,133 @@ class Evaluator:
         self._ensure_launcher()
         resolution_error_cls = _get_asset_resolution_error_cls()
 
-        max_attempts = (
-            self.cfg.episode_num * 3
-            if self.cfg.resample_on_skip
-            else self.cfg.episode_num
+        # Reusing a scene only serves swap; without it every episode
+        # gets a scene of its own, as evaluation has always run.
+        per_scene = (
+            max(1, self.cfg.swap.swap_per_scene)
+            if self.cfg.swap.enabled
+            else 1
         )
+        # A scene that fails to resolve costs an attempt either way; with
+        # resampling off the attempt budget is just the episode count, so
+        # a skipped scene means that many fewer episodes get run.
+        scenes_needed = -(-self.cfg.episode_num // per_scene)
+        max_attempts = scenes_needed * (
+            RESAMPLE_ATTEMPT_MULTIPLIER if self.cfg.resample_on_skip else 1
+        )
+        if self.cfg.scene_seed_candidates is None:
+            scene_seed_candidates = tuple(
+                range(self.cfg.seed, self.cfg.seed + max_attempts)
+            )
+        else:
+            scene_seed_candidates = tuple(self.cfg.scene_seed_candidates)
+            if len(scene_seed_candidates) < max_attempts:
+                raise ValueError(
+                    "scene_seed_candidates must provide at least "
+                    f"{max_attempts} seeds, got {len(scene_seed_candidates)}"
+                )
+            if len(set(scene_seed_candidates)) != len(scene_seed_candidates):
+                raise ValueError("scene_seed_candidates must be unique")
+            scene_seed_candidates = scene_seed_candidates[:max_attempts]
         episode_results: list[EpisodeResult] = []
         skipped_episodes: list[SkippedEpisode] = []
-        attempt = 0
+        attempted_scene_seeds: list[int] = []
+        scene_idx = 0
         while (
             len(episode_results) < self.cfg.episode_num
-            and attempt < max_attempts
+            and scene_idx < max_attempts
         ):
-            seed = self.cfg.seed + attempt
-            episode_idx = len(episode_results)
-            attempt += 1
+            # Scene layer: objects are drawn once here and stay put for
+            # every episode below.
+            scene_seed = scene_seed_candidates[scene_idx]
+            attempted_scene_seeds.append(scene_seed)
+            scene_idx += 1
             try:
-                if self.cfg.enable_recording:
-                    env = self._prepare_episode_env(
-                        episode_idx=episode_idx,
-                        seed=seed,
-                    )
-                else:
-                    env = self._reload_env(
-                        task=self._build_task_from_cfg(seed=seed),
-                    )
-                result = self._run_episode(
-                    env=env,
-                    policy=policy,
-                    seed=seed,
+                env = self._open_scene(
+                    scene_idx=scene_idx - 1,
+                    scene_seed=scene_seed,
                 )
             except resolution_error_cls as exc:
-                print(f"[skip seed={seed}] asset resolution failed: {exc}")
+                print(
+                    f"[skip scene seed={scene_seed}] "
+                    f"asset resolution failed: {exc}"
+                )
                 self._close_env()
                 skipped_episodes.append(
-                    SkippedEpisode(seed=seed, reason=str(exc))
+                    SkippedEpisode(seed=scene_seed, reason=str(exc))
                 )
                 continue
             except Exception as exc:
+                # A usable seed whose scene cannot be built fails every
+                # episode assigned to that scene, including swap episodes.
                 print(
-                    f"Episode {episode_idx + 1}/"
-                    f"{self.cfg.episode_num} failed with "
+                    f"Scene seed={scene_seed} failed to build with "
                     f"{type(exc).__name__}: {exc}"
                 )
                 self._close_env()
-                result = self._build_episode_error_result(
-                    episode_idx=episode_idx,
-                    seed=seed,
-                    exc=exc,
+                failed_count = min(
+                    per_scene, self.cfg.episode_num - len(episode_results)
                 )
-            episode_results.append(result)
+                for _ in range(failed_count):
+                    episode_results.append(
+                        self._build_episode_error_result(
+                            episode_idx=len(episode_results),
+                            seed=scene_seed,
+                            exc=exc,
+                        )
+                    )
+                continue
+
+            for episode_in_scene in range(per_scene):
+                if len(episode_results) >= self.cfg.episode_num:
+                    break
+                global_idx = len(episode_results)
+                # Under swap the whole point is that the instruction is
+                # the only thing that changed, so the episodes of one
+                # scene reset from the same seed and the objects land
+                # where they landed before. Without it, each episode is
+                # meant to be a fresh arrangement.
+                episode_seed = (
+                    scene_seed
+                    if self.cfg.swap.enabled
+                    else scene_seed + episode_in_scene
+                )
+                record_dir = None
+                if self.cfg.enable_recording:
+                    record_dir = os.path.join(
+                        self._scene_record_dir(
+                            scene_idx=scene_idx - 1, seed=scene_seed
+                        ),
+                        f"episode_{global_idx:04d}_seed_{episode_seed}",
+                    )
+                try:
+                    result = self._run_episode(
+                        env=env,
+                        policy=policy,
+                        seed=episode_seed,
+                        episode_idx=episode_in_scene,
+                        global_episode_idx=global_idx,
+                    )
+                except Exception as exc:
+                    print(
+                        f"Episode {global_idx + 1}/"
+                        f"{self.cfg.episode_num} failed with "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    result = self._build_episode_error_result(
+                        episode_idx=global_idx,
+                        seed=episode_seed,
+                        exc=exc,
+                        record_dir=record_dir,
+                    )
+                if record_dir is not None:
+                    result.metrics = {
+                        **result.metrics,
+                        "record_dir": record_dir,
+                    }
+                episode_results.append(result)
+
+            self._close_env()
 
         success_count = sum(1 for x in episode_results if x.success)
         average_progress = (
@@ -309,6 +418,7 @@ class Evaluator:
             average_progress=average_progress,
             episode_results=episode_results,
             skipped_episodes=skipped_episodes,
+            attempted_scene_seeds=attempted_scene_seeds,
         )
 
     def _build_episode_error_result(
@@ -317,15 +427,13 @@ class Evaluator:
         episode_idx: int,
         seed: int,
         exc: Exception,
+        record_dir: str | None = None,
     ) -> EpisodeResult:
         """Build a complete failed episode result for per-seed errors."""
         error_type = type(exc).__name__
         metrics = {}
-        if self.cfg.enable_recording:
-            metrics["record_dir"] = self._episode_record_dir(
-                episode_idx=episode_idx,
-                seed=seed,
-            )
+        if self.cfg.enable_recording and record_dir is not None:
+            metrics["record_dir"] = record_dir
 
         return EpisodeResult(
             seed=seed,
@@ -391,9 +499,8 @@ class Evaluator:
                     f"task_config_path does not exist: {config_path}"
                 )
 
-        registry_obj = _create_asset_registry(self.cfg.asset_root)
         resolver = _create_asset_resolver(
-            registry_obj=registry_obj,
+            registry_obj=self._asset_registry,
             seed=seed,
             active_snapshot=self._active_snapshot_uuids,
             splits=self._splits,
@@ -450,31 +557,41 @@ class Evaluator:
         self._close_env()
         return self._open_env(task=task, seed=seed)
 
-    def _episode_record_dir(self, *, episode_idx: int, seed: int) -> str:
+    def _scene_record_dir(self, *, scene_idx: int, seed: int) -> str:
         if self._record_run_dir is None:
             raise RuntimeError("Recording directory requested when disabled.")
         return os.path.join(
             self._record_run_dir,
-            f"episode_{episode_idx:04d}_seed_{seed}",
+            f"scene_{scene_idx:04d}_seed_{seed}",
         )
 
-    def _prepare_episode_env(
+    def _open_scene(
         self,
         *,
-        episode_idx: int,
-        seed: int,
+        scene_idx: int,
+        scene_seed: int,
     ) -> IsaacManagerBasedEnv:
-        from robo_orchard_sim.ext.envs.managers.record import (
-            ManualRecordControllerCfg,
-        )
+        """Build one scene, to be reused by all of its episodes.
 
-        task = self._build_task_from_cfg(seed=seed).configure_recording(
-            file_path=self._episode_record_dir(
-                episode_idx=episode_idx,
-                seed=seed,
-            ),
-            controller=ManualRecordControllerCfg(),
-        )
+        Objects are drawn here and stay put until the scene is closed;
+        each episode below only rebinds roles and resets poses.
+        """
+        task = self._build_task_from_cfg(seed=scene_seed)
+        if self.cfg.enable_recording:
+            from robo_orchard_sim.ext.envs.managers.record import (
+                ManualRecordControllerCfg,
+            )
+
+            task = task.configure_recording(
+                file_path=self._scene_record_dir(
+                    scene_idx=scene_idx,
+                    seed=scene_seed,
+                ),
+                controller=ManualRecordControllerCfg(),
+            )
+        # A registry belongs to the scene it was built for: its bindings
+        # name scene entities that disappear when the scene does.
+        self._role_registry = None
         return self._reload_env(task=task)
 
     def _get_runtime_task(self) -> Any:
@@ -484,45 +601,49 @@ class Evaluator:
         assert self._task is not None
         return self._task.task
 
-    def _build_validator_actors(
-        self,
-        scene: Any,
-    ) -> list[ValidatorActor]:
-        """Build validator actor snapshots from the runtime scene."""
-        actor_names = self._get_runtime_task().get_validator_actor_names()
-        return [
-            ValidatorActor.from_rigid_object(name, scene[name])
-            for name in actor_names
-        ]
+    def _bind_roles_for_episode(self, episode_idx: int, seed: int) -> None:
+        """Point each declared role at its target for this episode.
 
-    def _capture_init_state(
-        self,
-        scene: Any,
-        actors: list[ValidatorActor],
-    ) -> None:
-        """Capture initial actor states from the runtime scene."""
-        for actor in actors:
-            actor.capture_init_state(scene[actor.name])
+        The registry outlives the episode: only its bindings change, so
+        whoever holds a reference to it follows along without being
+        rebuilt.
+        """
+        from robo_orchard_sim.task_components.role_registry import RoleRegistry
 
-    def _capture_final_state(
-        self,
-        scene: Any,
-        actors: list[ValidatorActor],
-    ) -> None:
-        """Capture final actor states from the runtime scene."""
-        for actor in actors:
-            actor.capture_final_state(scene[actor.name])
+        task = self._get_runtime_task()
 
-    def _build_validator(
-        self,
-        actors: list[ValidatorActor],
-    ) -> Validator:
+        if self._role_registry is None:
+            self._role_registry = RoleRegistry(num_envs=1)
+
+        for role_id, role_spec in task.roles.items():
+            candidates = task.get_role_candidates(
+                role_id, swap=self.cfg.swap.enabled
+            )
+            if role_spec.cardinality == "one":
+                if not candidates:
+                    raise ValueError(f"Role {role_id!r} has no candidates")
+                chosen = candidates[0]
+                if self.cfg.swap.enabled:
+                    selector = create_selector(
+                        self.cfg.swap.selector, seed=seed, role_id=role_id
+                    )
+                    chosen = selector.select(candidates, 1, episode_idx)[0]
+                self._role_registry.bind_one(0, role_id, chosen)
+            else:
+                self._role_registry.bind_many(0, role_id, list(candidates))
+
+    def _build_validator_context(self) -> ValidatorContext:
+        """Build the runtime context the validator and instruction share."""
         if self._task is None:
             self._ensure_env()
         assert self._task is not None
-        return self._get_runtime_task().build_validator(
-            actors=actors,
-            context=build_validator_context(self._task.embodiment),
+        from robo_orchard_sim.task_components.role_registry import RoleRegistry
+
+        # Episodes always bind before this runs; the fallback registry
+        # only serves callers that build a context outside that loop.
+        role_registry = self._role_registry or RoleRegistry(num_envs=1)
+        return ValidatorContext.from_embodiment(
+            self._task.embodiment, role_registry
         )
 
     def _normalize_policy(
@@ -574,7 +695,12 @@ class Evaluator:
             )
         return latest_step_return
 
-    def _start_manual_recording(self, env: IsaacManagerBasedEnv) -> None:
+    def _start_manual_recording(
+        self,
+        env: IsaacManagerBasedEnv,
+        *,
+        prefix: str | None = None,
+    ) -> None:
         if not self.cfg.enable_recording:
             return
 
@@ -582,11 +708,15 @@ class Evaluator:
         if record_manager is None:
             return
 
-        record_manager.start_record()
+        # One scene's episodes share a writer root, so each episode needs
+        # its own prefix to land in a directory of its own.
+        record_manager.start_record(prefix=prefix or "")
 
     def _build_episode_metadata(
         self,
-        actors: list[ValidatorActor],
+        env: IsaacManagerBasedEnv,
+        context: ValidatorContext,
+        scene_names: list[str],
         validator_output: ValidatorOutput,
         instruction_text: str | None,
         *,
@@ -594,27 +724,34 @@ class Evaluator:
     ) -> dict[str, Any]:
         # TODO：user can add meata data here
 
-        if not actors:
+        if not scene_names:
             return {}
+
+        from robo_orchard_sim.utils.env_utils import bbox_of
+
+        def _pose(state: Any) -> list[float]:
+            # Recorded poses stay 7-dim (pos + quat); the captured state
+            # carries velocities beyond that.
+            return state[:7].cpu().numpy().tolist()
 
         meta_data = {
             "init_position": {
-                actor.name: actor.init_state[env_idx].tolist()
-                for actor in actors
-                if actor.init_state is not None
+                name: _pose(context.init_state_of(name, env_idx))
+                for name in scene_names
             },
             "final_position": {
-                actor.name: actor.final_state[env_idx].tolist()
-                for actor in actors
-                if actor.final_state is not None
+                name: _pose(context.final_state_of(name, env_idx))
+                for name in scene_names
             },
             "actors": {
-                actor.name: {
-                    "actor_category": actor.category,
-                    "actor_type": actor.actor_type,
-                    "actor_uuid": actor.uuid,
+                name: {
+                    "actor_category": env.scene[name].cfg.category
+                    or "unknown",
+                    "actor_type": env.scene[name].cfg.actor_type or "unknown",
+                    "actor_uuid": env.scene[name].cfg.uuid or "unknown",
+                    "bbox": bbox_of(env.scene[name].cfg),
                 }
-                for actor in actors
+                for name in scene_names
             },
             "task_success": float(validator_output.success),
             "task_progress": float(validator_output.progress),
@@ -630,6 +767,7 @@ class Evaluator:
         *,
         template_seed: int,
         actor_description_seed: int,
+        context: ValidatorContext | None = None,
     ) -> str | None:
         task = self._get_runtime_task()
         if task.instruction is None:
@@ -639,6 +777,7 @@ class Evaluator:
         actors = task.build_instruction_context(
             env,
             actor_description_seed=actor_description_seed,
+            context=context,
         )
         return instruction.render(
             actors=actors,
@@ -649,7 +788,8 @@ class Evaluator:
     def _record_episode_metadata(
         self,
         env: IsaacManagerBasedEnv,
-        actors: list[ValidatorActor],
+        context: ValidatorContext,
+        scene_names: list[str],
         validator_output: ValidatorOutput,
         instruction_text: str | None,
     ) -> None:
@@ -662,7 +802,9 @@ class Evaluator:
         if num_envs > 1:
             meta_dict = [
                 self._build_episode_metadata(
-                    actors,
+                    env,
+                    context,
+                    scene_names,
                     validator_output,
                     instruction_text,
                     env_idx=env_idx,
@@ -671,7 +813,9 @@ class Evaluator:
             ]
         else:
             meta_dict = self._build_episode_metadata(
-                actors,
+                env,
+                context,
+                scene_names,
                 validator_output,
                 instruction_text,
             )
@@ -688,17 +832,46 @@ class Evaluator:
         policy: PolicyMixin,
         seed: int,
         *,
+        episode_idx: int = 0,
+        global_episode_idx: int = 0,
         template_seed: int | None = None,
         actor_description_seed: int | None = None,
-    ) -> tuple[dict[str, Any], list[ValidatorActor], Validator, str | None]:
-        reset_return = env.reset(seed=seed)
+    ) -> tuple[
+        dict[str, Any],
+        list[str],
+        Validator,
+        str | None,
+        ValidatorContext,
+    ]:
+        # Bind this episode's targets before the reset, so the terms
+        # that place objects, the validator and the instruction all
+        # describe the same ones.
+        self._bind_roles_for_episode(episode_idx, seed)
+        reset_return = env.reset(
+            seed=seed,
+            role_bindings=(
+                self._role_registry.bindings(0)
+                if self._role_registry is not None
+                else None
+            ),
+        )
         observations = reset_return.observations
 
         settle_return = self._settle_scene(env)
         observations = settle_return.observations
 
         # start record env
-        self._start_manual_recording(env)
+        self._start_manual_recording(
+            env,
+            prefix=f"episode_{global_episode_idx:04d}_seed_{seed}",
+        )
+
+        context = self._build_validator_context()
+
+        # Tasks own operable identities; the context owns settled state.
+        operable_names = self._get_runtime_task().get_operable_scene_names()
+        if operable_names:
+            context.capture_init_states(env, operable_names)
 
         if template_seed is None:
             template_seed = seed
@@ -708,17 +881,22 @@ class Evaluator:
             env=env,
             template_seed=template_seed,
             actor_description_seed=actor_description_seed,
+            context=context,
         )
         if instruction_text is not None:
             print(f"instruction: {instruction_text}")
 
-        actors = self._build_validator_actors(env.scene)
-        validator = self._build_validator(actors)
+        validator = self._get_runtime_task().build_validator(context=context)
         validator.reset()
 
-        self._capture_init_state(env.scene, actors)
         policy.reset()
-        return observations, actors, validator, instruction_text
+        return (
+            observations,
+            operable_names,
+            validator,
+            instruction_text,
+            context,
+        )
 
     def _step_episode(
         self,
@@ -730,6 +908,7 @@ class Evaluator:
     ) -> tuple[int, str, ValidatorOutput]:
         stop_reason = "max_steps"
         steps = 0
+        fixed_horizon = validator.fixed_horizon
         policy_tag = self._resolve_policy_tag(policy)
         validator_output = ValidatorOutput(
             success=False,
@@ -769,15 +948,19 @@ class Evaluator:
                         f"validator_output={validator_output}"
                     )
 
-            if validator_output.success:
-                stop_reason = "success"
-                break
-            if self._extract_terminated(step_return):
-                stop_reason = "terminated"
-                break
-            if self._extract_truncated(step_return):
-                stop_reason = "truncated"
-                break
+            if not fixed_horizon:
+                if validator_output.success:
+                    stop_reason = "success"
+                    break
+                if self._extract_terminated(step_return):
+                    stop_reason = "terminated"
+                    break
+                if self._extract_truncated(step_return):
+                    stop_reason = "truncated"
+                    break
+
+        if fixed_horizon:
+            validator_output = validator.finalize()
 
         return steps, stop_reason, validator_output
 
@@ -822,17 +1005,25 @@ class Evaluator:
         policy: PolicyMixin,
         seed: int,
         *,
+        episode_idx: int = 0,
+        global_episode_idx: int = 0,
         template_seed: int | None = None,
         actor_description_seed: int | None = None,
     ) -> EpisodeResult:
-        observations, actors, validator, instruction_text = (
-            self._prepare_episode(
-                env=env,
-                policy=policy,
-                seed=seed,
-                template_seed=template_seed,
-                actor_description_seed=actor_description_seed,
-            )
+        (
+            observations,
+            operable_names,
+            validator,
+            instruction_text,
+            context,
+        ) = self._prepare_episode(
+            env=env,
+            policy=policy,
+            seed=seed,
+            episode_idx=episode_idx,
+            global_episode_idx=global_episode_idx,
+            template_seed=template_seed,
+            actor_description_seed=actor_description_seed,
         )
         steps, stop_reason, validator_output = self._step_episode(
             env=env,
@@ -842,10 +1033,12 @@ class Evaluator:
             instruction_text=instruction_text,
         )
 
-        self._capture_final_state(env.scene, actors)
+        if operable_names:
+            context.capture_final_states(env, operable_names)
         self._record_episode_metadata(
             env,
-            actors,
+            context,
+            operable_names,
             validator_output,
             instruction_text,
         )
@@ -857,7 +1050,41 @@ class Evaluator:
             steps=steps,
             stop_reason=stop_reason,
             metrics=validator_output.metrics,
+            instruction=instruction_text or "",
+            stage_scores=dict(validator_output.stage_scores),
+            checker_summary=(
+                validator.metric_store.checker_summary()
+                if validator.metric_store is not None
+                else None
+            ),
         )
+
+
+class SwapConfig(Config):
+    """Rotate a task's target between episodes of one scene.
+
+    Off by default: a scene then serves a single episode and every role
+    stays on the target it was built with, which is how evaluation has
+    always behaved.
+
+    Turning it on selects targets using ``selector``. By default each
+    scene serves one episode, with a new seed for each scene. Setting
+    ``swap_per_scene`` above one reuses a scene for multiple episodes.
+    Within a scene, random visits each candidate once
+    per shuffled round; round-robin follows declaration order. Those
+    episodes also reset from the same seed, so the objects stay where
+    they were and the instruction is the only thing that changed —
+    which is what makes the score read as instruction-following rather
+    than as luck with the arrangement. Tasks whose target has no
+    alternatives — a single declared object, no clutter to draw from —
+    are unaffected: their candidate pool holds one entry and every
+    episode picks it.
+    """
+
+    enabled: bool = False
+    swap_per_scene: int = 1
+    """Episodes one scene serves. Only read when swap is enabled."""
+    selector: SelectorName = "random"
 
 
 class EvaluatorCfg(ClassConfig):
@@ -870,7 +1097,9 @@ class EvaluatorCfg(ClassConfig):
     launch: LaunchConfig = LaunchConfig()
     seed: int = 0
     episode_num: int = 1
+    swap: SwapConfig = SwapConfig()
     resample_on_skip: bool = True
+    scene_seed_candidates: tuple[int, ...] | None = None
     max_steps: int = 1000
     max_settle_steps: int = 250
     settle_streak: int = 50

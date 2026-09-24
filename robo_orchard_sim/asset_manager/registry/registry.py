@@ -26,13 +26,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from robo_orchard_sim.asset_manager.registry.build_index import (
-    INDEX_FILENAME,
     SCHEMA_VERSION,
+    _build_asset_index_unlocked,
+    asset_index_lock,
     asset_set_fingerprint,
-    build_asset_index,
+    default_asset_index_path,
 )
 from robo_orchard_sim.asset_manager.registry.errors import (
     AssetIndexNotFoundError,
@@ -41,16 +43,23 @@ from robo_orchard_sim.asset_manager.registry.errors import (
     CollisionExhaustedError,
     EmptyPoolError,
     InsufficientPoolError,
+    InvalidSpecConfigError,
     UnknownAssetError,
+    UnknownSpecTypeError,
+)
+from robo_orchard_sim.asset_manager.registry.spec_builders import (
+    AssetSpecBuilder,
+    default_spec_builders,
 )
 from robo_orchard_sim.asset_manager.registry.types import (
+    RIGID_OBJECT_SPEC_TYPE,
     AssetFilter,
     AssetMeta,
     DistractorSpec,
 )
 
 if TYPE_CHECKING:
-    from robo_orchard_sim.orchard_env.assets import RigidObjectSpec
+    from robo_orchard_sim.orchard_env.assets import ObjectSpec
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +107,8 @@ def _row_to_meta(row: dict[str, Any]) -> AssetMeta:
         urdf_path=row["urdf_path"],
         interaction_path=row["interaction_path"],
         caption_path=row["caption_path"],
+        metadata_path=row.get("metadata_path") or "",
+        spec_type=row.get("spec_type") or RIGID_OBJECT_SPEC_TYPE,
         tags=tags,
         version=row.get("version") or "",
         generate_time=row.get("generate_time") or "",
@@ -124,13 +135,14 @@ class AssetRegistry:
         self._index_path = (
             Path(index_path)
             if index_path is not None
-            else self._asset_root / INDEX_FILENAME
+            else default_asset_index_path(self._asset_root)
         )
         self._metas: dict[str, AssetMeta] = {}
         self._by_asset_id: dict[str, str] = {}
         self._by_category: dict[str, list[str]] = {}
         self._by_super: dict[str, list[str]] = {}
         self._by_tag: dict[str, list[str]] = {}
+        self._spec_builders = default_spec_builders()
         self._load(auto_build=auto_build_index)
 
     def _check_asset_set_staleness(self, table, schema_meta, *, auto_build):
@@ -151,7 +163,7 @@ class AssetRegistry:
                 "asset set changed since index build; rebuilding %s",
                 self._index_path,
             )
-            build_asset_index(
+            _build_asset_index_unlocked(
                 str(self._asset_root), output_path=str(self._index_path)
             )
             return pq.read_table(str(self._index_path))
@@ -164,6 +176,12 @@ class AssetRegistry:
         return table
 
     def _load(self, *, auto_build: bool) -> None:
+        """Load one stable registry view under the index process lock."""
+        with asset_index_lock(self._index_path):
+            self._load_locked(auto_build=auto_build)
+
+    def _load_locked(self, *, auto_build: bool) -> None:
+        """Load or rebuild the index while its process lock is held."""
         index_path = self._index_path
         if not index_path.exists():
             if not auto_build:
@@ -173,11 +191,23 @@ class AssetRegistry:
                     "auto_build_index=True"
                 )
             logger.info("index missing; building at %s", index_path)
-            build_asset_index(
+            _build_asset_index_unlocked(
                 str(self._asset_root), output_path=str(index_path)
             )
 
-        table = pq.read_table(str(index_path))
+        try:
+            table = pq.read_table(str(index_path))
+        except pa.ArrowInvalid:
+            if not auto_build:
+                raise
+            logger.warning(
+                "index at %s is not a complete parquet file; rebuilding",
+                index_path,
+            )
+            _build_asset_index_unlocked(
+                str(self._asset_root), output_path=str(index_path)
+            )
+            table = pq.read_table(str(index_path))
 
         # --- schema-version check (Fix 4) ---
         schema_meta = table.schema.metadata or {}
@@ -207,7 +237,7 @@ class AssetRegistry:
                 version,
                 SCHEMA_VERSION,
             )
-            build_asset_index(
+            _build_asset_index_unlocked(
                 str(self._asset_root), output_path=str(index_path)
             )
             table = pq.read_table(str(index_path))
@@ -340,40 +370,38 @@ class AssetRegistry:
         *,
         name: str | None = None,
         role: str,
-    ) -> "RigidObjectSpec":
-        """Convert AssetMeta into a RigidObjectSpec.
+        config: dict[str, Any] | None = None,
+    ) -> "ObjectSpec":
+        """Build a validated spec using the asset-type builder."""
+        try:
+            builder = self._spec_builders[meta.spec_type]
+        except KeyError as exc:
+            raise UnknownSpecTypeError(meta.spec_type) from exc
+        try:
+            return builder(
+                meta,
+                name if name is not None else meta.asset_id,
+                role,
+                config or {},
+            )
+        except (TypeError, ValueError) as exc:
+            raise InvalidSpecConfigError(meta.spec_type, exc) from exc
 
-        The spec carries asset-library identity: name (scene/prim name),
-        USD + interaction paths, and ``mass`` sourced from the URDF's
-        ``<extra_info>`` (a declared asset-library property, not a
-        runtime override). Pose (``initial_pos`` / ``initial_rot``) is
-        intentionally left unset; runtime placement is owned by
-        downstream modules (pose-reset events, etc.). Scene-role
-        semantics are injected by the caller via ``role`` and stored as
-        ``RigidObjectSpec.actor_type``.
-
-        Imports RigidObjectSpec lazily to keep isaaclab out of the
-        registry package's import graph for lightweight callers
-        (CLI, tests that don't need specs).
-        """
-        from robo_orchard_sim.orchard_env.assets import RigidObjectSpec
-
-        return RigidObjectSpec(
-            name=name if name is not None else meta.asset_id,
-            usd_path=meta.usd_path,
-            caption_path=meta.caption_path,
-            interaction_path=meta.interaction_path,
-            mass=meta.real_mass,
-            uuid=meta.uuid,
-            category=meta.category,
-            actor_type=role,
-            attributes={
-                "color": tuple(sorted(meta.color or ())),
-                "shape": tuple(sorted(meta.shape or ())),
-                "material": tuple(sorted(meta.material or ())),
-            },
-            aabb_z_min=meta.aabb_z_min,
-        )
+    def register_spec_builder(
+        self,
+        spec_type: str,
+        builder: AssetSpecBuilder,
+        *,
+        replace: bool = False,
+    ) -> None:
+        """Register an instance-local builder for an open spec type."""
+        if not spec_type:
+            raise ValueError("spec_type must be a non-empty string.")
+        if spec_type in self._spec_builders and not replace:
+            raise ValueError(
+                f"A builder is already registered for {spec_type!r}."
+            )
+        self._spec_builders[spec_type] = builder
 
 
 # ---------------------------------------------------------------------------
@@ -542,65 +570,6 @@ class AssetSampler:
         if n == 0:
             return []
         idxs = rng.choice(len(pool), size=n, replace=False)
-        return [pool[int(i)] for i in idxs]
-
-    def sample_distractor_pool(
-        self,
-        anchor: AssetMeta,
-        spec: DistractorSpec,
-        pool_size: int,
-        rng: np.random.Generator,
-    ) -> list[AssetMeta]:
-        """Uniform-random draw of pool_size distinct distractors.
-
-        Raises:
-            ValueError: pool_size is non-positive, or match/differ
-                has unknown fields.
-            InsufficientPoolError: matching pool has fewer than
-                pool_size assets.
-        """
-        if pool_size <= 0:
-            raise ValueError(f"pool_size must be positive, got {pool_size}")
-        invalid = [
-            f
-            for f in tuple(spec.match) + tuple(spec.differ)
-            if f not in _MATCH_DIFFER_ALLOWED
-        ]
-        if invalid:
-            raise ValueError(
-                f"Unknown match/differ field(s): {invalid}. "
-                f"Allowed: {sorted(_MATCH_DIFFER_ALLOWED)}"
-            )
-
-        pool: list[AssetMeta] = []
-        for m in self._reg:
-            if m.uuid == anchor.uuid:
-                continue
-            if not all(
-                getattr(m, f) == getattr(anchor, f) for f in spec.match
-            ):
-                continue
-            if not all(
-                getattr(m, f) != getattr(anchor, f) for f in spec.differ
-            ):
-                continue
-            if not spec.absolute_filter.matches(m):
-                continue
-            if spec.exclude and m.uuid in spec.exclude:
-                continue
-            if spec.only_in is not None and m.uuid not in spec.only_in:
-                continue
-            pool.append(m)
-
-        pool.sort(key=lambda m: m.uuid)
-
-        if len(pool) < pool_size:
-            raise InsufficientPoolError(
-                mode="distractor_pool",
-                available=len(pool),
-                requested=pool_size,
-            )
-        idxs = rng.choice(len(pool), size=pool_size, replace=False)
         return [pool[int(i)] for i in idxs]
 
     def sample_compatible_pair(

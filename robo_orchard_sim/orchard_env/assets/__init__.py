@@ -21,17 +21,21 @@ from robo_orchard_sim.orchard_env.assets.asset_spec import (
     CustomAssetSpec,
 )
 from robo_orchard_sim.orchard_env.assets.object_spec import (
+    ArticulatedObjectSpec,
     ArticulationSpec,
+    JointOperationMeta,
     ObjectSpec,
     RigidObjectSpec,
 )
-from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
+from robo_orchard_sim.orchard_env.assets.task_assets import TaskAssets
 
 __all__ = [
+    "ArticulatedObjectSpec",
     "ArticulationSpec",
     "AssetSpec",
     "CustomAssetSpec",
+    "JointOperationMeta",
     "ObjectSpec",
-    "PoolSpec",
     "RigidObjectSpec",
+    "TaskAssets",
 ]

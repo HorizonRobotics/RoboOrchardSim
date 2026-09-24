@@ -327,6 +327,21 @@ def test_policy_compatibility_few_manipulators_raises_value_error() -> None:
         )
 
 
+def test_policy_compatibility_explicit_empty_instruction_passes() -> None:
+    canonical = canonicalize_observations(
+        observations=_build_raw_observation(),
+        instruction="",
+        schema=_build_dualarm_schema(),
+    )
+
+    validate_policy_compatibility(
+        canonical=canonical,
+        requirement=PolicyRequirement(require_instruction=True),
+    )
+
+    assert canonical.instruction == ""
+
+
 def test_policy_compatibility_missing_modality_raises_value_error() -> None:
     canonical = canonicalize_observations(
         observations=_build_raw_observation(),

@@ -17,24 +17,32 @@
 """Dummy policy implementation for pipeline-level action flow checks."""
 
 from __future__ import annotations
-from typing import Any
+from typing import Any, TypeAlias
 
 import gymnasium as gym
-import torch
 from robo_orchard_core.policy.base import PolicyConfig, PolicyMixin
 from robo_orchard_core.utils.config import ClassType
 
+from robo_orchard_sim.contracts.joint_command import UnifiedJointCommand
 from robo_orchard_sim.contracts.policy_binding import CanonicalPolicyInput
+from robo_orchard_sim.policy.action_layout import (
+    CompiledActionLayout,
+    ManipulatorActionSpec,
+    validate_action_layout_compatibility,
+)
 
 __all__ = ["DummyPolicy", "DummyPolicyCfg"]
 
-DummyAction = dict[str, torch.Tensor] | torch.Tensor
+DummyAction: TypeAlias = UnifiedJointCommand
 
 
-class DummyPolicy(
-    PolicyMixin[dict[str, Any] | CanonicalPolicyInput, DummyAction]
-):
-    """Policy that emits fixed actions for end-to-end flow tests."""
+class DummyPolicy(PolicyMixin[CanonicalPolicyInput, DummyAction]):
+    """Policy that commands every joint to hold its current position.
+
+    Useful for exercising the observation -> action -> environment path on
+    any embodiment without a trained model. Joint names come from the
+    canonical action layout, so no embodiment is hard-coded here.
+    """
 
     cfg: "DummyPolicyCfg"
 
@@ -49,57 +57,59 @@ class DummyPolicy(
             observation_space=observation_space,
             action_space=action_space,
         )
-        self._cached_action: DummyAction | None = None
-        self._remaining_inference_steps = 0
 
     def reset(self, *args: Any, **kwargs: Any) -> None:
-        """Clear cached actions for a new rollout."""
+        """Reset nothing; each action depends only on the latest input."""
         del args, kwargs
-        self._cached_action = None
-        self._remaining_inference_steps = 0
 
-    def act(self, obs: dict[str, Any] | CanonicalPolicyInput) -> DummyAction:
-        """Return a fixed action payload.
+    def act(self, obs: CanonicalPolicyInput) -> DummyAction:
+        """Return a command holding the observed pose of every joint.
 
         Args:
-            obs (dict[str, Any]): Input observations used only to infer batch
-                size when possible.
+            obs (CanonicalPolicyInput): Canonical input carrying the current
+                joint positions and the compiled action layout.
 
         Returns:
-            DummyAction: A fixed action tensor or action dict.
+            DummyAction: Joint command repeating the observed positions.
         """
-        if isinstance(obs, CanonicalPolicyInput):
-            try:
-                manipulator = next(iter(obs.manipulators.values()))
-            except StopIteration:
-                device = torch.device("cpu")
-            else:
-                device = manipulator["joint_position"].device
-        else:
-            left_joint_position = obs["/robot"]["left_joint_position"]
-            device = left_joint_position.device
+        layout = obs.action_layout
+        if not isinstance(layout, CompiledActionLayout):
+            raise ValueError(
+                "DummyPolicy observation requires a compiled action layout"
+            )
+        validate_action_layout_compatibility(
+            manipulator_observations=obs.manipulators,
+            layout=layout,
+            context="DummyPolicy input",
+        )
+        return UnifiedJointCommand.merge(
+            *(
+                self._hold_pose(
+                    obs.manipulators[slot],
+                    manipulator=layout.manipulators[slot],
+                )
+                for slot in layout.manipulator_order
+            )
+        )
 
-        actions = {
-            "left_robot_joint_position": torch.tensor(
-                [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], device=device
-            ),
-            "left_robot_gripper_control": torch.tensor(
-                [[0.0, 0.0]], device=device
-            ),
-            "right_robot_joint_position": torch.tensor(
-                [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], device=device
-            ),
-            "right_robot_gripper_control": torch.tensor(
-                [[0.0, 0.0]], device=device
-            ),
-        }
-        return actions
+    @staticmethod
+    def _hold_pose(
+        manipulator_obs: dict[str, Any],
+        *,
+        manipulator: ManipulatorActionSpec,
+    ) -> UnifiedJointCommand:
+        """Label one manipulator's observed joint positions as a command."""
+        joint_names = (
+            manipulator.arm_joint_names + manipulator.gripper_joint_names
+        )
+        joint_position = manipulator_obs["joint_position"]
+        return UnifiedJointCommand(
+            values=joint_position[:, : len(joint_names)].clone(),
+            joint_names=joint_names,
+        )
 
 
 class DummyPolicyCfg(PolicyConfig[DummyPolicy]):
     """Config for :class:`DummyPolicy`."""
 
     class_type: ClassType[DummyPolicy] = DummyPolicy
-
-    inference_steps: int = 32
-    """How many consecutive ``act`` calls reuse one generated action."""

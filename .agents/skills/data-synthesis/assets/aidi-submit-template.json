@@ -1,0 +1,24 @@
+{
+  "job_name": "__GENERATED__",
+  "workspace_folder": "workspace_to_submit",
+  "docker_image": "hub.hobot.cc/auto/robot_lab_base:ubuntu22.04-py3.11-cuda12.8-isaacsim5.1-isaac_lab-v2.3.2-internal-v0.1",
+  "input_bucket": "robot_lab,robot_lab2",
+  "output_bucket": "robot_lab,robot_lab2",
+  "num_workers": 1,
+  "gpu_per_worker": 1,
+  "wall_time": 7200,
+  "cmd": [
+    "export PYTHONPATH=${WORKING_PATH}/robo_orchard_sim:$PYTHONPATH",
+    "export PYTHONPATH=${WORKING_PATH}:$PYTHONPATH",
+    "export NV_ASSET_ROOT_DIR=/horizon-bucket/robot_lab/assets/NVIDIA/Assets/Isaac/4.1",
+    "export ORCHARD_ASSET=/horizon-bucket/robot_lab/assets/ROBO_ORCHARD_SIM"
+  ],
+  "python_launcher": "accelerate",
+  "to_upload": [
+    "robo_orchard_sim",
+    "examples"
+  ],
+  "job_password": "__REQUIRED__",
+  "queue_name": "__REQUIRED__",
+  "project_id": "horizon-labs"
+}

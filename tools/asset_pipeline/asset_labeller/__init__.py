@@ -20,16 +20,39 @@ Generates URDF files with physical and semantic attributes for 3D assets.
 Supports OBJ and USD mesh formats with texture.
 """
 
-from .gpt_client import GPTClient, load_client_from_config
-from .labeller import AssetLabeller
+from typing import TYPE_CHECKING, Any
+
+from .labeller import (
+    ARTICULATION_SPEC_TYPE,
+    RIGID_OBJECT_SPEC_TYPE,
+    AssetLabeller,
+)
 from .mesh_utils import load_mesh
 from .renderer import render_views
+
+if TYPE_CHECKING:
+    from .gpt_client import GPTClient
 
 __version__ = "0.1.0"
 __all__ = [
     "AssetLabeller",
+    "ARTICULATION_SPEC_TYPE",
     "GPTClient",
+    "RIGID_OBJECT_SPEC_TYPE",
     "load_client_from_config",
     "load_mesh",
     "render_views",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Load optional GPT dependencies only when GPT symbols are requested."""
+    if name in {"GPTClient", "load_client_from_config"}:
+        from .gpt_client import GPTClient, load_client_from_config
+
+        exports = {
+            "GPTClient": GPTClient,
+            "load_client_from_config": load_client_from_config,
+        }
+        return exports[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -76,7 +76,7 @@ class RoomTableScene(SceneBase):
             physx=PhysxCfg(enable_ccd=True),
             # 5090
             render=RenderCfg(
-                # enable_translucency=True,
+                enable_translucency=True,
                 # enable_reflections=True,
                 # enable_global_illumination=True,
                 # enable_ambient_occlusion=True,
@@ -85,6 +85,10 @@ class RoomTableScene(SceneBase):
                 antialiasing_mode="FXAA",
                 dlss_mode=3,
                 samples_per_pixel=64,
+                carb_settings={
+                    "/rtx/raytracing/fractionalCutoutOpacity": True,
+                    "/rtx/shadows/fractionalCutoutOpacity": True,
+                },
             ),
             # 4090
             # render=RenderCfg(

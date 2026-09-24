@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 import os
+
+# import traceback
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -135,6 +137,7 @@ class MultiTaskDataSynthesisRunner:
             except (Exception, SystemExit) as exc:
                 if not self.cfg.continue_on_task_error:
                     raise
+                # traceback.print_exc()
                 task_results.append(
                     self._build_failed_task_result(
                         cfg=runner.cfg,

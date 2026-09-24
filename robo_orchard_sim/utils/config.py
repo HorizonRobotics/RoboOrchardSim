@@ -62,7 +62,7 @@ T_contra = TypeVar("T_contra", contravariant=True)
 V = TypeVar("V")
 
 _CallableSerializer = PlainSerializer(
-    lambda x: (callable_to_string(x) if x is not None else None),
+    lambda x: callable_to_string(x) if x is not None else None,
     return_type=str,
     when_used="always",
     # when_used="json",
@@ -229,17 +229,6 @@ def isaac_configclass2pydantic(cls: Type[_ConfigType]) -> Type[_ConfigType]:
         obj_globals["schemas"] = importlib.import_module(
             "isaaclab.sim.schemas"
         )
-        # Fix typo of FixedTendonsPropertiesCfg to FixedTendonPropertiesCfg
-        anno = inspect.get_annotations(cls, eval_str=False)
-        for k, v in anno.items():
-            anno[k] = (
-                v.replace(
-                    "FixedTendonsPropertiesCfg", "FixedTendonPropertiesCfg"
-                )
-                if isinstance(v, str)
-                else v
-            )
-        cls.__annotations__ = anno
 
         if "Usd" not in obj_globals:
             obj_globals["Usd"] = importlib.import_module("pxr.Usd")

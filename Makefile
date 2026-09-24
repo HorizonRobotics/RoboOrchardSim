@@ -19,8 +19,7 @@ version:
 	@echo "version: $$(cat VERSION)"
 
 install-runtime-constraints:
-	python3 -m pip install -c $(INSTALL_CONSTRAINTS) \
-		protobuf robo_orchard_schemas $(PIP_ARGS)
+	python3 -m pip install --no-deps -r $(INSTALL_CONSTRAINTS) $(PIP_ARGS)
 
 install: version
 	python3 -m pip install . $(BUILD_ARGS) $(PIP_ARGS)

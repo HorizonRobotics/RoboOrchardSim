@@ -1,112 +1,60 @@
 # Docker Installation and Usage
 
-The Docker workflow is the recommended installation path for
-`robo_orchard_sim`. It provides the tested simulation stack while keeping it
-isolated from the host Python environment.
+The Docker workflow is the recommended way to run `robo_orchard_sim`.
 
 ## Prerequisites
 
-- Linux with an NVIDIA driver
-- Docker Engine
-- NVIDIA Container Toolkit
-- An X11 display for GUI execution
+- Linux with an NVIDIA driver compatible with Isaac Sim 5.1.0
+- Docker Engine and NVIDIA Container Toolkit
 - The simulation assets described in the
   [root installation guide](../README.md#1-installation)
 
-## Software Stack
-
-- Ubuntu 22.04
-- CUDA 11.8
-- Python 3.10
-- GCC 11.4
-- PyTorch 2.5.1 with CUDA 11.8
-- Isaac Sim 4.5.0
-- Isaac Lab 2.0.2
-- cuRobo
-
 ## Get the Image
 
-### Pull From Docker Hub
-
-Pull the prebuilt image:
-
 ```bash
-docker pull horizonrobotics/robo_orchard_sim:cuda11.8-ubuntu22.04-py3.10-isaacsim4.5.0-isaaclab2.0.2-curobo-gui-v1.0
+docker pull horizonrobotics/robo_orchard_sim:ubuntu22.04-py3.11-cuda12.8-isaacsim5.1-isaac_lab-v2.3.2-v0.1
 ```
 
-## Run With GUI
+The image ships Ubuntu 22.04, Python 3.11, CUDA 12.8, PyTorch 2.7.0, Isaac Sim
+5.1.0, Isaac Lab 2.3.2, and cuRobo 0.7.6, but not `robo_orchard_sim` itself.
 
-Run these commands from the repository root on a machine with an NVIDIA driver
-and X11 display:
+## Run the Container
 
 ```bash
-export CONTAINER_NAME=robo-orchard-sim
-export HOST_WORKSPACE=/absolute/path/to/your/robo_orchard_sim
-export ASSETS_DIR=/absolute/path/to/sim_task_suite_assets
+export WORKSPACE=/absolute/path/to/your/workspace
 bash docker/run_container.sh
+docker exec -it robo_orchard_sim bash
 ```
 
-The launcher maps the host asset directory into the container as follows:
+`WORKSPACE` becomes the container HOME, and `${WORKSPACE}/.cache` is reused as
+the Kit cache. Add your own `-v` for the asset directory, then set
+`ORCHARD_ASSET` and `NV_ASSET_ROOT_DIR` inside the container as described in the
+[root installation guide](../README.md#1-installation).
 
-```text
-ASSETS_DIR (host)
-  -> CONTAINER_ASSETS (container, default: /assets)
-     -> ORCHARD_ASSET=/assets
-     -> NV_ASSET_ROOT_DIR=/assets/NVIDIA/Assets/Isaac/4.1
-```
+If you write your own launch script, copy the `docker run` flags from
+`run_container.sh` — the Vulkan mounts, `--cap-add=ALL`, and
+`NVIDIA_DRIVER_CAPABILITIES` are required for Isaac Sim to render.
 
-To use a different container mount point, set `CONTAINER_ASSETS` before
-running the launcher:
+## Install and Verify
+
+Inside the container, from your clone of this repository:
 
 ```bash
-export CONTAINER_ASSETS=/data/assets
-bash docker/run_container.sh
-```
-
-The launcher mounts `HOST_WORKSPACE` at `/workspace` and opens an interactive
-Bash shell there.
-
-## Configure and Verify the Container
-
-The commands in this section run inside the container.
-
-Install `robo_orchard_sim` from the mounted repository:
-
-```bash
-git clone <repo-url>
 cd robo_orchard_sim
 make install-editable
 ```
 
-Verify that Isaac Sim is importable:
+## Run With GUI
+
+The container shares the host X11 socket, so prefix the command with the host
+`DISPLAY` and the window shows up on the host desktop:
 
 ```bash
-python3 -c "import isaacsim; print('isaacsim ok')"
+DISPLAY=:{id} python3 your_isaac_example.py
 ```
 
-### Optional: VSCode/Cursor Compatibility
+Replace `{id}` with the host display number (`echo $DISPLAY` on the host).
+Launcher-based scripts need
+`SimpleIsaacAppLauncher(headless=False, virtual_display=False)`.
 
-To attach VSCode or Cursor to the running container, apply these compatibility
-fixes once inside the container as `root`:
-
-```bash
-ln -sf /usr/lib/os-release /etc/os-release
-
-cat >/usr/local/bin/base64 <<'EOF'
-#!/bin/sh
-if [ "$1" = "-D" ]; then
-  shift
-  exec /usr/bin/base64 -d "$@"
-fi
-exec /usr/bin/base64 "$@"
-EOF
-
-chmod +x /usr/local/bin/base64
-```
-
-## Notes
-
-- This image is intended for `robo_orchard_sim` distribution, not as a generic
-  public base image.
-- The image includes Isaac Sim, Isaac Lab, and cuRobo. Users must follow the
-  applicable NVIDIA software terms.
+> Only GPU 0 can present to a display; runs on other GPUs must be headless.

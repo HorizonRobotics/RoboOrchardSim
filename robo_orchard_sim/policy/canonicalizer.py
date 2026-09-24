@@ -33,7 +33,7 @@ def validate_policy_compatibility(
     requirement: PolicyRequirement,
 ) -> None:
     """Validate broad policy requirements against canonical policy input."""
-    if requirement.require_instruction and not canonical.instruction:
+    if requirement.require_instruction and canonical.instruction is None:
         raise ValueError("Policy requires instruction, but none was provided.")
 
     if requirement.min_camera_count is not None:

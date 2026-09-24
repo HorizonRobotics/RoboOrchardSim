@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from robo_orchard_sim.orchard_env.task_templates.layout_task import (
         LayoutContext,
     )
+    from robo_orchard_sim.task_components.role_registry import RoleRegistry
     from robo_orchard_sim.task_components.trajs_gen.base_executor import (
         BaseExecutorCfg,
     )
@@ -109,11 +110,8 @@ def _build_spatial_layout_context(
             "spatial pick layout requires a 'ref' role for instruction "
             "rendering"
         )
-    ref_category = layout.objects["ref"].category
     try:
-        ref_scene_name = layout_builder.role_member_by_category["ref"][
-            ref_category
-        ]
+        ref_scene_name = layout_builder.scene_name_by_role["ref"]
     except KeyError as exc:
         raise LayoutValidationError(
             "spatial pick layout ref role was not resolved to a scene actor"
@@ -140,11 +138,11 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
         from robo_orchard_sim.benchmark.manipulation.semantic_pick.pick_env import (  # noqa: E501
             PickTaskDefinitionBase,
         )
+        from robo_orchard_sim.orchard_env.assets.task_assets import TaskAssets
         from robo_orchard_sim.orchard_env.layout.builder import LayoutBuilder
         from robo_orchard_sim.orchard_env.layout.loader import parse_layout
         from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
         from robo_orchard_sim.orchard_env.task_templates.pick_task import (
-            PickAssets,
             PickTaskParams,
         )
 
@@ -190,12 +188,16 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
             cls.NAMED_ROLES,
             slot_filters=cfg.asset_configs,
         )
-        pick_assets = PickAssets(
-            pick=assets["pick"],
-            distractors=(
-                [assets[slot] for slot in sorted(assets) if slot != "pick"]
-                or None
-            ),
+        # LayoutBuilder keys its output by slot (``pick``,
+        # ``distractor_0``, ...); the task groups candidates by role, so
+        # every non-pick slot folds into the one distractor role.
+        pick_assets = TaskAssets(
+            role_candidates={
+                "pick": [assets["pick"]],
+                "distractors": [
+                    assets[slot] for slot in sorted(assets) if slot != "pick"
+                ],
+            }
         )
         scene = cls.resolve_scene(config_path=path)
         PickTaskDefinitionBase._apply_light_reset_scene_overrides(
@@ -224,10 +226,14 @@ class SpatialPickTaskDefinitionBase(TaskDefinition):
     def build_atomic_action_plan(
         cls,
         orchard_env: "OrchardEnv",
+        *,
+        role_registry: RoleRegistry | None = None,
     ) -> list["BaseExecutorCfg"]:
         """Default atomic plan: pick + lift."""
         del cls
-        return action_plan.build_task_atomic_action_plan(orchard_env)
+        return action_plan.build_task_atomic_action_plan(
+            orchard_env, role_registry=role_registry
+        )
 
 
 def _make_spatial_pick_task_definition_class(
@@ -251,14 +257,14 @@ def _make_spatial_pick_task_definition_class(
     return cast(type[SpatialPickTaskDefinitionBase], register_task(task_cls))
 
 
-SpatialPickEasyTaskDefinition = _make_spatial_pick_task_definition_class(
-    class_name="SpatialPickEasyTaskDefinition",
-    namespace="spatial_pick_easy",
-    yaml_name="spatial_pick_easy.yaml",
+SpatialPickTaskDefinition = _make_spatial_pick_task_definition_class(
+    class_name="SpatialPickTaskDefinition",
+    namespace="spatial_pick",
+    yaml_name="spatial_pick.yaml",
 )
 
 
 __all__ = [
     "SpatialPickTaskDefinitionBase",
-    "SpatialPickEasyTaskDefinition",
+    "SpatialPickTaskDefinition",
 ]

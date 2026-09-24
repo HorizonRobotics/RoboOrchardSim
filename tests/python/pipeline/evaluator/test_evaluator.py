@@ -22,7 +22,7 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 # Prefer the workspace package over the installed site-packages copy.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -38,15 +38,20 @@ from robo_orchard_sim.contracts.policy_binding import (
     PolicyBindingSchema,
 )
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+from robo_orchard_sim.orchard_env.task_spec import RoleSpec
 from robo_orchard_sim.pipeline.evaluator import (
     EvaluationRuntime,
     Evaluator,
     EvaluatorCfg,
     LaunchConfig,
 )
-from robo_orchard_sim.task_components.instructions.base import InstructionActor
+from robo_orchard_sim.pipeline.evaluator.evaluator import SwapConfig
+from robo_orchard_sim.task_components.instructions.base import (
+    InstructionActor,
+    InstructionWrapper,
+)
+from robo_orchard_sim.task_components.role_registry import TargetRef
 from robo_orchard_sim.task_components.validators.base import (
-    ValidatorActor,
     ValidatorOutput,
 )
 
@@ -306,6 +311,8 @@ class _StubAssetData:
         self.root_state_w = root_state_w
         self.root_pos_w = root_state_w[:, :3]
         self.root_quat_w = root_state_w[:, 3:7]
+        self.root_lin_vel_w = root_state_w[:, 7:10]
+        self.root_ang_vel_w = root_state_w[:, 10:13]
 
 
 class _StubAsset:
@@ -384,14 +391,15 @@ class _StubSettlingEnv(_StubStepEnv):
 
 
 class _StubValidator:
+    metric_store = None
+    fixed_horizon = False
+
     def __init__(
         self,
         success_step: int,
-        actors: list[ValidatorActor],
     ) -> None:
         self.success_step = success_step
         self.reset_calls = 0
-        self.actors = list(actors)
 
     def reset(self) -> None:
         self.reset_calls += 1
@@ -404,6 +412,34 @@ class _StubValidator:
             success=success,
             progress=progress,
             metrics={"current_step": env.current_step},
+        )
+
+
+class _StubCounterfactualValidator:
+    metric_store = None
+    fixed_horizon = True
+
+    def __init__(self) -> None:
+        self.reset_calls = 0
+        self.finalize_calls = 0
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+
+    def evaluate(self, env: _StubStepEnv, env_idx: int = 0) -> ValidatorOutput:
+        del env_idx
+        return ValidatorOutput(
+            success=False,
+            progress=0.0,
+            metrics={"current_step": env.current_step},
+        )
+
+    def finalize(self) -> ValidatorOutput:
+        self.finalize_calls += 1
+        return ValidatorOutput(
+            success=True,
+            progress=1.0,
+            metrics={"counterfactual": {"finalized": True}},
         )
 
 
@@ -449,25 +485,37 @@ class _StubTask:
         default_factory=lambda: SimpleNamespace(scene_name="actor_b")
     )
 
-    def get_validator_actor_names(self) -> list[str]:
+    roles: ClassVar[dict[str, Any]] = {
+        "pick": RoleSpec(description="the object to pick up"),
+        "place": RoleSpec(description="where it goes"),
+    }
+
+    def get_role_candidates(
+        self, role_id: str, *, swap: bool = False
+    ) -> list[TargetRef]:
+        spec = getattr(self, f"{role_id}_object")
+        return [TargetRef(spec.scene_name)]
+
+    def get_operable_scene_names(self) -> list[str]:
         return ["actor_a", "actor_b"]
 
     def build_validator(
         self,
-        actors: list[ValidatorActor],
         context: Any = None,
     ) -> _StubValidator:
         success_step = self.success_steps[self._validator_index]
         self._validator_index += 1
         self.validator_contexts.append(context)
-        return _StubValidator(success_step=success_step, actors=actors)
+        return _StubValidator(success_step=success_step)
 
     def build_instruction_context(
         self,
         env: Any,
         *,
         actor_description_seed: int,
+        context: Any = None,
     ) -> dict[str, Any]:
+        del context
         return {
             "actor1": InstructionActor.from_rigid_object(
                 env.scene[self.pick_object.scene_name],
@@ -486,6 +534,7 @@ class _StubTask:
 class _StubManipulatorProfile:
     ee_body_name: str
     gripper_joint_names: tuple[str, ...] = ()
+    gripper_body_names: tuple[str, ...] = ()
 
 
 @dataclass
@@ -493,6 +542,9 @@ class _StubRobotInfo:
     manipulator_profile: _StubManipulatorProfile
     gripper_open_val: list[float]
     gripper_close_val: list[float]
+    t_standard_tcp_to_robot_ee: list[list[float]] = field(
+        default_factory=lambda: torch.eye(4).tolist()
+    )
 
 
 class _StubEmbodiment:
@@ -596,7 +648,8 @@ class _StubRecordManager:
     def record_pre_reset(self) -> None:
         self.record_pre_reset_calls += 1
 
-    def start_record(self) -> bool:
+    def start_record(self, *, prefix: str = "") -> bool:
+        del prefix
         self.start_record_calls += 1
         return self.start_record_calls == 1
 
@@ -677,7 +730,7 @@ class TestEvaluator:
             tasks=orchard_envs,
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             seed=seed,
             episode_num=episode_num,
@@ -685,16 +738,84 @@ class TestEvaluator:
         )()
         return evaluator, envs[0], registry
 
-    def test_cfg_instantiates_evaluator(self) -> None:
+    def test_swap_resets_every_episode_of_a_scene_from_one_seed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Swap scores instruction-following, which only holds if the
+        # objects stay put: a fresh reset seed would move them and make
+        # the target the second thing that changed.
+        env = _StubStepEnv(episodes=[[_StepState()] for _ in range(4)])
+        self.patch_runtime(
+            monkeypatch,
+            tasks=[
+                _StubOrchardEnv(env=env, success_steps=[1] * 4)
+                for _ in range(4)
+            ],
+        )
+
+        EvaluatorCfg(
+            task_name="place_a2b",
+            asset_root="/tmp/assets",
+            seed=100,
+            episode_num=4,
+            max_steps=1,
+            swap=SwapConfig(enabled=True, swap_per_scene=2),
+        )().evaluate(_StubPolicy())
+
+        seeds = [call["seed"] for call in env.reset_calls]
+        assert seeds == [100, 100, 101, 101]
+
+    def test_without_swap_every_episode_gets_its_own_seed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        env = _StubStepEnv(episodes=[[_StepState()] for _ in range(4)])
+        self.patch_runtime(
+            monkeypatch,
+            tasks=[
+                _StubOrchardEnv(env=env, success_steps=[1] * 4)
+                for _ in range(4)
+            ],
+        )
+
+        # Four distinct seeds also prove each episode got its own scene:
+        # An explicit `swap_per_scene` of 2 must not leak into runs that
+        # have swap disabled.
+        EvaluatorCfg(
+            task_name="place_a2b",
+            asset_root="/tmp/assets",
+            seed=100,
+            episode_num=4,
+            max_steps=1,
+            swap=SwapConfig(enabled=False, swap_per_scene=2),
+        )().evaluate(_StubPolicy())
+
+        seeds = [call["seed"] for call in env.reset_calls]
+        assert seeds == [100, 101, 102, 103]
+
+    def test_cfg_instantiates_evaluator(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from robo_orchard_sim.pipeline.evaluator import (
+            evaluator as evaluator_module,
+        )
+
+        monkeypatch.setattr(
+            evaluator_module,
+            "_create_asset_registry",
+            lambda asset_root: f"registry:{asset_root}",
+        )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
         )()
 
         assert isinstance(evaluator, Evaluator)
-        assert evaluator.cfg.task_name == "place_a2b_easy"
+        assert evaluator.cfg.task_name == "place_a2b"
         assert isinstance(evaluator.cfg.launch, LaunchConfig)
         assert evaluator.cfg.launch.headless is True
         assert evaluator.cfg.launch.enable_cameras is True
@@ -714,7 +835,7 @@ class TestEvaluator:
         )
 
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -726,7 +847,7 @@ class TestEvaluator:
 
         evaluator._ensure_env()
 
-        assert registry.build_calls == ["place_a2b_easy"]
+        assert registry.build_calls == ["place_a2b"]
         assert _StubLauncher.created[0].kwargs == {
             "headless": True,
             "enable_cameras": True,
@@ -847,7 +968,7 @@ class TestEvaluator:
         )
 
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             seed=7,
             episode_num=3,
@@ -876,7 +997,7 @@ class TestEvaluator:
         )
         self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -940,7 +1061,7 @@ class TestEvaluator:
             ],
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             seed=3,
             episode_num=3,
@@ -949,13 +1070,26 @@ class TestEvaluator:
 
         evaluator.evaluate(_StubPolicy())
 
-        assert first_env.reset_calls == [{"seed": 3}]
-        assert second_env.reset_calls == [{"seed": 4}]
-        assert third_env.reset_calls == [{"seed": 5}]
+        # _StubTask declares pick/place roles, so each reset carries the
+        # bindings picked for that episode rather than falling back to
+        # None.
+        stub_bindings = {
+            "pick": TargetRef(scene_name="actor_a"),
+            "place": TargetRef(scene_name="actor_b"),
+        }
+        assert first_env.reset_calls == [
+            {"seed": 3, "role_bindings": stub_bindings}
+        ]
+        assert second_env.reset_calls == [
+            {"seed": 4, "role_bindings": stub_bindings}
+        ]
+        assert third_env.reset_calls == [
+            {"seed": 5, "role_bindings": stub_bindings}
+        ]
         assert registry.build_calls == [
-            "place_a2b_easy",
-            "place_a2b_easy",
-            "place_a2b_easy",
+            "place_a2b",
+            "place_a2b",
+            "place_a2b",
         ]
         assert [
             build_kwargs["resolver"].rng
@@ -965,6 +1099,82 @@ class TestEvaluator:
             "rng:4",
             "rng:5",
         ]
+
+    def test_checker_summary_non_target_facts_are_persisted_before_dwell(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import json
+        from dataclasses import asdict
+
+        from robo_orchard_sim.task_components.validators.base import Validator
+        from robo_orchard_sim.task_components.validators.checkers import (
+            SceneCheckerSuite,
+        )
+        from robo_orchard_sim.task_components.validators.metrics import (
+            DwellMetricSelector,
+            EntityMetricSelector,
+            MetricStore,
+            SceneMetrics,
+        )
+        from robo_orchard_sim.task_components.validators.role_scope import (
+            RoleScope,
+        )
+
+        class SceneChecker:
+            def evaluate(self, env, context, scope, env_idx=0):
+                return SceneMetrics(
+                    unary={
+                        "reached": {
+                            "actor_a": env.current_step == 1,
+                            "actor_b": False,
+                        },
+                        "lifted": {"actor_a": False, "actor_b": True},
+                    }
+                )
+
+            def reset(self):
+                pass
+
+        env = _StubStepEnv(episodes=[[_StepState(), _StepState()]])
+        orchard = _StubOrchardEnv(env=env, success_steps=[99])
+        store = MetricStore(RoleScope.from_entities(("actor_a", "actor_b")))
+
+        def build_validator(context=None):
+            return Validator(
+                context=context,
+                metric_store=store,
+                checker_suite=SceneCheckerSuite((SceneChecker(),)),
+                criteria=[
+                    DwellMetricSelector(
+                        EntityMetricSelector(
+                            metric_store=store,
+                            entity_id="actor_a",
+                            metric="reached",
+                        ),
+                        15,
+                    )
+                ],
+                criteria_name=["reach"],
+            )
+
+        orchard.task.build_validator = build_validator
+        self.patch_runtime(monkeypatch, tasks=[orchard])
+        result = EvaluatorCfg(
+            task_name="place_a2b",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=2,
+        )().evaluate(_StubPolicy())
+        path = tmp_path / "eval_result.json"
+        path.write_text(json.dumps(asdict(result), indent=2) + "\n")
+        episode = json.loads(path.read_text())["episode_results"][0]
+        assert episode["checker_summary"]["unary"] == {
+            "reached": {"actor_a": True, "actor_b": False},
+            "lifted": {"actor_a": False, "actor_b": True},
+        }
+        assert episode["metrics"]["criteria_reached"]["reach"] is False
 
     def test_episode_stops_on_success_before_env_done(
         self,
@@ -1017,6 +1227,46 @@ class TestEvaluator:
 
         assert result.episode_results[0].stop_reason == stop_reason
 
+    def test_counterfactual_episode_done_signal_runs_horizon_and_finalizes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        env = _StubStepEnv(
+            episodes=[
+                [
+                    _StepState(terminated=True),
+                    _StepState(truncated=True),
+                    _StepState(),
+                ]
+            ]
+        )
+        orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
+        orchard_env.task.instruction = InstructionWrapper("empty")
+        validator = _StubCounterfactualValidator()
+        orchard_env.task.build_validator = lambda context=None: validator
+        orchard_env.task.build_instruction_context = (
+            lambda env, actor_description_seed, context=None: {}
+        )
+        self.patch_runtime(monkeypatch, tasks=[orchard_env])
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b",
+            asset_root="/tmp/assets",
+            episode_num=1,
+            max_steps=3,
+        )()
+
+        policy = _ObservationCapturingPolicy()
+        result = evaluator.evaluate(policy)
+
+        episode = result.episode_results[0]
+        assert (
+            episode.success,
+            episode.steps,
+            episode.stop_reason,
+            validator.finalize_calls,
+        ) == (True, 3, "max_steps", 1)
+        assert policy.observations_seen[0]["instruction"] == ""
+
     def test_evaluator_can_be_reused_for_multiple_evaluate_calls(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -1031,7 +1281,7 @@ class TestEvaluator:
             ],
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1046,11 +1296,19 @@ class TestEvaluator:
         assert second.episode_num == 1
         assert policy_a.reset_calls == 1
         assert policy_b.reset_calls == 1
-        assert first_env.reset_calls == [{"seed": 0}]
-        assert second_env.reset_calls == [{"seed": 0}]
+        stub_bindings = {
+            "pick": TargetRef(scene_name="actor_a"),
+            "place": TargetRef(scene_name="actor_b"),
+        }
+        assert first_env.reset_calls == [
+            {"seed": 0, "role_bindings": stub_bindings}
+        ]
+        assert second_env.reset_calls == [
+            {"seed": 0, "role_bindings": stub_bindings}
+        ]
         assert registry.build_calls == [
-            "place_a2b_easy",
-            "place_a2b_easy",
+            "place_a2b",
+            "place_a2b",
         ]
 
         evaluator.close()
@@ -1073,7 +1331,7 @@ class TestEvaluator:
             success_steps=[99],
         )
         config_path = tmp_path / "task.yaml"
-        config_path.write_text("task: place_a2b_easy\n", encoding="utf-8")
+        config_path.write_text("task: place_a2b\n", encoding="utf-8")
 
         self.patch_runtime(monkeypatch, tasks=[fallback_task])
 
@@ -1084,7 +1342,7 @@ class TestEvaluator:
             config_path: str | None = None,
         ) -> _StubOrchardEnv:
             if (
-                task_name == "place_a2b_easy"
+                task_name == "place_a2b"
                 and config_path == str(config_path_obj)
                 and getattr(resolver, "registry", None)
                 == "registry:/tmp/assets"
@@ -1100,7 +1358,7 @@ class TestEvaluator:
             lambda: build_task,
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             task_config_path=str(config_path),
             episode_num=1,
@@ -1130,18 +1388,18 @@ class TestEvaluator:
 
                 return datetime(2026, 5, 8, 12, 34, 56, 789000)
 
-        def _fake_prepare_episode_env(
+        def _fake_open_scene(
             self,
             *,
-            episode_idx: int,
-            seed: int,
+            scene_idx: int,
+            scene_seed: int,
         ) -> _StubStepEnv:
             if self._task is None:
-                self._task = self._build_task_from_cfg(seed=seed)
+                self._task = self._build_task_from_cfg(seed=scene_seed)
             self._task.configure_recording(
-                file_path=self._episode_record_dir(
-                    episode_idx=episode_idx,
-                    seed=seed,
+                file_path=self._scene_record_dir(
+                    scene_idx=scene_idx,
+                    seed=scene_seed,
                 ),
                 controller=SimpleNamespace(
                     max_wait_step=self.cfg.max_settle_steps
@@ -1152,11 +1410,11 @@ class TestEvaluator:
         monkeypatch.setattr(evaluator_module, "datetime", _FixedDateTime)
         monkeypatch.setattr(
             Evaluator,
-            "_prepare_episode_env",
-            _fake_prepare_episode_env,
+            "_open_scene",
+            _fake_open_scene,
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             enable_recording=True,
             record_dir="logs/eval_records",
@@ -1168,8 +1426,7 @@ class TestEvaluator:
 
         assert explicit_env.record_manager is not None
         assert explicit_env.record_manager.file_path == (
-            "logs/eval_records/place_a2b_easy_20260508_123456_789/"
-            "episode_0000_seed_0"
+            "logs/eval_records/place_a2b_20260508_123456_789/scene_0000_seed_0"
         )
         assert explicit_env.record_manager.start_record_calls == 1
 
@@ -1192,18 +1449,18 @@ class TestEvaluator:
 
                 return datetime(2026, 5, 8, 12, 34, 56, 789000)
 
-        def _fake_prepare_episode_env(
+        def _fake_open_scene(
             self,
             *,
-            episode_idx: int,
-            seed: int,
+            scene_idx: int,
+            scene_seed: int,
         ) -> _StubStepEnv:
             if self._task is None:
-                self._task = self._build_task_from_cfg(seed=seed)
+                self._task = self._build_task_from_cfg(seed=scene_seed)
             self._task.configure_recording(
-                file_path=self._episode_record_dir(
-                    episode_idx=episode_idx,
-                    seed=seed,
+                file_path=self._scene_record_dir(
+                    scene_idx=scene_idx,
+                    seed=scene_seed,
                 ),
                 controller=SimpleNamespace(
                     max_wait_step=self.cfg.max_settle_steps
@@ -1214,11 +1471,11 @@ class TestEvaluator:
         monkeypatch.setattr(evaluator_module, "datetime", _FixedDateTime)
         monkeypatch.setattr(
             Evaluator,
-            "_prepare_episode_env",
-            _fake_prepare_episode_env,
+            "_open_scene",
+            _fake_open_scene,
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             enable_recording=True,
             record_dir="logs/eval_records",
@@ -1227,14 +1484,17 @@ class TestEvaluator:
             seed=7,
         )()
 
-        evaluator.evaluate(_StubPolicy())
+        result = evaluator.evaluate(_StubPolicy())
 
         assert explicit_env.record_manager is not None
-        assert explicit_env.record_manager.file_path == (
-            "logs/eval_records/place_a2b_easy_20260508_123456_789/"
-            "episode_0000_seed_7"
+        assert (
+            explicit_env.record_manager.file_path,
+            result.episode_results[0].metrics["record_dir"],
+        ) == (
+            "logs/eval_records/place_a2b_20260508_123456_789/scene_0000_seed_7",
+            "logs/eval_records/place_a2b_20260508_123456_789/"
+            "scene_0000_seed_7/episode_0000_seed_7",
         )
-        assert explicit_env.record_manager.start_record_calls == 1
 
     def test_episode_waits_for_scene_to_settle_before_evaluation(
         self,
@@ -1256,7 +1516,7 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1296,7 +1556,7 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1338,7 +1598,7 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1392,7 +1652,7 @@ class TestEvaluator:
             staticmethod(_fake_from_rigid_object),
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1439,7 +1699,7 @@ class TestEvaluator:
         )
 
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1449,6 +1709,36 @@ class TestEvaluator:
 
         captured = capsys.readouterr()
         assert "instruction: instruction-template-0-actor-0" in captured.out
+
+    def test_evaluator_without_recording_returns_instruction_and_stage_scores(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from robo_orchard_sim.task_components.validators.base import Validator
+
+        env = _StubStepEnv(episodes=[[_StepState()]])
+        orchard = _StubOrchardEnv(env=env, success_steps=[99])
+        orchard.task.instruction = _StubInstruction()
+        orchard.task.build_instruction_context = lambda env, **kwargs: {}
+        orchard.task.build_validator = lambda context: Validator(
+            criteria=[lambda env: True, lambda env: False],
+            criteria_name=["reach", "lift"],
+        )
+        self.patch_runtime(monkeypatch, tasks=[orchard])
+        policy = _ObservationCapturingPolicy()
+
+        result = EvaluatorCfg(
+            task_name="place_a2b",
+            asset_root="/unused/assets",
+            episode_num=1,
+            max_steps=1,
+            enable_recording=False,
+        )().evaluate(policy)
+        episode = result.episode_results[0]
+
+        assert (episode.instruction, episode.stage_scores) == (
+            policy.observations_seen[0]["instruction"],
+            {"reach": 0.5, "lift": 0.0},
+        )
 
     def test_reload_env_reuses_launcher_and_rebuilds_env_runtime(
         self,
@@ -1464,7 +1754,7 @@ class TestEvaluator:
             ],
         )
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1490,7 +1780,7 @@ class TestEvaluator:
             "enable_cameras": False,
             "virtual_display": True,
         }
-        assert registry.build_calls == ["place_a2b_easy", "place_a2b_easy"]
+        assert registry.build_calls == ["place_a2b", "place_a2b"]
         assert len(_StubLauncher.created) == 1
 
         evaluator.close()
@@ -1531,11 +1821,13 @@ class TestEvaluator:
                             "actor_category": "apple",
                             "actor_type": "fruit",
                             "actor_uuid": "uuid-apple",
+                            "bbox": None,
                         },
                         "actor_b": {
                             "actor_category": "basket",
                             "actor_type": "container",
                             "actor_uuid": "uuid-basket",
+                            "bbox": None,
                         },
                     },
                     "task_success": 1.0,
@@ -1583,7 +1875,7 @@ class TestEvaluator:
         )
 
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1616,29 +1908,40 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
 
         class _ContextTask:
+            roles: ClassVar[dict[str, Any]] = {
+                "pick": RoleSpec(description="the object to pick up"),
+            }
+
             def __init__(self) -> None:
                 self.instruction = _StubInstruction(
                     actor_description_mode="seen"
                 )
                 self.context_calls: list[dict[str, Any]] = []
 
-            def get_validator_actor_names(self) -> list[str]:
+            def get_role_candidates(
+                self, role_id: str, *, swap: bool = False
+            ) -> list[TargetRef]:
+                del role_id, swap
+                return [TargetRef("actor_a")]
+
+            def get_operable_scene_names(self) -> list[str]:
                 return ["actor_a", "actor_b"]
 
             def build_validator(
                 self,
-                actors: list[ValidatorActor],
                 context: Any = None,
             ) -> _StubValidator:
                 del context
-                return _StubValidator(success_step=1, actors=actors)
+                return _StubValidator(success_step=1)
 
             def build_instruction_context(
                 self,
                 env: Any,
                 *,
                 actor_description_seed: int,
+                context: Any = None,
             ) -> dict[str, Any]:
+                del context
                 self.context_calls.append(
                     {
                         "env": env,
@@ -1656,7 +1959,7 @@ class TestEvaluator:
         env.record_manager = _StubRecordManager()
 
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1719,7 +2022,7 @@ class TestEvaluator:
         monkeypatch.setattr(snap_mod, "load_snapshot", _raise_snapshot_error)
 
         cfg = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1758,7 +2061,7 @@ class TestEvaluator:
         )
 
         cfg = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1793,7 +2096,7 @@ class TestEvaluator:
         )
 
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1822,7 +2125,7 @@ class TestEvaluator:
         splits_path.write_text("placeholder", encoding="utf-8")
 
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1841,7 +2144,7 @@ class TestEvaluator:
         orchard_env = _StubOrchardEnv(env=env, success_steps=[1])
         self.patch_runtime(monkeypatch, tasks=[orchard_env])
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             episode_num=1,
             max_steps=1,
@@ -1868,11 +2171,13 @@ class TestEvaluator:
                                 "actor_category": "apple",
                                 "actor_type": "fruit",
                                 "actor_uuid": "uuid-apple",
+                                "bbox": None,
                             },
                             "actor_b": {
                                 "actor_category": "basket",
                                 "actor_type": "container",
                                 "actor_uuid": "uuid-basket",
+                                "bbox": None,
                             },
                         },
                         "task_success": 1.0,
@@ -1892,11 +2197,13 @@ class TestEvaluator:
                                 "actor_category": "apple",
                                 "actor_type": "fruit",
                                 "actor_uuid": "uuid-apple",
+                                "bbox": None,
                             },
                             "actor_b": {
                                 "actor_category": "basket",
                                 "actor_type": "container",
                                 "actor_uuid": "uuid-basket",
+                                "bbox": None,
                             },
                         },
                         "task_success": 1.0,
@@ -1951,7 +2258,7 @@ class TestEvaluator:
 
         self._patch_build_task(monkeypatch, build_task)
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             seed=100,
             episode_num=2,
@@ -1982,7 +2289,7 @@ class TestEvaluator:
 
         self._patch_build_task(monkeypatch, build_task)
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             seed=100,
             episode_num=2,
@@ -2014,7 +2321,7 @@ class TestEvaluator:
 
         self._patch_build_task(monkeypatch, build_task)
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             seed=100,
             episode_num=2,
@@ -2049,7 +2356,7 @@ class TestEvaluator:
 
         self._patch_build_task(monkeypatch, build_task)
         evaluator = EvaluatorCfg(
-            task_name="place_a2b_easy",
+            task_name="place_a2b",
             asset_root="/tmp/assets",
             seed=100,
             episode_num=2,
@@ -2061,3 +2368,78 @@ class TestEvaluator:
 
         assert len(result.episode_results) == 2
         assert [s.seed for s in result.skipped_episodes] == [100]
+
+    def test_evaluate_resample_uses_explicit_scene_seed_candidates(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from robo_orchard_sim import benchmark
+        from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
+            AssetResolutionError,
+        )
+
+        calls = {"n": 0}
+
+        def build_task(task_name, *, resolver=None, config_path=None):
+            del task_name, resolver, config_path
+            i = calls["n"]
+            calls["n"] += 1
+            if i == 0:
+                raise AssetResolutionError(
+                    role="distractors",
+                    filter_repr="{}",
+                    cause=ValueError("only 0 asset(s) match"),
+                )
+            return _StubOrchardEnv(
+                env=_StubStepEnv(episodes=[[_StepState()]]),
+                success_steps=[1],
+            )
+
+        monkeypatch.setattr(benchmark, "build_task", build_task)
+        evaluator = EvaluatorCfg(
+            task_name="place_a2b_easy",
+            asset_root="/tmp/assets",
+            seed=100,
+            episode_num=2,
+            max_steps=1,
+            resample_on_skip=True,
+            scene_seed_candidates=(100, 200, 201, 202, 203, 204),
+        )()
+
+        result = evaluator.evaluate(_StubPolicy())
+
+        assert [episode.seed for episode in result.episode_results] == [
+            200,
+            201,
+        ]
+        assert result.attempted_scene_seeds == [100, 200, 201]
+
+
+@pytest.mark.parametrize("episode_count", [1, 2, 3])
+def test_evaluate_swap_scene_build_error_records_all_assigned_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    episode_count: int,
+) -> None:
+    from robo_orchard_sim import benchmark
+
+    def fail_scene(*args, **kwargs):
+        raise RuntimeError("scene construction failed")
+
+    monkeypatch.setattr(benchmark, "build_task", fail_scene)
+    with EvaluatorCfg(
+        task_name="place_a2b_hard",
+        asset_root=str(tmp_path),
+        seed=100,
+        episode_num=episode_count,
+        swap=SwapConfig(enabled=True, swap_per_scene=2),
+    )() as evaluator:
+        result = evaluator.run_with_runtime(_StubPolicy(), sim_app=object())
+
+    assert [
+        (episode.seed, episode.success, episode.stop_reason)
+        for episode in result.episode_results
+    ] == [
+        (100 + index // 2, False, "episode_error:RuntimeError")
+        for index in range(episode_count)
+    ]

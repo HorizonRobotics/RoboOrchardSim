@@ -19,6 +19,9 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 
+RIGID_OBJECT_SPEC_TYPE = "usd.rigid_object"
+ARTICULATION_SPEC_TYPE = "usd.articulation"
+
 # ---------------------------------------------------------------------------
 # AssetMeta — immutable per-asset record loaded from the parquet index.
 # ---------------------------------------------------------------------------
@@ -58,6 +61,10 @@ class AssetMeta:
     urdf_path: str
     interaction_path: str
     caption_path: str
+
+    # Typed spec construction.
+    metadata_path: str = ""
+    spec_type: str = RIGID_OBJECT_SPEC_TYPE
 
     # Open-ended capability tags derived from URDF <extra_info><tags>.
     # Callers filter by issubset (AssetFilter.tags).
@@ -108,6 +115,7 @@ class AssetFilter:
     shape: str | None = None
     material: str | None = None
     size_bucket: str | None = None
+    spec_type: str | None = None
 
     # benchmark-injected uuid sets
     only_in: frozenset[str] | None = None
@@ -136,6 +144,7 @@ class AssetFilter:
             "shape",
             "material",
             "size_bucket",
+            "spec_type",
         ):
             val = getattr(self, name)
             if val is not None:
@@ -172,6 +181,8 @@ class AssetFilter:
             self.size_bucket is not None
             and meta.size_bucket != self.size_bucket
         ):
+            return False
+        if self.spec_type is not None and meta.spec_type != self.spec_type:
             return False
         if self.only_in is not None and meta.uuid not in self.only_in:
             return False

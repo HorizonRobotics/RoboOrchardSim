@@ -17,12 +17,16 @@
 """Generic asset resolver: config + registry + splits -> AssetSpec dict."""
 
 from __future__ import annotations
+import json
 import logging
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import numpy as np
 
 from robo_orchard_sim.asset_manager.registry.errors import (
+    AssetRegistryError,
     EmptyPoolError,
     InsufficientPoolError,
     UnknownAssetError,
@@ -32,6 +36,7 @@ from robo_orchard_sim.asset_manager.registry.registry import (
     AssetSampler,
 )
 from robo_orchard_sim.asset_manager.registry.types import (
+    RIGID_OBJECT_SPEC_TYPE,
     AssetFilter,
     AssetMeta,
     DistractorSpec,
@@ -39,10 +44,26 @@ from robo_orchard_sim.asset_manager.registry.types import (
 from robo_orchard_sim.asset_manager.splits.splits import AssetSplits
 
 if TYPE_CHECKING:
-    from robo_orchard_sim.orchard_env.assets import RigidObjectSpec
-    from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
+    from robo_orchard_sim.orchard_env.assets import ObjectSpec
+
+    class SemanticReferentRule(Protocol):
+        """Fields required to select an absent semantic referent."""
+
+        @property
+        def match(self) -> tuple[str, ...]: ...
+
+        @property
+        def differ(self) -> tuple[str, ...]: ...
+
+        @property
+        def referent_fields(self) -> tuple[str, ...]: ...
+
+        @property
+        def required_tags(self) -> frozenset[str]: ...
+
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 # -----------------------------------------------------------------------
 # Exceptions
@@ -90,10 +111,25 @@ def _synth_meta_from_path(usd_path: str, entry: dict) -> AssetMeta:
     import os
 
     stem = os.path.splitext(os.path.basename(usd_path))[0] or "asset"
+    metadata_path = Path(usd_path).parent / "metadata.json"
+    caption_candidate_path = Path(usd_path).parent / "caption_candidates.json"
     uuid = hashlib.sha1(usd_path.encode("utf-8")).hexdigest()
+    if metadata_path.is_file() and caption_candidate_path.is_file():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            metadata = {}
+        if isinstance(metadata, dict) and metadata.get("uuid"):
+            uuid = str(metadata["uuid"])
     mass = float(entry.get("mass", 0.05))
     category = str(entry.get("category", stem))
     interaction_path = str(entry.get("interaction_path", ""))
+    caption_path = str(
+        entry.get(
+            "caption_path",
+            caption_candidate_path if caption_candidate_path.is_file() else "",
+        )
+    )
     return AssetMeta(
         uuid=uuid,
         asset_id=stem,
@@ -115,7 +151,9 @@ def _synth_meta_from_path(usd_path: str, entry: dict) -> AssetMeta:
         usd_path=usd_path,
         urdf_path="",
         interaction_path=interaction_path,
-        caption_path="",
+        caption_path=caption_path,
+        metadata_path=str(metadata_path),
+        spec_type=str(entry.get("spec_type", RIGID_OBJECT_SPEC_TYPE)),
     )
 
 
@@ -124,6 +162,7 @@ def _synth_meta_from_path(usd_path: str, entry: dict) -> AssetMeta:
 # -----------------------------------------------------------------------
 
 _SPLIT_FIELDS = frozenset({"seen", "unseen_category", "unseen_instance"})
+_SET_VALUED_SEMANTIC_FIELDS = frozenset({"color", "shape", "material"})
 
 # Allowed keys per entry kind. Typos (e.g. ``macth`` instead of ``match``)
 # would otherwise silently no-op — validate up-front so authoring errors
@@ -132,15 +171,22 @@ _TARGET_ENTRY_KEYS = frozenset(
     {
         "filter",
         "prim_name",
+        "same_as",
+        "sample_count",
         "split",
-        "pool_size",
         "uuid",
         "usd_path",
         "interaction_path",
         "mass",
         "category",
+        "spec_type",
     }
 )
+
+_SAMPLING_ENTRY_KEYS = frozenset(
+    {"filter", "sample_count", "split", "uuid", "usd_path"}
+)
+"""Keys that choose an asset, and so have nothing to say for a clone."""
 _DISTRACTOR_ENTRY_KEYS = frozenset(
     {
         "anchor",
@@ -151,9 +197,41 @@ _DISTRACTOR_ENTRY_KEYS = frozenset(
         "max_count",
         "prim_name_prefix",
         "split",
-        "pool_size",
     }
 )
+
+
+def _matches_referent(
+    candidate: AssetMeta,
+    present: AssetMeta,
+    fields: tuple[str, ...],
+) -> bool:
+    """Return whether a present asset satisfies a candidate phrase."""
+    for field in fields:
+        candidate_value = getattr(candidate, field)
+        present_value = getattr(present, field)
+        if field in _SET_VALUED_SEMANTIC_FIELDS:
+            if candidate_value is None or present_value is None:
+                return False
+            if not candidate_value.issubset(present_value):
+                return False
+        elif candidate_value != present_value:
+            return False
+    return True
+
+
+def _has_renderable_referent_fields(
+    candidate: AssetMeta,
+    fields: tuple[str, ...],
+) -> bool:
+    """Return whether instruction rendering can express every field."""
+    for field in fields:
+        value = getattr(candidate, field)
+        if value is None or value == "":
+            return False
+        if field in {"shape", "material"} and len(value) != 1:
+            return False
+    return True
 
 
 # -----------------------------------------------------------------------
@@ -171,9 +249,8 @@ class AssetResolver:
     The resolver is task-agnostic: it transforms a ``dict[role, config]``
     into a ``dict[role, AssetSpec | list[AssetSpec]]`` and never inspects
     the calling task's schema. Role membership and required/optional
-    semantics are owned by the task's ``TaskAssetsBase`` subclass and
-    enforced when the caller constructs that dataclass from this
-    resolver's output.
+    semantics are owned by the task's declared ``roles`` and enforced
+    when the task is constructed from this resolver's output.
     """
 
     def __init__(
@@ -189,6 +266,25 @@ class AssetResolver:
         self._sampler = AssetSampler(registry)
         self._rng = rng or np.random.default_rng()
         self._active_snapshot = active_snapshot
+
+    def sample_without_replacement(
+        self,
+        candidates: Sequence[T],
+        *,
+        count: int,
+    ) -> list[T]:
+        """Draw an ordered sample from this resolver's seeded RNG."""
+        if not 0 <= count <= len(candidates):
+            raise ValueError(
+                f"Cannot draw {count} candidates from a pool of "
+                f"{len(candidates)}."
+            )
+        indices = self._rng.choice(
+            len(candidates),
+            size=count,
+            replace=False,
+        )
+        return [candidates[int(index)] for index in indices]
 
     def resolve(
         self,
@@ -217,7 +313,7 @@ class AssetResolver:
         target_metas: dict[str, AssetMeta] = {}
 
         for role, entry in asset_configs.items():
-            if "anchor" not in entry:
+            if "anchor" not in entry and "same_as" not in entry:
                 metas, spec_or_specs = self._resolve_target(
                     role,
                     entry,
@@ -226,6 +322,20 @@ class AssetResolver:
                 target_metas[role] = metas[0]
                 committed_uuids.update(m.uuid for m in metas)
                 result[role] = spec_or_specs
+
+        # Clones run once every sampling slot has drawn, so a clone may
+        # name its source regardless of the order the two were written
+        # in. They add nothing to ``committed_uuids``: the asset was
+        # already claimed by the slot they copy, and claiming it twice
+        # would say a second one had been used up.
+        for role, entry in asset_configs.items():
+            if "same_as" in entry:
+                result[role] = self._resolve_clone(
+                    role,
+                    entry,
+                    asset_configs,
+                    target_metas,
+                )
 
         for role, entry in asset_configs.items():
             if "anchor" in entry:
@@ -238,24 +348,148 @@ class AssetResolver:
                 committed_uuids.update(m.uuid for m in metas)
                 result[role] = specs
 
-        self._log_capacity_report(asset_configs, result)
+        self._log_resolution_report(asset_configs, result)
         return result
 
-    def _log_capacity_report(
+    def resolve_absent_referent(
+        self,
+        *,
+        present_uuids: list[str],
+        rule: "SemanticReferentRule",
+    ) -> "ObjectSpec":
+        """Resolve a non-spawned rigid object absent from the whole scene."""
+        role = "instruction.actor1"
+        filter_repr = repr(rule)
+        unique_present_uuids = list(dict.fromkeys(present_uuids))
+        if not unique_present_uuids:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=filter_repr,
+                cause=ValueError(
+                    "absent-object resolution requires at least one "
+                    "present asset"
+                ),
+            )
+
+        try:
+            present_metas = [
+                self._registry.get_meta(uuid) for uuid in unique_present_uuids
+            ]
+            only_in = self._scene_asset_scope(unique_present_uuids)
+            anchor_order = self._rng.permutation(len(present_metas))
+            candidate = None
+            for anchor_idx in anchor_order:
+                anchor = present_metas[int(anchor_idx)]
+                candidates = self._sampler.sample_distractors(
+                    anchor,
+                    DistractorSpec(
+                        min_count=0,
+                        max_count=len(self._registry),
+                        match=rule.match,
+                        differ=rule.differ,
+                        absolute_filter=AssetFilter(
+                            tags=rule.required_tags,
+                            spec_type=RIGID_OBJECT_SPEC_TYPE,
+                        ),
+                        only_in=only_in,
+                        exclude=frozenset(unique_present_uuids),
+                    ),
+                    self._rng,
+                )
+                for possible in candidates:
+                    if not _has_renderable_referent_fields(
+                        possible,
+                        rule.referent_fields,
+                    ):
+                        continue
+                    if any(
+                        _matches_referent(
+                            possible,
+                            present,
+                            rule.referent_fields,
+                        )
+                        for present in present_metas
+                    ):
+                        continue
+                    candidate = possible
+                    break
+                if candidate is not None:
+                    break
+        except (AssetRegistryError, ValueError) as exc:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=filter_repr,
+                cause=exc,
+            ) from exc
+
+        if candidate is None:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=filter_repr,
+                cause=ValueError(
+                    "no renderable absent referent satisfies "
+                    f"match={list(rule.match)}, "
+                    f"differ={list(rule.differ)}, "
+                    f"referent_fields={list(rule.referent_fields)}"
+                ),
+            )
+
+        try:
+            return self._registry.build_spec(
+                candidate,
+                name="absent_object",
+                role="instruction",
+            )
+        except AssetRegistryError as exc:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=filter_repr,
+                cause=exc,
+            ) from exc
+
+    def _scene_asset_scope(
+        self,
+        present_uuids: list[str],
+    ) -> frozenset[str] | None:
+        """Return the snapshot/split scope represented by a scene."""
+        only_in: frozenset[str] | None = None
+        if self._splits is not None:
+            present = frozenset(present_uuids)
+            represented_scopes = [
+                split_scope
+                for split_scope in (
+                    self._splits.seen,
+                    self._splits.unseen_category,
+                    self._splits.unseen_instance,
+                )
+                if present & split_scope
+            ]
+            if represented_scopes:
+                only_in = frozenset().union(*represented_scopes)
+        if self._active_snapshot is not None:
+            only_in = (
+                self._active_snapshot
+                if only_in is None
+                else only_in & self._active_snapshot
+            )
+        return only_in
+
+    def _log_resolution_report(
         self,
         asset_configs: dict[str, dict],
         resolved: dict[str, Any],
     ) -> None:
-        """Log per-role pool capacity at INFO level."""
-        lines = ["asset resolver — pool capacity:"]
+        """Log the number of concrete assets resolved for each role."""
+        lines = ["asset resolver — resolved assets:"]
         for role, value in resolved.items():
-            if isinstance(value, list):
-                count = len(value)
-            else:
-                count = len(value.members) if hasattr(value, "members") else 1
+            count = len(value) if isinstance(value, list) else 1
             entry = asset_configs[role]
-            requested = entry.get("pool_size", count if count > 1 else 1)
-            empty_filter = "uuid" not in entry and not entry.get("filter")
+            requested = entry.get("sample_count", count if count > 1 else 1)
+            empty_filter = (
+                "uuid" not in entry
+                and "same_as" not in entry
+                and not entry.get("filter")
+            )
             hint = " [filter=<empty: full registry>]" if empty_filter else ""
             lines.append(
                 f"  {role}: requested={requested}, resolved={count}{hint}"
@@ -267,13 +501,43 @@ class AssetResolver:
         role: str,
         entry: dict,
         committed_uuids: set[str],
-    ) -> tuple[list[AssetMeta], "RigidObjectSpec | PoolSpec"]:
+    ) -> tuple[
+        list[AssetMeta],
+        "ObjectSpec | list[ObjectSpec]",
+    ]:
         """Resolve a target-kind role.
 
-        Returns (metas, spec_or_specs). Single spec when pool_size <= 1,
-        list of specs when pool_size > 1. metas is always a list (length 1
-        for classic) so the caller can update committed_uuids uniformly.
+        ``sample_count`` returns ordinary, simultaneously active object
+        specs.
         """
+        sample_count = int(entry.get("sample_count", 1))
+        if sample_count < 1:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=ValueError(
+                    f"sample_count must be >= 1, got {sample_count}"
+                ),
+            )
+        if sample_count != 1 and ("usd_path" in entry or "uuid" in entry):
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=ValueError(
+                    "sample_count > 1 requires registry filter sampling; "
+                    "it cannot be combined with uuid or usd_path."
+                ),
+            )
+        if "spec_type" in entry and "usd_path" not in entry:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=ValueError(
+                    "spec_type is only valid for a direct usd_path entry; "
+                    "indexed assets obtain it from AssetMeta."
+                ),
+            )
+
         if "usd_path" in entry:
             meta, spec = self._resolve_target_by_path(role, entry)
             return [meta], spec
@@ -283,6 +547,7 @@ class AssetResolver:
             return [meta], spec
 
         filter_dict = _normalize_filter(entry, role)
+        filter_dict.setdefault("spec_type", RIGID_OBJECT_SPEC_TYPE)
 
         only_in = self._resolve_split_only_in(
             role, entry, err_repr=str(filter_dict)
@@ -310,38 +575,30 @@ class AssetResolver:
                 cause=exc,
             ) from exc
 
-        pool_size = int(entry.get("pool_size", 1))
-        if pool_size < 1:
-            raise AssetResolutionError(
-                role=role,
-                filter_repr=repr(asset_filter),
-                cause=ValueError(f"pool_size must be >= 1, got {pool_size}"),
-            )
-
         try:
-            if pool_size == 1:
-                meta = self._sampler.sample_target(asset_filter, rng=self._rng)
+            if sample_count == 1:
+                meta = self._sampler.sample_target(
+                    asset_filter,
+                    rng=self._rng,
+                )
                 spec = self._registry.build_spec(
                     meta, name=prim_name, role=role
                 )
                 return [meta], spec
             metas = self._sampler.sample_target_pool(
                 asset_filter,
-                k=pool_size,
+                k=sample_count,
                 rng=self._rng,
             )
-            members = [
+            specs = [
                 self._registry.build_spec(
-                    m,
-                    name=f"{prim_name}_pool_{idx}",
+                    meta,
+                    name=f"{prim_name}_{index}",
                     role=role,
                 )
-                for idx, m in enumerate(metas)
+                for index, meta in enumerate(metas)
             ]
-            from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
-
-            pool_spec = PoolSpec(role_id=prim_name, members=members)
-            return metas, pool_spec
+            return metas, specs
         except (EmptyPoolError, InsufficientPoolError) as exc:
             raise AssetResolutionError(
                 role=role,
@@ -349,9 +606,79 @@ class AssetResolver:
                 cause=exc,
             ) from exc
 
+    def _resolve_clone(
+        self,
+        role: str,
+        entry: dict,
+        asset_configs: dict[str, dict],
+        target_metas: dict[str, AssetMeta],
+    ) -> "ObjectSpec":
+        """Give this role the asset another role already drew.
+
+        Sharing one asset is how a scene puts several identical objects
+        in front of a policy: when they cannot be told apart by looking,
+        the only thing left to go on is the instruction.
+        """
+        source = entry["same_as"]
+        if source not in target_metas:
+            known = sorted(target_metas)
+            hint = (
+                f" '{source}' is itself a clone; point at the slot it "
+                "copies instead."
+                if source in asset_configs
+                and "same_as" in asset_configs[source]
+                else ""
+            )
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=ValueError(
+                    f"same_as names {source!r}, which is not a slot that "
+                    f"draws its own asset. Slots that do: {known}.{hint}"
+                ),
+            )
+
+        conflicting = sorted(_SAMPLING_ENTRY_KEYS & set(entry))
+        if conflicting:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=ValueError(
+                    f"same_as takes the asset from {source!r}, so "
+                    f"{conflicting} could not be honoured; drop them, or "
+                    "drop same_as and let this slot draw its own."
+                ),
+            )
+
+        source_entry = asset_configs[source]
+        if int(source_entry.get("sample_count", 1)) != 1:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=ValueError(
+                    f"same_as names {source!r}, which draws "
+                    f"{source_entry['sample_count']} assets; there is no "
+                    "one asset to share. Point at a slot that draws a "
+                    "single asset."
+                ),
+            )
+
+        try:
+            prim_name = entry["prim_name"]
+        except KeyError as exc:
+            raise AssetResolutionError(
+                role=role,
+                filter_repr=str(entry),
+                cause=exc,
+            ) from exc
+
+        return self._registry.build_spec(
+            target_metas[source], name=prim_name, role=role
+        )
+
     def _resolve_target_by_uuid(
         self, role: str, entry: dict
-    ) -> tuple[AssetMeta, "RigidObjectSpec"]:
+    ) -> tuple[AssetMeta, "ObjectSpec"]:
         """Resolve a target pinned by uuid.
 
         uuid is authoritative: the asset is fetched directly from the
@@ -417,7 +744,7 @@ class AssetResolver:
 
     def _resolve_target_by_path(
         self, role: str, entry: dict
-    ) -> tuple[AssetMeta, "RigidObjectSpec"]:
+    ) -> tuple[AssetMeta, "ObjectSpec"]:
         """Resolve a target pinned by a direct USD path (no registry lookup).
 
         For showcase scenes whose assets live as loose directories outside
@@ -498,8 +825,8 @@ class AssetResolver:
         entry: dict,
         target_metas: dict[str, AssetMeta],
         committed_uuids: set[str],
-    ) -> tuple[list[AssetMeta], list["RigidObjectSpec"] | "PoolSpec"]:
-        """Resolve a distractor entry. Returns (metas, specs_or_pool)."""
+    ) -> tuple[list[AssetMeta], list["ObjectSpec"]]:
+        """Resolve a distractor entry into concrete object specs."""
         anchor = entry.get("anchor")
         if anchor not in target_metas:
             raise AssetResolutionError(
@@ -526,6 +853,7 @@ class AssetResolver:
         only_in = self._resolve_split_only_in(role, entry, err_repr=str(entry))
 
         filter_dict = _normalize_filter(entry, role)
+        filter_dict.setdefault("spec_type", anchor_meta.spec_type)
         try:
             absolute_filter = AssetFilter(**filter_dict)
         except TypeError as exc:
@@ -534,29 +862,6 @@ class AssetResolver:
                 filter_repr=str(entry),
                 cause=exc,
             ) from exc
-
-        pool_size = entry.get("pool_size", None)
-        if pool_size is not None:
-            pool_size = int(pool_size)
-            if pool_size < max_count:
-                raise AssetResolutionError(
-                    role=role,
-                    filter_repr=str(entry),
-                    cause=ValueError(
-                        f"pool_size ({pool_size}) must be >= max_count "
-                        f"({max_count}) for distractor pool"
-                    ),
-                )
-            if pool_size > 0 and max_count == 0:
-                raise AssetResolutionError(
-                    role=role,
-                    filter_repr=str(entry),
-                    cause=ValueError(
-                        f"pool_size={pool_size} with max_count=0 would "
-                        f"pre-spawn unused candidates; set max_count>=1 "
-                        f"or omit pool_size"
-                    ),
-                )
 
         try:
             spec = DistractorSpec(
@@ -576,19 +881,11 @@ class AssetResolver:
             ) from exc
 
         try:
-            if pool_size is None:
-                metas = self._sampler.sample_distractors(
-                    anchor_meta,
-                    spec,
-                    rng=self._rng,
-                )
-            else:
-                metas = self._sampler.sample_distractor_pool(
-                    anchor_meta,
-                    spec,
-                    pool_size=pool_size,
-                    rng=self._rng,
-                )
+            metas = self._sampler.sample_distractors(
+                anchor_meta,
+                spec,
+                rng=self._rng,
+            )
         except (EmptyPoolError, InsufficientPoolError, ValueError) as exc:
             raise AssetResolutionError(
                 role=role,
@@ -597,28 +894,10 @@ class AssetResolver:
             ) from exc
 
         prim_name_prefix = entry.get("prim_name_prefix", role)
-        # pool_size=None or pool_size<=1: classic list path (no pooling).
-        if pool_size is None or pool_size <= 1:
-            specs = [
-                self._registry.build_spec(
-                    meta, name=f"{prim_name_prefix}_{idx}", role=role
-                )
-                for idx, meta in enumerate(metas)
-            ]
-            return metas, specs
-
-        # Pool path: wrap in PoolSpec with active_count = max_count.
-        from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
-
-        members = [
+        specs = [
             self._registry.build_spec(
-                meta, name=f"{prim_name_prefix}_pool_{idx}", role=role
+                meta, name=f"{prim_name_prefix}_{idx}", role=role
             )
             for idx, meta in enumerate(metas)
         ]
-        pool_spec = PoolSpec(
-            role_id=prim_name_prefix,
-            members=members,
-            active_count=max_count,
-        )
-        return metas, pool_spec
+        return metas, specs

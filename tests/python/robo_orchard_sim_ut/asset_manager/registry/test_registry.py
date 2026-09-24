@@ -26,7 +26,10 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from robo_orchard_sim.asset_manager.registry.build_index import SCHEMA_VERSION
+from robo_orchard_sim.asset_manager.registry.build_index import (
+    SCHEMA_VERSION,
+    default_asset_index_path,
+)
 from robo_orchard_sim.asset_manager.registry.errors import (
     AssetIndexNotFoundError,
     AssetIndexVersionError,
@@ -42,7 +45,7 @@ from robo_orchard_sim.asset_manager.registry.types import AssetFilter
 
 def test_registry_auto_builds_index_when_missing(mini_asset_root: Path):
     reg = AssetRegistry(str(mini_asset_root))
-    assert (mini_asset_root / "asset_index.parquet").exists()
+    assert default_asset_index_path(mini_asset_root).exists()
     assert len(reg) == 6
 
 
@@ -61,7 +64,7 @@ def test_registry_loads_from_explicit_index_path(
     # First registry auto-builds at the custom location.
     reg1 = AssetRegistry(str(mini_asset_root), index_path=str(custom_index))
     assert custom_index.exists()
-    assert not (mini_asset_root / "asset_index.parquet").exists()
+    assert not default_asset_index_path(mini_asset_root).exists()
     assert reg1.index_path == custom_index
     assert len(reg1) == 6
 
@@ -82,10 +85,12 @@ def test_registry_auto_build_creates_parent_dirs(
     assert nested.exists()
 
 
-def test_registry_index_path_defaults_to_asset_root(mini_asset_root: Path):
-    """index_path=None preserves the legacy default location."""
+def test_registry_index_path_default_uses_schema_directory(
+    mini_asset_root: Path,
+):
+    """index_path=None selects the schema-specific default location."""
     reg = AssetRegistry(str(mini_asset_root))
-    assert reg.index_path == mini_asset_root / "asset_index.parquet"
+    assert reg.index_path == default_asset_index_path(mini_asset_root)
     assert reg.index_path.exists()
 
 
@@ -103,7 +108,7 @@ def test_registry_refuses_missing_explicit_index_path(
 
 
 def test_schema_version_mismatch_raises(mini_asset_root: Path):
-    reg_path = mini_asset_root / "asset_index.parquet"
+    reg_path = default_asset_index_path(mini_asset_root)
     AssetRegistry(str(mini_asset_root))  # build first
     table = pq.read_table(reg_path)
     table = table.replace_schema_metadata({b"schema_version": b"999"})
@@ -113,7 +118,7 @@ def test_schema_version_mismatch_raises(mini_asset_root: Path):
 
 
 def test_schema_version_mismatch_auto_rebuilds(mini_asset_root: Path):
-    reg_path = mini_asset_root / "asset_index.parquet"
+    reg_path = default_asset_index_path(mini_asset_root)
     AssetRegistry(str(mini_asset_root))  # build first
     table = pq.read_table(reg_path)
     table = table.replace_schema_metadata({b"schema_version": b"999"})
@@ -127,6 +132,17 @@ def test_schema_version_mismatch_auto_rebuilds(mini_asset_root: Path):
     assert rebuilt.schema.metadata[b"schema_version"] == (
         SCHEMA_VERSION.encode()
     )
+
+
+def test_registry_incomplete_parquet_auto_rebuilds(mini_asset_root: Path):
+    reg_path = default_asset_index_path(mini_asset_root)
+    reg_path.parent.mkdir(parents=True)
+    reg_path.write_bytes(b"PAR1")
+
+    registry = AssetRegistry(str(mini_asset_root), auto_build_index=True)
+
+    assert len(registry) == 6
+    assert pq.read_table(reg_path).num_rows == 6
 
 
 # ---------------------------------------------------------------------------

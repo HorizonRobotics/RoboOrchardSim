@@ -1,0 +1,56 @@
+scene:
+  type: room_table
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: panda_droid
+  initial_pos: [0.0, 0.0, 0.0]
+  init_joint_noise_std: 0.05
+
+instruction:
+  template: stack_cubes_color_order
+  template_mode: fixed
+  actor_description_mode: raw
+
+task:
+  params:
+    # Only the height rise identifies a cube stack. A cube's footprint
+    # equals its height, so any orientation other than a face lying flat
+    # raises the centre past the z tolerance, and with four cubes the
+    # rise chain also pins the layer order. The x/y bounds are therefore
+    # opened wide on purpose: which face points up, and how far the tower
+    # leans, is not what this task grades.
+    alignment_eps: [1.0, 1.0, 0.006]
+    stationary_linear_threshold: 0.01
+    stationary_angular_threshold: 0.1
+    contact_force_threshold: 0.1
+    success_dwell_steps: 15
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.28, 0.52]
+        y: [-0.24, 0.24]
+        z: [0.0, 0.0]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [-3.141592653589793, 3.141592653589793]
+    light_reset:
+      enabled: true
+      preset: default_distant_light
+    texture_reset:
+      enabled: true
+      preset: default_table_texture
+
+asset_configs:
+  members:
+    usd_path: /horizon-bucket/robot_lab/assets/ROBO_ORCHARD_SIM/OBJECTS/general_objects/cube/cube.usda
+    spec_type: usd.rigid_object
+    category: cube
+    prim_name: cube
+    mass: 0.05
+    interaction_path: /horizon-bucket/robot_lab/assets/ROBO_ORCHARD_SIM/OBJECTS/general_objects/cube/interaction.json

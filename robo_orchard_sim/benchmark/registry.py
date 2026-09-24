@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
         AssetResolver,
     )
+    from robo_orchard_sim.task_components.role_registry import RoleRegistry
     from robo_orchard_sim.task_components.trajs_gen.base_executor import (
         BaseExecutorCfg,
     )
@@ -37,13 +38,28 @@ if TYPE_CHECKING:
 def _bootstrap_task_definitions() -> None:
     """User should register task definitions in this function."""
     from robo_orchard_sim.benchmark.manipulation import (
+        affordance as _affordance,
+        close as _close,
+        joint_direction as _joint_direction,
+        open as _open,
         place_a2b as _place_a2b,
         semantic_pick as _pick,
         spatial_pick as _spatial_pick,
-        spatial_place_a2b as _spatial_place_a2b,
+        spatial_relation as _spatial_relation,
+        stack_cubes as _stack_cubes,
     )
 
-    del _pick, _place_a2b, _spatial_pick, _spatial_place_a2b
+    del (
+        _affordance,
+        _close,
+        _joint_direction,
+        _open,
+        _pick,
+        _place_a2b,
+        _spatial_pick,
+        _spatial_relation,
+        _stack_cubes,
+    )
 
 
 def build_task(
@@ -59,7 +75,11 @@ def build_task(
 def build_task_atomic_action_plan(
     task_name: str,
     orchard_env: OrchardEnv,
+    *,
+    role_registry: RoleRegistry | None = None,
 ) -> list["BaseExecutorCfg"]:
     """Build a default atomic action plan lazily from task name."""
     _bootstrap_task_definitions()
-    return _build_task_atomic_action_plan(task_name, orchard_env)
+    return _build_task_atomic_action_plan(
+        task_name, orchard_env, role_registry=role_registry
+    )

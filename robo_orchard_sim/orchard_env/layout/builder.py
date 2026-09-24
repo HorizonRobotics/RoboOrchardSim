@@ -20,21 +20,17 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from robo_orchard_core.envs.managers.events import EventManagerCfg
 
 from robo_orchard_sim.ext.envs.managers.events.layout_reset import (
     LayoutResetTermCfg,
 )
-from robo_orchard_sim.ext.envs.managers.events.pool_reset import (
-    PoolResetTermCfg,
-)
 from robo_orchard_sim.ext.envs.managers.events.pose_reset import (
     PoseResetTermCfg,
 )
 from robo_orchard_sim.orchard_env.assets import ObjectSpec
-from robo_orchard_sim.orchard_env.assets.pool_spec import PoolSpec
 from robo_orchard_sim.orchard_env.layout.loader import (
     LayoutSequence,
     LayoutValidationError,
@@ -57,10 +53,10 @@ class LayoutBuilder:
     """A parsed layout bound to its resolved scene-actor names."""
 
     # Task event-cfg term types that layout takes ownership of.
-    _SHADOWS: ClassVar[tuple[type, ...]] = (PoseResetTermCfg, PoolResetTermCfg)
+    _SHADOWS: ClassVar[tuple[type, ...]] = (PoseResetTermCfg,)
 
     layouts: LayoutSequence
-    role_member_by_category: Mapping[str, Mapping[str, str]]
+    scene_name_by_role: Mapping[str, str]
 
     @staticmethod
     def _validate_slot_overlays(
@@ -101,8 +97,8 @@ class LayoutBuilder:
                 raise LayoutValidationError(
                     f"asset_configs[{key!r}]: unexpected key(s) "
                     f"{sorted(extra)}; layout mode only honors 'filter' "
-                    f"and 'split' (prim_name / pool_size / uuid / anchor "
-                    f"are auto-derived or N/A)"
+                    f"and 'split' (prim_name / uuid / anchor are "
+                    f"auto-derived or N/A)"
                 )
             if not entry:
                 raise LayoutValidationError(
@@ -141,21 +137,21 @@ class LayoutBuilder:
         resolver: AssetResolver,
         named_roles: Mapping[str, str],
         slot_filters: Mapping[str, Mapping[str, Any]] | None = None,
-    ) -> tuple[dict[str, ObjectSpec | PoolSpec], LayoutBuilder]:
-        """Resolve per (slot × unique-category) and return (assets, builder).
+    ) -> tuple[dict[str, ObjectSpec], LayoutBuilder]:
+        """Resolve one fixed-category asset per slot.
 
         ``named_roles`` maps upstream JSON role → task slot (e.g.
         ``{"src": "pick", "dest": "place"}``). Every other upstream role
         found in the layout is assigned, in insertion order, to
-        ``distractor_0``, ``distractor_1``, … . 1 unique category per
-        slot → ``ObjectSpec``; ≥2 → ``PoolSpec`` named ``{slot}_pool_{idx}``.
+        ``distractor_0``, ``distractor_1``, … . A role must keep the same
+        category across every layout entry.
 
         ``slot_filters`` overlays per-role-class ``filter``/``split``
         dicts, keyed by a named slot or the literal ``distractors``
         (broadcast to all auto-derived slots); layout JSON's ``category``
-        always wins. ``role_member_by_category`` stays keyed by the
-        upstream JSON role, since ``LayoutResetTerm`` indexes it while
-        iterating ``layout.objects``.
+        always wins. ``scene_name_by_role`` stays keyed by the upstream
+        JSON role, since ``LayoutResetTerm`` indexes it while iterating
+        ``layout.objects``.
         """
         if not layouts.entries:
             raise LayoutValidationError("empty layout sequence")
@@ -200,52 +196,57 @@ class LayoutBuilder:
                     seen_sets[role].add(cat)
                     seen_per_role[role].append(cat)
 
-        def _scene_name(slot: str, idx: int, n: int) -> str:
-            return slot if n == 1 else f"{slot}_pool_{idx}"
+        multi_category = {
+            role: categories
+            for role, categories in seen_per_role.items()
+            if len(categories) > 1
+        }
+        if multi_category:
+            details = "; ".join(
+                f"{role!r} -> {role_to_slot[role]!r}: {categories}"
+                for role, categories in multi_category.items()
+            )
+            raise LayoutValidationError(
+                "layout roles must keep one category across all entries; "
+                f"multiple categories found for {details}"
+            )
 
         asset_configs: dict[str, dict[str, Any]] = {}
         for layout_role, cats in seen_per_role.items():
             slot = role_to_slot[layout_role]
+            category = cats[0]
             overlay = overlay_map.get(
                 slot if slot in named_slots else "distractors",
                 _EMPTY_OVERLAY,
             )
-            for i, cat in enumerate(cats):
-                key = _scene_name(slot, i, len(cats))
-                cfg_entry: dict[str, Any] = {
-                    "filter": {**overlay["filter"], "category": cat},
-                    "prim_name": key,
-                }
-                if overlay["split"] is not None:
-                    cfg_entry["split"] = overlay["split"]
-                asset_configs[key] = cfg_entry
+            cfg_entry: dict[str, Any] = {
+                "filter": {**overlay["filter"], "category": category},
+                "prim_name": slot,
+            }
+            if overlay["split"] is not None:
+                cfg_entry["split"] = overlay["split"]
+            asset_configs[slot] = cfg_entry
         resolved = resolver.resolve(asset_configs)
 
-        assets: dict[str, ObjectSpec | PoolSpec] = {}
-        role_member_by_category: dict[str, dict[str, str]] = {}
-        for layout_role, cats in seen_per_role.items():
+        assets: dict[str, ObjectSpec] = {}
+        scene_name_by_role: dict[str, str] = {}
+        for layout_role in seen_per_role:
             slot = role_to_slot[layout_role]
-            specs = [
-                resolved[_scene_name(slot, i, len(cats))]
-                for i in range(len(cats))
-            ]
-            for spec in specs:
-                if not isinstance(spec, ObjectSpec):
-                    raise TypeError(
-                        f"resolver returned non-ObjectSpec for slot={slot!r}: "
-                        f"{type(spec).__name__}"
-                    )
-            specs = [s.with_default_namespace("objects") for s in specs]
-            role_member_by_category[layout_role] = {
-                cat: specs[i].scene_name for i, cat in enumerate(cats)
-            }
-            assets[slot] = (
-                specs[0]
-                if len(specs) == 1
-                else PoolSpec(role_id=slot, members=specs)
+            spec = resolved[slot]
+            if not isinstance(spec, ObjectSpec):
+                raise TypeError(
+                    f"resolver returned non-ObjectSpec for slot={slot!r}: "
+                    f"{type(spec).__name__}"
+                )
+            spec = cast(
+                ObjectSpec,
+                spec.with_default_namespace("objects"),
             )
+            assets[slot] = spec
+            scene_name_by_role[layout_role] = spec.scene_name
         return assets, cls(
-            layouts=layouts, role_member_by_category=role_member_by_category
+            layouts=layouts,
+            scene_name_by_role=scene_name_by_role,
         )
 
     @property
@@ -254,7 +255,7 @@ class LayoutBuilder:
         return len(self.layouts.entries)
 
     def apply_to(self, task_event_cfg: EventManagerCfg) -> EventManagerCfg:
-        """Replace pose/pool-reset terms with layout's; keep the rest."""
+        """Replace pose-reset terms with layout's; keep the rest."""
         merged = {
             k: v
             for k, v in task_event_cfg.terms.items()
@@ -269,12 +270,7 @@ class LayoutBuilder:
             terms={
                 "layout_reset": LayoutResetTermCfg(
                     layouts=self.layouts,
-                    role_member_by_category={
-                        role: dict(members)
-                        for role, members in (
-                            self.role_member_by_category.items()
-                        )
-                    },
+                    scene_name_by_role=dict(self.scene_name_by_role),
                 ),
             }
         )

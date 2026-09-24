@@ -21,11 +21,16 @@ from typing import TYPE_CHECKING
 
 from robo_orchard_sim.benchmark.base import TaskDefinition
 from robo_orchard_sim.orchard_env.orchard_env import OrchardEnv
+from robo_orchard_sim.task_components.instructions.counterfactual import (
+    bind_instruction_assets,
+    resolve_instruction_assets,
+)
 
 if TYPE_CHECKING:
     from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
         AssetResolver,
     )
+    from robo_orchard_sim.task_components.role_registry import RoleRegistry
     from robo_orchard_sim.task_components.trajs_gen.base_executor import (
         BaseExecutorCfg,
     )
@@ -69,13 +74,34 @@ def build_task(
     YAML path for this build only.
     """
     task_definition = _get_task_definition(task_name)
-    return task_definition.build(resolver=resolver, config_path=config_path)
+    orchard_env = task_definition.build(
+        resolver=resolver,
+        config_path=config_path,
+    )
+    instruction = orchard_env.task.instruction
+    if instruction is not None:
+        actor_specs = resolve_instruction_assets(
+            task=orchard_env.task,
+            resolver=resolver,
+        )
+        if actor_specs:
+            orchard_env.task.instruction = bind_instruction_assets(
+                instruction,
+                actor_specs,
+            )
+    return orchard_env
 
 
 def build_task_atomic_action_plan(
     task_name: str,
     orchard_env: OrchardEnv,
+    *,
+    role_registry: RoleRegistry | None = None,
 ) -> list["BaseExecutorCfg"]:
     """Build the default atomic action plan from a registered task name."""
     task_definition = _get_task_definition(task_name)
-    return task_definition.build_atomic_action_plan(orchard_env)
+    if role_registry is None:
+        return task_definition.build_atomic_action_plan(orchard_env)
+    return task_definition.build_atomic_action_plan(
+        orchard_env, role_registry=role_registry
+    )

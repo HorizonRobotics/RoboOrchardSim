@@ -343,4 +343,7 @@ class RigidObjectCfg(_RigidObjectCfg[SpawnerCfgType_co, RigidObject]):
     category: str | None = None
     actor_type: str = "object"
     attributes: dict[str, tuple[str, ...]] = Field(default_factory=dict)
-    aabb_z_min: float | None = None
+    aabb_min: tuple[float, float, float] | None = None
+    """Bounding-box corner in the object's local frame, in meters,
+    scaled to match the spawned prim. ``None`` when it has no box."""
+    aabb_max: tuple[float, float, float] | None = None

@@ -18,8 +18,8 @@
 """Example: assemble any registered task as an ``OrchardEnv`` from YAML.
 
 Selects the task definition from the task-suite registry by ``--task``
-namespace (e.g. ``place_a2b_easy``, ``place_a2b_hard``, ``pick_category``,
-``pick_attribute``, ``pick_disambiguation``) and builds it through
+namespace (e.g. ``place_a2b``, ``pick_category``, ``pick_attribute``) and
+builds it through
 ``build_task(...)``. The selected task definition reads scene, embodiment,
 instruction, ``asset_configs``, and task params from its default YAML.
 
@@ -32,7 +32,7 @@ Usage::
     # Via env var
     export ORCHARD_ASSET_LIBRARY=test_assets/wuwen_0411_labelled_usd
     python examples/manipulation-app/scripts/simple_orchard_env_example.py \\
-        --task place_a2b_easy
+        --task place_a2b
 
     # Use a different registered task
     python examples/manipulation-app/scripts/simple_orchard_env_example.py \\
@@ -40,11 +40,12 @@ Usage::
 
     # Override the task's default YAML with a custom one
     python examples/manipulation-app/scripts/simple_orchard_env_example.py \\
-        --task place_a2b_easy \\
+        --task place_a2b \\
         --config path/to/my_place_a2b.yaml
 
-First run on a fresh asset root auto-builds ``asset_index.parquet`` in
-the library directory; subsequent runs reuse it.
+First run on a fresh asset root auto-builds
+``asset_indexes/asset_index.v<schema>.parquet`` in the library directory;
+subsequent runs reuse it.
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         required=True,
         help=(
             "Registered task namespace to build (e.g. pick_category, "
-            "pick_attribute, pick_disambiguation)."
+            "pick_attribute)."
         ),
     )
     parser.add_argument(
@@ -110,7 +111,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             f"Asset library root. Defaults to the ${_ASSET_ROOT_ENV} env "
             "var; required if that env var is not set. Auto-builds "
-            "asset_index.parquet on first run."
+            "the schema-specific asset index on first run."
         ),
     )
     parser.add_argument(
@@ -212,8 +213,6 @@ def main() -> None:
             print(f"Runtime reset {r + 1}/{num_episodes} done.")
             if r == 0:
                 print(f"Available entities: {list(env.scene.keys())}")
-            if env.pool_alias_state is not None:
-                print(f"Pool actives: {env.pool_alias_state.aliases}")
             for i in range(steps_per_episode):
                 if not sim_app.is_running():
                     break

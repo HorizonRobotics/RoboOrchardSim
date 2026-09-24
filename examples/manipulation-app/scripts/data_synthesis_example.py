@@ -43,12 +43,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     env_default = os.environ.get(_ASSET_ROOT_ENV)
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--swap-enabled",
+        action="store_true",
+        help="Select a target from each role's swap pool per episode.",
+    )
+    parser.add_argument(
         "--task",
         type=str,
         required=True,
         help=(
-            "Registered task namespace to build (e.g. place_a2b_easy, "
-            "pick_category, pick_attribute, pick_disambiguation)."
+            "Registered task namespace to build (e.g. place_a2b, "
+            "pick_category, pick_attribute)."
         ),
     )
     parser.add_argument(

@@ -41,6 +41,10 @@ from robo_orchard_sim.orchard_env.assets import ArticulationSpec
 from robo_orchard_sim.orchard_env.embodiments.embodiment_profile import (
     RobotInfoCfg,
 )
+from robo_orchard_sim.task_components.validators.contact_binding import (
+    GRIPPER_CONTACT_NAMESPACE,
+    GRIPPER_CONTACT_SENSOR_PREFIX,
+)
 
 ArticulationJointActionTermCfg = _joint_base.ArticulationJointActionTermCfg
 
@@ -68,13 +72,19 @@ class EmbodimentBase:
 
     def get_assets_cfg(self) -> dict[str, GroupAssetCfg]:
         """Return embodiment-owned assets grouped by namespace."""
-        return {
-            self.robot.namespace: GroupAssetCfg(
+        namespace = self.robot.namespace
+        assert namespace is not None
+        assets = {
+            namespace: GroupAssetCfg(
                 **{
                     self.robot.name: self.robot.to_isaac_cfg(),
                 }
             )
         }
+        contact_sensors = self.build_gripper_contact_assets()
+        if contact_sensors is not None:
+            assets[GRIPPER_CONTACT_NAMESPACE] = contact_sensors
+        return assets
 
     def get_observation_cfg(self) -> ObservationManagerCfg:
         """Return embodiment observation cfg fragment."""
@@ -135,6 +145,50 @@ class EmbodimentBase:
     def get_robot_info_cfgs(self) -> Mapping[str, RobotInfoCfg]:
         """Return robot metadata keyed by manipulator name."""
         return {}
+
+    def gripper_body_groups(self) -> tuple[tuple[str, ...], ...]:
+        """Return unique per-manipulator finger-body groups."""
+        groups: list[tuple[str, ...]] = []
+        for robot_info in self.get_robot_info_cfgs().values():
+            profile = robot_info.manipulator_profile
+            if (
+                profile is not None
+                and profile.gripper_body_names
+                and profile.gripper_body_names not in groups
+            ):
+                groups.append(profile.gripper_body_names)
+        return tuple(groups)
+
+    def build_gripper_contact_assets(self) -> GroupAssetCfg | None:
+        """Build one filtered contact sensor for each configured finger."""
+        from robo_orchard_sim.ext.models.sensors.contact_sensor import (
+            ContactSensorCfg,
+        )
+
+        groups = self.gripper_body_groups()
+        if not groups:
+            return None
+        sensors = {}
+        for manipulator_idx, body_group in enumerate(groups):
+            if len(body_group) != 2:
+                raise ValueError(
+                    "Opposing contact needs exactly two gripper bodies per "
+                    f"manipulator, got {list(body_group)}."
+                )
+            for finger_idx, body_name in enumerate(body_group):
+                other_body_name = body_group[1 - finger_idx]
+                sensor_name = (
+                    f"{GRIPPER_CONTACT_SENSOR_PREFIX}"
+                    f"{manipulator_idx}_{finger_idx}"
+                )
+                sensors[sensor_name] = ContactSensorCfg(
+                    track_contact_points=True,
+                    prim_path=("{ENV_REGEX_NS}/" + f"{self.name}/{body_name}"),
+                    filter_prim_paths_expr=[
+                        "{ENV_REGEX_NS}/" + f"{self.name}/{other_body_name}"
+                    ],
+                )
+        return GroupAssetCfg(**sensors)
 
     def get_robot_info_cfg(self, manipulator_name: str) -> RobotInfoCfg:
         """Fetch one robot-info config or raise a descriptive error."""
