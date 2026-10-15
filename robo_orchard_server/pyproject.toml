@@ -22,4 +22,8 @@ robo_orchard_server = ["py.typed"]
 
 [tool.pyright]
 typeCheckingMode = "basic"
-extraPaths = [".", "..", "../tests/robo_orchard_sever"]
+extraPaths = [".", "..", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", ".."]

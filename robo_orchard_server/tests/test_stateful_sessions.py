@@ -25,10 +25,7 @@ from queue import Queue
 import numpy as np
 import pytest
 import torch
-from examples.server.stateful_policy_server_example import (
-    SessionPolicy,
-    SharedModel,
-)
+from policy_server_fixture import SessionPolicy, SharedModel
 from robo_orchard_server.server import BasePolicy, PolicyWebsocketServer
 from test_server_interop import (
     FixedOutputPolicy,
