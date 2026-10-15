@@ -21,6 +21,7 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 
+from robo_orchard_server.policy.embodiments import get_embodiment_profile
 from robo_orchard_server.server.types import (
     ActionLayout,
     CameraObservation,
@@ -32,7 +33,7 @@ from robo_orchard_server.server.types import (
 )
 
 if TYPE_CHECKING:
-    from robo_orchard_lab.models.holobrain.processor import (
+    from robo_orchard_lab.models.holobrain_0_5.processor import (
         MultiArmManipulationInput,
         MultiArmManipulationOutput,
     )
@@ -48,56 +49,29 @@ class _HolobrainCamera(TypedDict):
 
 
 class HolobrainAdapter:
-    """Transform server observations to Holobrain inputs and joint actions."""
+    """Convert observations and joint actions for HoloBrain 0.5."""
 
-    _T_SIM_WORLD_TO_ROBOT_BASE_BY_EMBODIMENT = {
-        "dualarm_piperx": np.array(
-            [[1, 0, 0, 0.3], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
-            dtype=np.float64,
-        ),
-        "dualarm_piper": np.array(
-            [[1, 0, 0, 0.3], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
-            dtype=np.float64,
-        ),
-        "franka_panda": np.eye(4, dtype=np.float64),
-    }
-
-    _MODEL_CAMERA_SLOTS_BY_EMBODIMENT = {
-        "franka_panda": {
-            "wrist_camera": "wrist_camera",
-            "ext1_camera": "ext1_camera",
-            "ext2_camera": "ext2_camera",
-        },
-        "dualarm_piper": {
-            "left": "left_wrist",
-            "right": "right_wrist",
-            "middle": "base",
-        },
-        "dualarm_piperx": {
-            "left": "left_wrist",
-            "right": "right_wrist",
-            "middle": "base",
-        },
+    _CAMERA_KEYS = {
+        "ext1_camera": "ext1_camera",
+        "ext2_camera": "ext2_camera",
+        "wrist_camera": "wrist_camera",
+        "base": "middle",
+        "left_wrist": "left",
+        "right_wrist": "right",
     }
 
     def __init__(self, *, embodiment_type: str) -> None:
-        try:
-            self._t_sim_world_to_robot_base = (
-                self._T_SIM_WORLD_TO_ROBOT_BASE_BY_EMBODIMENT[embodiment_type]
-            )
-            self._model_camera_slots = self._MODEL_CAMERA_SLOTS_BY_EMBODIMENT[
-                embodiment_type
-            ]
-        except KeyError as exc:
-            supported = tuple(self._T_SIM_WORLD_TO_ROBOT_BASE_BY_EMBODIMENT)
-            raise ValueError(
-                "Unsupported Holobrain embodiment_type "
-                f"{embodiment_type!r}. Expected one of {supported}."
-            ) from exc
+        profile = get_embodiment_profile(embodiment_type)
+        self._t_sim_world_to_robot_base = np.eye(4, dtype=np.float64)
+        self._t_sim_world_to_robot_base[:3, 3] = (
+            profile.world_to_base_translation
+        )
+        self._model_camera_slots = {
+            self._CAMERA_KEYS[slot]: slot for slot in profile.camera_slots
+        }
 
-    def build_model_input(
-        self, obs: Observation
-    ) -> "MultiArmManipulationInput":
+    def build_model_input(self, obs: Observation) -> MultiArmManipulationInput:
+        """Build a HoloBrain 0.5 input in canonical camera and joint order."""
         instruction = self._require_instruction(obs)
         layout = self._require_action_layout(obs)
         images, depths, intrinsics, t_world2cam = self._extract_camera_inputs(
@@ -105,7 +79,7 @@ class HolobrainAdapter:
         )
         joint_state = self._build_joint_state(obs, layout=layout)
 
-        from robo_orchard_lab.models.holobrain.processor import (
+        from robo_orchard_lab.models.holobrain_0_5.processor import (
             MultiArmManipulationInput,
         )
 
@@ -291,7 +265,7 @@ class HolobrainAdapter:
 
     def build_action_sequence(
         self,
-        output: "MultiArmManipulationOutput" | Any,
+        output: MultiArmManipulationOutput,
         obs: Observation,
         *,
         device: torch.device | str = "cpu",
@@ -309,7 +283,7 @@ class HolobrainAdapter:
 
     @staticmethod
     def _extract_action_tensor(
-        output: "MultiArmManipulationOutput" | Any,
+        output: MultiArmManipulationOutput,
         *,
         device: torch.device | str,
     ) -> torch.Tensor:

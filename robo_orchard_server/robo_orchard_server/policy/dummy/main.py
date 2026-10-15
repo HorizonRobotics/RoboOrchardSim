@@ -36,9 +36,12 @@ from robo_orchard_server.server.cli import (
 class DummyPolicy(BasePolicy):
     """Return a fixed joint target to test communication, not solve tasks."""
 
-    def __init__(self, value: float = 0.0) -> None:
+    def __init__(self, value: float = 0.0, action_steps: int = 1) -> None:
+        if type(action_steps) is not int or action_steps < 1:
+            raise ValueError("action_steps must be a positive integer")
         # Store per-session state here when adapting this example.
         self.value = value
+        self.action_steps = action_steps
 
     def reset(self) -> None:
         """Clear episode history; this stateless example has none."""
@@ -64,18 +67,30 @@ class DummyPolicy(BasePolicy):
             ),
         }
 
+    def act_sequence(self, obs: Observation) -> list[JointAction]:
+        """Return a chunk of constant joint targets in execution order."""
+        return [self.act(obs) for _ in range(self.action_steps)]
+
 
 def main() -> None:
     """Start a server with an independent dummy policy per Client session."""
     parser = argparse.ArgumentParser(description="Dummy test policy server")
     add_connection_arguments(parser)
     parser.add_argument("--value", type=float, default=0.0)
+    parser.add_argument(
+        "--action-steps",
+        type=int,
+        default=1,
+        help="Actions returned per sequence request (positive; default: 1)",
+    )
     args = parser.parse_args()
     validate_connection_arguments(parser, args)
+    if args.action_steps < 1:
+        parser.error("--action-steps must be a positive integer")
 
     def create_policy() -> DummyPolicy:
         # Called once per Client session; return a fresh policy instance.
-        return DummyPolicy(value=args.value)
+        return DummyPolicy(value=args.value, action_steps=args.action_steps)
 
     logging.basicConfig(level=logging.INFO)
     try:

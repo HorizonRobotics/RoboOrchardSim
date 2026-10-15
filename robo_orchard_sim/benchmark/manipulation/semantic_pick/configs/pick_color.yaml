@@ -1,0 +1,53 @@
+scene:
+  type: room_table
+  num_envs: 1
+  env_spacing: 2.5
+  physics_fps: 600
+  render_fps: 30
+  step_fps: 30
+
+embodiment:
+  type: panda_droid
+  initial_pos: [0.0, 0.0, 0.0]
+  init_joint_noise_std: 0.05
+
+instruction:
+  template: pick_attribute
+  template_mode: variants  # valid values: fixed | variants
+  actor_description_mode: seen  # valid values: raw | seen | unseen
+  attribute_name: &attr color  # valid values: color | shape | material
+
+task:
+  params:
+    pose_reset:
+      mode: random_non_overlap
+      min_separation: 0.03
+      pose_range:
+        x: [0.25, 0.55]
+        y: [-0.35, 0.35]
+        z: [0.0, 0.0]
+        roll: [0.0, 0.0]
+        pitch: [0.0, 0.0]
+        yaw: [-3.141592653589793, 3.141592653589793]
+    light_reset:
+      enabled: false
+      preset: default_distant_light
+    texture_reset:
+      enabled: false
+      preset: default_table_texture
+
+asset_configs:
+  pick:
+    split: seen
+    filter:
+      tags: [has_interactive_poses]
+    prim_name: pick_object
+
+  distractors:
+    # split: unseen_instance
+    anchor: pick
+    match: [category]
+    differ: [*attr]
+    min_count: 1
+    max_count: 2
+    prim_name_prefix: distractor

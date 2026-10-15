@@ -1369,6 +1369,54 @@ class TestEvaluator:
 
         assert result.episode_results[0].stop_reason == "success"
 
+    @pytest.mark.parametrize("enabled", [False, True])
+    @pytest.mark.parametrize("limit", [None, 0, 10])
+    @pytest.mark.parametrize("per_scene", [1, 3])
+    def test_evaluate_recording_limit_preserves_all_episode_results(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        limit: int | None,
+        per_scene: int,
+        enabled: bool,
+    ) -> None:
+        envs = [
+            _StubStepEnv(episodes=[[_StepState()]] * per_scene)
+            for _ in range(12 // per_scene)
+        ]
+        self.patch_runtime(
+            monkeypatch,
+            tasks=[
+                _StubOrchardEnv(env=env, success_steps=[1] * per_scene)
+                for env in envs
+            ],
+        )
+        record_module = types.ModuleType(
+            "robo_orchard_sim.ext.envs.managers.record"
+        )
+        record_module.ManualRecordControllerCfg = SimpleNamespace
+        monkeypatch.setitem(sys.modules, record_module.__name__, record_module)
+        result = EvaluatorCfg(
+            task_name="place_a2b",
+            asset_root="/tmp/assets",
+            episode_num=12,
+            max_steps=1,
+            enable_recording=enabled,
+            num_record=limit,
+            swap=SwapConfig(enabled=True, swap_per_scene=per_scene),
+        )().evaluate(_StubPolicy())
+
+        count = (12 if limit is None else limit) if enabled else 0
+        assert (
+            ["record_dir" in ep.metrics for ep in result.episode_results],
+            [env.record_manager is not None for env in envs],
+        ) == (
+            [i < count for i in range(12)],
+            [i * per_scene < count for i in range(len(envs))],
+        )
+        assert [(ep.steps, ep.success) for ep in result.episode_results] == [
+            (1, True)
+        ] * 12
+
     def test_evaluate_configures_recording_when_enabled(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -2443,3 +2491,47 @@ def test_evaluate_swap_scene_build_error_records_all_assigned_failures(
         (100 + index // 2, False, "episode_error:RuntimeError")
         for index in range(episode_count)
     ]
+
+
+@pytest.mark.parametrize("skip_first", [False, True])
+def test_evaluate_fixed_seeds_successful_scenes_keep_partial_final_quota(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    skip_first: bool,
+) -> None:
+    from robo_orchard_sim import benchmark
+    from robo_orchard_sim.asset_manager.resolver.asset_resolver import (
+        AssetResolutionError,
+    )
+
+    scene_seeds = iter((17, 3, 91))
+
+    def build_task(*args, **kwargs):
+        seed = next(scene_seeds)
+        if skip_first and seed == 17:
+            raise AssetResolutionError("target", "{}", ValueError("no asset"))
+        return _StubOrchardEnv(
+            env=_StubStepEnv(episodes=[[_StepState()] for _ in range(4)]),
+            success_steps=[1] * 4,
+        )
+
+    engine = types.ModuleType("robo_orchard_sim.ext.envs.env_base")
+    engine.IsaacEnvContextManager = _StubEnvContextManager
+    monkeypatch.setitem(sys.modules, engine.__name__, engine)
+    monkeypatch.setattr(benchmark, "build_task", build_task)
+    with EvaluatorCfg(
+        task_name="pick_category",
+        asset_root=str(tmp_path),
+        episode_num=9,
+        max_steps=1,
+        swap=SwapConfig(enabled=True, swap_per_scene=4),
+        scene_seed_candidates=(17, 3, 91),
+        resample_on_skip=False,
+    )() as evaluator:
+        result = evaluator.run_with_runtime(_StubPolicy(), sim_app=object())
+
+    assert [(ep.seed, ep.success) for ep in result.episode_results] == (
+        ([] if skip_first else [(17, True)] * 4)
+        + [(3, True)] * 4
+        + [(91, True)]
+    )

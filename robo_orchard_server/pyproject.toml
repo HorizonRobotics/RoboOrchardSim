@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "robo_orchard_server"
-version = "0.2.1"
+version = "0.2.3"
 description = "Lightweight canonical policy server for RoboOrchard evaluators"
 readme = "README.md"
 authors = [{ name = "The RoboOrchard Team" }]
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-dependencies = ["numpy", "websockets>=12"]
+dependencies = ["numpy", "websockets>15.0"]
 
 [tool.setuptools.packages.find]
 include = ["robo_orchard_server*"]

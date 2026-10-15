@@ -40,17 +40,17 @@ task:
         pitch: [0.0, 0.0]
         yaw: [-3.141592653589793, 3.141592653589793]
     light_reset:
-      enabled: true
+      enabled: false
       preset: default_distant_light
     texture_reset:
-      enabled: true
+      enabled: false
       preset: default_table_texture
 
 asset_configs:
   members:
-    usd_path: /horizon-bucket/robot_lab/assets/ROBO_ORCHARD_SIM/OBJECTS/general_objects/cube/cube.usda
+    usd_path: ${ORCHARD_ASSET}/OBJECTS_v2/general_objects/cube/cube.usda
     spec_type: usd.rigid_object
     category: cube
     prim_name: cube
     mass: 0.05
-    interaction_path: /horizon-bucket/robot_lab/assets/ROBO_ORCHARD_SIM/OBJECTS/general_objects/cube/interaction.json
+    interaction_path: ${ORCHARD_ASSET}/OBJECTS_v2/general_objects/cube/interaction.json

@@ -1,0 +1,61 @@
+# Run from the sim repository root. ORCHARD_ASSET is the asset library root.
+# Supervisor replaces identity and policy with the worker's runtime values.
+evaluation_id: contest-evaluation
+team_id: contest-team
+
+policy:
+  model_type: server
+  model_yaml: robo_orchard_sim/policy/configs/server.yaml
+
+defaults:
+  asset_root: ${ORCHARD_ASSET}/OBJECTS_v2
+  splits: ${ORCHARD_ASSET}/OBJECTS_v2/splits/hbot_panda_droid_split.yaml
+  episode_num: 100
+  seed: 100000
+  # Optional JSON seed list; overrides seed. Paths are relative to this YAML.
+  # Episode count still follows episode_num.
+  # seeds_file: ./selected_seeds.json
+
+# No snapshot, splits, or split_type restrictions are applied.
+# Episode counts are per task, not per GPU or shard.
+tasks:
+  pick_color:
+    task_type: pick_attribute
+    yaml: robo_orchard_sim/benchmark/manipulation/semantic_pick/configs/pick_color.yaml
+    split_type: unseen_instance
+    max_steps: 200
+
+  pick_spatial:
+    task_type: spatial_directions
+    yaml: robo_orchard_sim/benchmark/manipulation/spatial_relation/configs/spatial_directions.yaml
+    split_type: unseen_instance
+    max_steps: 200
+    swap:
+      enabled: true
+
+  place_a2b:
+    task_type: place_a2b
+    yaml: robo_orchard_sim/benchmark/manipulation/place_a2b/configs/place_a2b.yaml
+    split_type: unseen_instance
+    max_steps: 300
+
+  stack_cubes:
+    task_type: stack_cubes
+    yaml: robo_orchard_sim/benchmark/manipulation/stack_cubes/configs/stack_cubes.yaml
+    max_steps: 900
+
+  open_drawer:
+    task_type: open
+    yaml: robo_orchard_sim/benchmark/manipulation/open/configs/open_drawer.yaml
+    split_type: unseen_instance
+    max_steps: 300
+    swap:
+      enabled: true
+
+  joint_direction:
+    task_type: joint_direction
+    yaml: robo_orchard_sim/benchmark/manipulation/joint_direction/configs/joint_direction.yaml
+    split_type: unseen_instance
+    max_steps: 300
+    swap:
+      enabled: true

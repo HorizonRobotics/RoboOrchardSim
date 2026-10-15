@@ -15,6 +15,7 @@
 # permissions and limitations under the License.
 
 from __future__ import annotations
+import math
 import sys
 import types
 
@@ -108,6 +109,28 @@ def _build_franka_schema() -> PolicyBindingSchema:
                 gripper_policy_representation="first_joint",
                 gripper_decode_coupling="symmetric",
                 gripper_policy_scale=2.0,
+            )
+        },
+    )
+
+
+def _build_panda_droid_schema() -> PolicyBindingSchema:
+    return PolicyBindingSchema(
+        schema_version="1",
+        embodiment_type="panda_droid",
+        camera_slots={
+            "wrist_camera": CameraBinding(obs_term="wrist_camera_term"),
+            "ext1_camera": CameraBinding(obs_term="ext1_camera_term"),
+            "ext2_camera": CameraBinding(obs_term="ext2_camera_term"),
+        },
+        manipulator_slots={
+            "single_arm": ManipulatorBinding(
+                joint_position_obs_key="joint_position",
+                arm_joint_name_specs=("panda_joint[1-7]",),
+                gripper_joint_name_specs=("finger_joint",),
+                gripper_policy_representation="first_joint",
+                gripper_decode_coupling="symmetric",
+                gripper_policy_scale=4.0 / math.pi,
             )
         },
     )
@@ -207,6 +230,17 @@ def _build_single_arm_obs() -> CanonicalPolicyInput:
         },
         instruction="pick apple",
         action_layout=compile_action_layout(_build_franka_schema()),
+    )
+
+
+def _build_panda_droid_obs() -> CanonicalPolicyInput:
+    obs = _build_single_arm_obs()
+    return obs.model_copy(
+        update={
+            "action_layout": compile_action_layout(
+                _build_panda_droid_schema()
+            ),
+        }
     )
 
 
@@ -325,6 +359,46 @@ def test_build_model_input_single_arm_observation_returns_expected_result(
     }
     assert model_input.history_joint_state.shape == (1, 8)
     assert np.isclose(model_input.history_joint_state[0, 7], 0.2)
+
+
+def test_build_model_input_panda_droid_returns_dataset_camera_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = HolobrainAdapter(embodiment_type="panda_droid")
+    _install_fake_holobrain_processor(monkeypatch)
+
+    model_input = adapter.build_model_input(_build_panda_droid_obs())
+
+    expected_camera_names = (
+        "wrist_camera",
+        "ext1_camera",
+        "ext2_camera",
+    )
+    assert tuple(model_input.image) == expected_camera_names
+    assert tuple(model_input.depth) == expected_camera_names
+    assert tuple(model_input.intrinsic) == expected_camera_names
+    assert tuple(model_input.t_world2cam) == expected_camera_names
+
+
+def test_build_model_input_panda_droid_identity_base_returns_world_to_camera(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = HolobrainAdapter(embodiment_type="panda_droid")
+    _install_fake_holobrain_processor(monkeypatch)
+
+    model_input = adapter.build_model_input(_build_panda_droid_obs())
+
+    np.testing.assert_allclose(
+        model_input.t_world2cam["wrist_camera"],
+        np.array(
+            [
+                [1.0, 0.0, 0.0, -1.0],
+                [0.0, 1.0, 0.0, -2.0],
+                [0.0, 0.0, 1.0, -3.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        ),
+    )
 
 
 def test_build_model_input_missing_depth_or_pose_raises_value_error() -> None:

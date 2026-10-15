@@ -47,6 +47,8 @@ task:
 asset_configs:
   primary:
     filter:
+      exclude_categories: [desktop_drawer]
       tags: [is_openable, is_closeable]
       spec_type: usd.articulation
+    split: seen
     prim_name: articulation

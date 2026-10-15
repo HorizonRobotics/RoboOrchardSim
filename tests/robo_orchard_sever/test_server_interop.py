@@ -240,6 +240,33 @@ def test_server_transport_canonical_input_preserves_arrays_and_joint_names(
     torch.testing.assert_close(action.select(*names), torch.from_numpy(values))
 
 
+@pytest.mark.parametrize("action_steps", [1, 15])
+def test_dummy_server_action_chunks_reduce_observation_requests(
+    running_server, action_steps
+):
+    observation, _ = build_observation()
+    received = Queue()
+    with running_server(
+        FixedOutputPolicy(value=0.5, action_steps=action_steps),
+        received=received,
+    ) as port:
+        policy = ServerPolicy(ServerPolicyCfg(host="127.0.0.1", port=port))
+        try:
+            policy.reset()
+            values = torch.stack(
+                [policy.act(observation).values for _ in range(30)]
+            )
+        finally:
+            policy.close()
+    requests = []
+    while not received.empty():
+        message = received.get_nowait()
+        header_size = struct.unpack_from("!Q", message)[0]
+        requests.append(json.loads(message[8 : 8 + header_size])["type"])
+    torch.testing.assert_close(values, torch.full_like(values, 0.5))
+    assert requests.count("act_sequence") == 30 // action_steps
+
+
 def test_server_sequence_cached_horizon_and_reset_restart_actions(
     running_server,
 ):

@@ -43,7 +43,7 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     temporary_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     try:
         temporary_path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            json.dumps(payload, indent=2) + "\n",
             encoding="utf-8",
         )
         os.replace(temporary_path, path)
@@ -59,8 +59,12 @@ def run_shard(
     policy_config: dict[str, Any],
     output_dir: Path,
     enable_recording: bool,
+    num_record: int | None = None,
 ) -> int:
     """Own Isaac, the policy client, evaluation and output for one shard."""
+    if num_record is not None and num_record < 0:
+        raise ValueError("num_record must be non-negative")
+
     from robo_orchard_core.policy.base import PolicyConfig
 
     from robo_orchard_sim.pipeline.evaluator.base import ShardSummary
@@ -86,16 +90,26 @@ def run_shard(
     config_out.mkdir(exist_ok=True)
     shutil.copy2(shard.config_path, config_out / Path(shard.config_path).name)
 
+    # Convert the task limit to the remaining recordings for this shard.
+    if num_record is not None:
+        for preceding in manifest.shards:
+            if preceding.shard_id == shard.shard_id:
+                break
+            if preceding.task_name == shard.task_name:
+                num_record = max(0, num_record - preceding.episode_count)
+
     evaluator_cfg = EvaluatorCfg(
         task_name=shard.task_type,
         asset_root=task_settings["asset_root"],
         task_config_path=shard.config_path,
         enable_recording=enable_recording,
+        num_record=num_record,
         record_dir=str(shard_out / "records"),
         seed=shard.seed_start,
         episode_num=shard.episode_count,
         swap=swap,
         scene_seed_candidates=shard.candidate_scene_seeds(),
+        resample_on_skip=shard.scene_seeds is None,
         max_steps=task_settings["max_steps"],
         snapshot_path=task_settings["snapshot"],
         splits_path=task_settings["splits"],

@@ -479,11 +479,19 @@ def test_eval_policy_distributed_success_preserves_leaderboard_summary(
         _EVAL_POLICY.main()
 
     summary = json.loads((output / "summary.json").read_text())
+    assert list(summary)[:5] == [
+        "evaluation_id",
+        "team_id",
+        "status",
+        "eval_average_score",
+        "eval_average_success_rate",
+    ]
     assert (
         summary["evaluation_id"],
         summary["team_id"],
         summary["status"],
-        summary["overall_score"],
+        summary["eval_average_score"],
+        summary["eval_average_success_rate"],
         summary["task_results"]["pick"]["stage_success_rate"],
         [
             episode["instruction"]
@@ -494,6 +502,7 @@ def test_eval_policy_distributed_success_preserves_leaderboard_summary(
         "team-a",
         "succeeded",
         0.75,
+        1.0,
         {"pick": 1.0},
         [
             "pick the mug",

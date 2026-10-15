@@ -52,10 +52,16 @@ class HolobrainAdapter:
             dtype=np.float64,
         ),
         "franka_panda": np.eye(4, dtype=np.float64),
+        "panda_droid": np.eye(4, dtype=np.float64),
     }
 
     _MODEL_CAMERA_SLOTS_BY_EMBODIMENT = {
         "franka_panda": {
+            "wrist_camera": "wrist_camera",
+            "ext1_camera": "ext1_camera",
+            "ext2_camera": "ext2_camera",
+        },
+        "panda_droid": {
             "wrist_camera": "wrist_camera",
             "ext1_camera": "ext1_camera",
             "ext2_camera": "ext2_camera",

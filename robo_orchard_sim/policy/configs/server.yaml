@@ -2,4 +2,5 @@ policy: server
 host: 127.0.0.1
 port: 8765
 logging_tag: null
+# Observation profile: openpi, holobrain, or full (generic observations).
 remote_policy_type: null

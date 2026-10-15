@@ -341,3 +341,65 @@ def test_reverse_unknown_session_inference_returns_routed_error():
         "request",
         True,
     )
+
+
+@pytest.mark.parametrize("action_steps", [1, 15])
+def test_dummy_reverse_cli_gateway_admission_returns_requested_action_steps(
+    action_steps,
+):
+    env = dict(os.environ)
+    for key in ("TEAM_ID", "SESSION_ID", "team_id", "evaluation_id"):
+        env.pop(key, None)
+    env["PYTHONPATH"] = str(
+        Path(__file__).resolve().parents[2] / "robo_orchard_server"
+    )
+    with supervisor_endpoint(lambda ws: exchange(ws, routed=True)) as (
+        uri,
+        result,
+    ):
+        process = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "robo_orchard_server.policy.dummy.main",
+                "--supervisor-uri",
+                uri,
+                "--value",
+                "0.5",
+                "--action-steps",
+                str(action_steps),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        replies = result.result(timeout=2)
+    assert process.returncode == 0, process.stderr
+    assert (
+        header(replies[0])["ok"],
+        len(header(replies[1])["actions"]),
+        struct.unpack("=f", replies[1][-4:]),
+    ) == (True, action_steps, (0.5,))
+
+
+@pytest.mark.parametrize("action_steps", [0, -1])
+def test_dummy_cli_nonpositive_action_steps_rejects_before_connection(
+    action_steps,
+):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "robo_orchard_server.policy.dummy.main",
+            "--action-steps",
+            str(action_steps),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert (result.returncode, "positive integer" in result.stderr) == (
+        2,
+        True,
+    )

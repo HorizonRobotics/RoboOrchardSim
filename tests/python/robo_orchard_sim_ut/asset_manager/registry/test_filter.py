@@ -14,6 +14,8 @@
 # implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+import pytest
+
 from robo_orchard_sim.asset_manager.registry.types import (
     AssetFilter,
     AssetMeta,
@@ -79,6 +81,26 @@ def test_category_filter():
     f = AssetFilter(category="apple")
     assert f.matches(_meta())
     assert not f.matches(_meta(category="orange"))
+
+
+@pytest.mark.parametrize(
+    ("category", "tags", "expected"),
+    [
+        ("apple", frozenset({"graspable"}), False),
+        ("orange", frozenset({"graspable"}), False),
+        ("carrot", frozenset({"graspable"}), True),
+        ("carrot", frozenset(), False),
+    ],
+)
+def test_asset_filter_excluded_categories_with_tags_keeps_allowed_assets(
+    category, tags, expected
+):
+    asset_filter = AssetFilter(
+        exclude_categories=["apple", "orange"], tags=["graspable"]
+    )
+    assert (
+        asset_filter.matches(_meta(category=category, tags=tags)) is expected
+    )
 
 
 def test_super_category_filter():

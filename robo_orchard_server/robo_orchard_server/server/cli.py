@@ -42,20 +42,12 @@ def add_connection_arguments(parser: argparse.ArgumentParser) -> None:
 def validate_connection_arguments(
     parser: argparse.ArgumentParser, args: argparse.Namespace
 ) -> None:
-    """Reject missing reverse identity before loading model weights."""
+    """Validate the reverse connection URL before loading model weights."""
     if args.supervisor_uri is not None and (
         urlsplit(args.supervisor_uri).scheme not in {"ws", "wss"}
         or not urlsplit(args.supervisor_uri).hostname
     ):
         parser.error("--supervisor-uri must be a ws:// or wss:// URL")
-    if args.supervisor_uri and any(
-        value is None or not value.strip()
-        for value in (args.team_id, args.evaluation_id)
-    ):
-        parser.error(
-            "--supervisor-uri requires --team-id and --evaluation-id "
-            "(or TEAM_ID and SESSION_ID)"
-        )
 
 
 def run_connection(

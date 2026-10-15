@@ -527,9 +527,43 @@ def test_build_validator_missing_context_raises_value_error() -> None:
         task.build_validator()
 
 
-@pytest.mark.parametrize("task_type", [JointDirectionTask, AffordanceTask])
+@pytest.mark.parametrize(
+    "task_type,expected_criteria,expected_success,expected_progress",
+    [
+        pytest.param(
+            JointDirectionTask,
+            [
+                "reach",
+                "contact",
+                "moved",
+                "target_joint_state",
+                "settled_at_target",
+            ],
+            (4,),
+            (0, 1, 2, 3, 4),
+            id="joint-direction",
+        ),
+        pytest.param(
+            AffordanceTask,
+            [
+                "reach",
+                "contact",
+                "grasp",
+                "moved",
+                "target_joint_state",
+                "settled_at_target",
+            ],
+            (5,),
+            (0, 1, 3, 4, 5),
+            id="affordance-retains-grasp",
+        ),
+    ],
+)
 def test_articulated_task_validator_valid_context_returns_expected_rubric(
     task_type: type[ArticulatedTaskBase],
+    expected_criteria: list[str],
+    expected_success: tuple[int, ...],
+    expected_progress: tuple[int, ...],
 ) -> None:
     spec = _articulated_object_spec()
     task = task_type(assets=_primary_assets(spec))
@@ -550,18 +584,15 @@ def test_articulated_task_validator_valid_context_returns_expected_rubric(
 
     validator = task.build_validator(context)
 
-    assert validator.criteria_name == [
-        "reach",
-        "contact",
-        "grasp",
-        "moved",
-        "target_joint_state",
-        "settled_at_target",
-    ]
     assert (
+        validator.criteria_name,
         validator.success_criteria,
         validator.progress_criteria,
-    ) == ((5,), (0, 1, 3, 4, 5))
+    ) == (
+        expected_criteria,
+        expected_success,
+        expected_progress,
+    )
 
 
 @pytest.mark.parametrize(

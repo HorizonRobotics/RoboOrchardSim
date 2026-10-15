@@ -114,6 +114,24 @@ class TestSamplingAndSpec:
         result = mini_resolver.resolve(configs)
         assert result["pick"].name == "my_apple"
 
+    def test_resolve_excluded_categories_selects_allowed_asset(
+        self, mini_resolver
+    ):
+        configs = {
+            "pick": {
+                "filter": {
+                    "super_category": "fruits",
+                    "tags": ["graspable"],
+                    "exclude_categories": ["apple", "banana"],
+                },
+                "prim_name": "pick_object",
+            },
+        }
+
+        result = mini_resolver.resolve(configs)
+
+        assert result["pick"].usd_path.endswith("orange_001.usd")
+
     def test_resolve_spec_defaults_only_sets_name(self, mini_resolver):
         """Resolver only sets name from prim_name; pose/physics come later."""
         configs = {

@@ -27,7 +27,7 @@ dependencies = [
     "isaacsim[all,extscache]==5.1.0.0",
     "isaaclab==2.3.2",
     "h5py",
-    "pyarrow>=14.0.0",
+    "pyarrow>=14.0.0,<26",  # PyArrow 26 requires NumPy >=2.
     "robo_orchard_core>=0.4.0,<=0.6.0",
     "mcap-protobuf-support",
     "foxglove_schemas_protobuf"

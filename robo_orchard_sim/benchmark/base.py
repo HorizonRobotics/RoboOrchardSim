@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 import copy
+import os
+import re
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -356,9 +358,22 @@ class TaskDefinition(ABC):
             return resolved
         for entry in resolved.values():
             usd_path = entry.get("usd_path")
-            if isinstance(usd_path, str) and not Path(usd_path).is_absolute():
-                entry["usd_path"] = str((config_dir / usd_path).resolve())
+            if isinstance(usd_path, str):
+                entry["usd_path"] = cls._resolve_asset_path(
+                    usd_path, config_dir
+                )
         return resolved
+
+    @staticmethod
+    def _resolve_asset_path(path: str, config_dir: Path) -> str:
+        """Expand environment variables before resolving an asset path."""
+        expanded = os.path.expandvars(path)
+        if re.search(r"\$(?:\{[^}]+\}|[A-Za-z_]\w*)", expanded):
+            raise ValueError(f"Unresolved variable in asset path: {path}")
+        asset_path = Path(expanded)
+        if not asset_path.is_absolute():
+            asset_path = (config_dir / asset_path).resolve()
+        return str(asset_path)
 
     @classmethod
     def resolve_task_params(

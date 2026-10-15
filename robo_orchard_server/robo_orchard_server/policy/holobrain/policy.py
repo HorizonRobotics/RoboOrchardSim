@@ -32,7 +32,7 @@ _MODEL_DIR_ENV_VAR = "ROBO_ORCHARD_HOLOBRAIN_MODEL_DIR"
 
 
 class HolobrainPolicy(BasePolicy):
-    """Holobrain inference with an independent action cache per connection."""
+    """HoloBrain 0.5 inference with an action cache per connection."""
 
     cfg: "HolobrainPolicyCfg"
 
@@ -46,6 +46,7 @@ class HolobrainPolicy(BasePolicy):
 
         A supplied pipeline is shared by reference. Its caller must serialize
         inference across sessions and keep episode state outside the pipeline.
+        It must accept HoloBrain 0.5 MultiArmManipulationInput observations.
         """
         self.cfg = cfg
         self._adapter: HolobrainAdapter | None = None
@@ -169,7 +170,7 @@ class HolobrainPolicy(BasePolicy):
                 f"{_MODEL_DIR_ENV_VAR}"
             )
 
-        from robo_orchard_lab.models.holobrain.pipeline import (
+        from robo_orchard_lab.models.holobrain_0_5.pipeline import (
             HoloBrainInferencePipeline,
         )
 

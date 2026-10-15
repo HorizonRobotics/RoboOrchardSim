@@ -82,11 +82,9 @@ class StackCubesTaskDefinition(TaskDefinition):
         if config_dir is None:
             raise ValueError("Stack-cubes config directory is unavailable.")
         for entry in asset_configs.values():
-            interaction_path = Path(entry["interaction_path"])
-            if not interaction_path.is_absolute():
-                entry["interaction_path"] = str(
-                    (config_dir / interaction_path).resolve()
-                )
+            entry["interaction_path"] = cls._resolve_asset_path(
+                entry["interaction_path"], config_dir
+            )
         resolved = resolver.resolve(asset_configs)
         if set(resolved) != {_MEMBERS_ROLE}:
             raise ValueError(

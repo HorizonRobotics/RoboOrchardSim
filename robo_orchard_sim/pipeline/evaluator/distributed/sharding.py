@@ -71,30 +71,40 @@ class EvaluationShard:
     fallback_seed_start: int
     fallback_seed_count: int
     episodes_per_scene: int
+    scene_seeds: tuple[int, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.scene_seeds is not None:
+            # JSON manifests encode tuples as arrays.
+            object.__setattr__(self, "scene_seeds", tuple(self.scene_seeds))
 
     def to_payload(self) -> dict[str, Any]:
         """Return a JSON-serializable shard representation."""
-        return asdict(self)
+        payload = asdict(self)
+        if self.scene_seeds is None:
+            payload.pop("scene_seeds")
+        else:
+            payload["scene_seeds"] = list(self.scene_seeds)
+        return payload
 
     def episode_keys(self) -> tuple[tuple[int, int], ...]:
         """Return stable `(scene_seed, episode_in_scene)` work identities."""
         keys = []
-        for episode_index in range(
-            self.episode_offset,
-            self.episode_offset + self.episode_count,
-        ):
+        for episode_index in range(self.episode_count):
             scene_index = episode_index // self.episodes_per_scene
             episode_in_scene = episode_index % self.episodes_per_scene
             scene_seed = (
-                self.seed_start
-                - self.episode_offset // self.episodes_per_scene
-                + scene_index
+                self.scene_seeds[scene_index]
+                if self.scene_seeds is not None
+                else self.seed_start + scene_index
             )
             keys.append((scene_seed, episode_in_scene))
         return tuple(keys)
 
     def candidate_scene_seeds(self) -> tuple[int, ...]:
         """Return this shard's primary seeds followed by fallback seeds."""
+        if self.scene_seeds is not None:
+            return self.scene_seeds
         primary_scene_count = -(-self.episode_count // self.episodes_per_scene)
         return (
             *range(self.seed_start, self.seed_start + primary_scene_count),
@@ -111,6 +121,7 @@ def build_evaluation_shards(
     task_name: str,
     shards_per_config: int,
     episodes_per_scene: int = 1,
+    scene_seeds: Sequence[int] | None = None,
 ) -> list[EvaluationShard]:
     """Split every config's episode range into deterministic scene shards."""
     if shards_per_config < 1:
@@ -119,6 +130,13 @@ def build_evaluation_shards(
         raise ValueError("episodes_per_scene must be positive")
     if plan.episodes_per_config < 1:
         raise ValueError("plan episodes_per_config must be positive")
+    if scene_seeds is not None:
+        if sum(len(group.configs) for group in plan.groups) != 1:
+            raise ValueError("explicit scene seeds require a single config")
+        required = -(-plan.episodes_per_config // episodes_per_scene)
+        if len(scene_seeds) < required:
+            raise ValueError(f"explicit scene seeds require {required} seeds")
+        scene_seeds = tuple(scene_seeds[:required])
 
     shards: list[EvaluationShard] = []
     for group in plan.groups:
@@ -138,6 +156,7 @@ def build_evaluation_shards(
                 fallback_seed_start=fallback_seed_cursor,
                 shards_per_config=shards_per_config,
                 episodes_per_scene=episodes_per_scene,
+                scene_seeds=scene_seeds,
             )
             shards.extend(config_shards)
             fallback_seed_cursor += sum(
@@ -159,6 +178,7 @@ def _build_config_shards(
     fallback_seed_start: int,
     shards_per_config: int,
     episodes_per_scene: int,
+    scene_seeds: Sequence[int] | None,
 ) -> list[EvaluationShard]:
     scene_count = -(-episode_count // episodes_per_scene)
     shard_count = min(shards_per_config, scene_count)
@@ -174,8 +194,10 @@ def _build_config_shards(
             assigned_scenes * episodes_per_scene,
             episode_count - episode_offset,
         )
-        fallback_seed_count = assigned_scenes * (
-            RESAMPLE_ATTEMPT_MULTIPLIER - 1
+        fallback_seed_count = (
+            assigned_scenes * (RESAMPLE_ATTEMPT_MULTIPLIER - 1)
+            if scene_seeds is None
+            else 0
         )
         shard_id = (
             f"{task_name}__{group_id}__config_{config_index:04d}"
@@ -193,10 +215,23 @@ def _build_config_shards(
                 shard_count=shard_count,
                 episode_offset=episode_offset,
                 episode_count=assigned_episodes,
-                seed_start=seed_start + scene_offset,
+                seed_start=(
+                    seed_start + scene_offset
+                    if scene_seeds is None
+                    else scene_seeds[scene_offset]
+                ),
                 fallback_seed_start=fallback_seed_start + fallback_offset,
                 fallback_seed_count=fallback_seed_count,
                 episodes_per_scene=episodes_per_scene,
+                scene_seeds=(
+                    tuple(
+                        scene_seeds[
+                            scene_offset : scene_offset + assigned_scenes
+                        ]
+                    )
+                    if scene_seeds is not None
+                    else None
+                ),
             )
         )
         scene_offset += assigned_scenes
@@ -256,6 +291,29 @@ def validate_shard_result(
     skipped_seeds = [int(episode["seed"]) for episode in skipped_episodes]
     attempted_seeds = [int(seed) for seed in attempted_scene_seeds]
     candidates = shard.candidate_scene_seeds()
+
+    if shard.scene_seeds is not None:
+        if attempted_seeds != list(candidates):
+            raise ValueError(
+                "attempted scene seeds do not match "
+                "the shard candidate schedule"
+            )
+        skipped_seed_set = set(skipped_seeds)
+        if skipped_seeds != [
+            seed for seed in candidates if seed in skipped_seed_set
+        ]:
+            raise ValueError("skipped scene seeds do not match the schedule")
+        expected_seeds = [
+            seed
+            for seed, _ in shard.episode_keys()
+            if seed not in skipped_seed_set
+        ]
+        if actual_seeds != expected_seeds:
+            raise ValueError(
+                "episode seeds do not match the fixed scene schedule: "
+                f"expected={expected_seeds}, actual={actual_seeds}"
+            )
+        return
 
     if len(actual_seeds) != shard.episode_count:
         raise ValueError(

@@ -174,6 +174,9 @@ python3 examples/manipulation-app/scripts/eval_policy.py \
 
 Use `--gpus 0,1,2,3` for multiple GPUs; sharding and scheduling are automatic.
 Add `--enable-recording --export-video` for MCAP recordings and MP4 previews.
+Recording defaults to all episodes; add `--num-record 10` to record only the
+first 10 episodes per task (`0` records none).
+`--num-record` takes effect only with `--enable-recording`.
 
 Results go to `eval_result/run_001/`: `summary.json` contains leaderboard
 scores, and each task instance has its own subdirectory.

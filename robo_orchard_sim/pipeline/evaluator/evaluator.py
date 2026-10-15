@@ -195,6 +195,7 @@ class Evaluator:
         self._env: IsaacManagerBasedEnv | None = None
         self._task: OrchardEnv | None = None
         self._record_run_dir: str | None = None
+        self._recording_enabled = self.cfg.enable_recording
         # Built once for role-based tasks and rebound each episode, so
         # that anything holding a reference follows the current target.
         self._role_registry: Any = None
@@ -305,6 +306,10 @@ class Evaluator:
         episode_results: list[EpisodeResult] = []
         skipped_episodes: list[SkippedEpisode] = []
         attempted_scene_seeds: list[int] = []
+        fixed_schedule = (
+            self.cfg.scene_seed_candidates is not None
+            and not self.cfg.resample_on_skip
+        )
         scene_idx = 0
         while (
             len(episode_results) < self.cfg.episode_num
@@ -313,8 +318,22 @@ class Evaluator:
             # Scene layer: objects are drawn once here and stay put for
             # every episode below.
             scene_seed = scene_seed_candidates[scene_idx]
+            # A fixed list reserves each scene's original episode quota,
+            # including a partial final scene even after earlier skips.
+            scene_episodes = min(
+                per_scene,
+                self.cfg.episode_num
+                - (
+                    scene_idx * per_scene
+                    if fixed_schedule
+                    else len(episode_results)
+                ),
+            )
             attempted_scene_seeds.append(scene_seed)
             scene_idx += 1
+            self._recording_enabled = self._should_record_episode(
+                len(episode_results)
+            )
             try:
                 env = self._open_scene(
                     scene_idx=scene_idx - 1,
@@ -338,10 +357,7 @@ class Evaluator:
                     f"{type(exc).__name__}: {exc}"
                 )
                 self._close_env()
-                failed_count = min(
-                    per_scene, self.cfg.episode_num - len(episode_results)
-                )
-                for _ in range(failed_count):
+                for _ in range(scene_episodes):
                     episode_results.append(
                         self._build_episode_error_result(
                             episode_idx=len(episode_results),
@@ -351,10 +367,13 @@ class Evaluator:
                     )
                 continue
 
-            for episode_in_scene in range(per_scene):
+            for episode_in_scene in range(scene_episodes):
                 if len(episode_results) >= self.cfg.episode_num:
                     break
                 global_idx = len(episode_results)
+                self._recording_enabled = self._should_record_episode(
+                    global_idx
+                )
                 # Under swap the whole point is that the instruction is
                 # the only thing that changed, so the episodes of one
                 # scene reset from the same seed and the objects land
@@ -366,7 +385,7 @@ class Evaluator:
                     else scene_seed + episode_in_scene
                 )
                 record_dir = None
-                if self.cfg.enable_recording:
+                if self._recording_enabled:
                     record_dir = os.path.join(
                         self._scene_record_dir(
                             scene_idx=scene_idx - 1, seed=scene_seed
@@ -432,7 +451,7 @@ class Evaluator:
         """Build a complete failed episode result for per-seed errors."""
         error_type = type(exc).__name__
         metrics = {}
-        if self.cfg.enable_recording and record_dir is not None:
+        if self._recording_enabled and record_dir is not None:
             metrics["record_dir"] = record_dir
 
         return EpisodeResult(
@@ -565,6 +584,12 @@ class Evaluator:
             f"scene_{scene_idx:04d}_seed_{seed}",
         )
 
+    def _should_record_episode(self, episode_idx: int) -> bool:
+        limit = self.cfg.num_record
+        return self.cfg.enable_recording and (
+            limit is None or episode_idx < limit
+        )
+
     def _open_scene(
         self,
         *,
@@ -577,7 +602,7 @@ class Evaluator:
         each episode below only rebinds roles and resets poses.
         """
         task = self._build_task_from_cfg(seed=scene_seed)
-        if self.cfg.enable_recording:
+        if self._recording_enabled:
             from robo_orchard_sim.ext.envs.managers.record import (
                 ManualRecordControllerCfg,
             )
@@ -701,7 +726,7 @@ class Evaluator:
         *,
         prefix: str | None = None,
     ) -> None:
-        if not self.cfg.enable_recording:
+        if not self._recording_enabled:
             return
 
         record_manager = env.record_manager
@@ -793,6 +818,8 @@ class Evaluator:
         validator_output: ValidatorOutput,
         instruction_text: str | None,
     ) -> None:
+        if self.cfg.num_record is not None and not self._recording_enabled:
+            return
         record_manager = getattr(env, "record_manager", None)
         if record_manager is None:
             return
@@ -1093,6 +1120,8 @@ class EvaluatorCfg(ClassConfig):
     asset_root: str
     task_config_path: str | None = None
     enable_recording: bool = False
+    num_record: int | None = None
+    """Record only the first N episodes; None records every episode."""
     record_dir: str = "logs/records"
     launch: LaunchConfig = LaunchConfig()
     seed: int = 0

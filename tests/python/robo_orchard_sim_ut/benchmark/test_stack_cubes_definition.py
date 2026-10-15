@@ -73,7 +73,10 @@ def test_stack_cubes_palette_has_ten_unique_colors():
     )
 
 
-def test_stack_cubes_seeded_colors_build_ordered_members():
+def test_stack_cubes_seeded_colors_build_ordered_members(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ORCHARD_ASSET", str(tmp_path))
     task = _task()
 
     assert [member.name for member in task.members] == [

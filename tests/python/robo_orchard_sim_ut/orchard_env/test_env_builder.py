@@ -945,10 +945,11 @@ def test_place_a2b_task_definition_builds_record_cfg_when_enabled(tmp_path):
         env_cfg.records.controller,
         StationaryEpisodeRecordControllerCfg,
     )
-    assert "static_camera_rgb" in env_cfg.records.terms
-    assert "left_hand_camera_rgb" in env_cfg.records.terms
-    assert "right_hand_camera_rgb" in env_cfg.records.terms
-    assert "vis_camera_rgb" in env_cfg.records.terms
+    assert {
+        "ext1_camera_rgb",
+        "ext2_camera_rgb",
+        "wrist_camera_rgb",
+    } <= set(env_cfg.records.terms)
 
 
 def test_place_a2b_task_rejects_assets_missing_a_declared_role():

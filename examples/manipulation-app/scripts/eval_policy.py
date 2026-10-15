@@ -35,7 +35,8 @@ Run:
 
 CLI flags:
     --eval-config / --output-dir / --gpus / --enable-recording
-    --export-video
+    --num-record / --export-video / --seed VALUE
+
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ import argparse
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -97,6 +99,7 @@ _TASK_FIELDS = {
     "swap",
     "max_steps",
     "seed",
+    "seeds_file",
     "asset_root",
 }
 _DEFAULTS_FIELDS = _TASK_FIELDS - {"task_type", "yaml", "batch_plan", "shards"}
@@ -207,6 +210,8 @@ class TaskCfg:
     # path to an existing batch plan JSON.
     yaml: str | None = None
     batch_plan: str | None = None
+    seeds_file: str | None = None
+    scene_seeds: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -250,12 +255,42 @@ def _expand_env(obj: Any, *, src: Path) -> Any:
     return obj
 
 
-def load_eval_config(path: str | Path) -> EvalConfig:
-    """Parse and validate an eval-config YAML file."""
+def parse_seed(value: int | str | Path) -> int | Path:
+    """Normalize a seed number or a file path relative to the working dir."""
+    if isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+", value):
+        value = int(value)
+    if isinstance(value, int):
+        if isinstance(value, bool) or not 0 <= value < 2**32:
+            raise ValueError("seed must satisfy 0 <= seed < 2**32")
+        return value
+    return Path(value).expanduser().resolve()
+
+
+def load_eval_config(
+    path: str | Path, *, seed_override: int | str | Path | None = None
+) -> EvalConfig:
+    """Parse YAML with seed precedence: CLI override > task > defaults."""
     src = Path(path).resolve()
     raw = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"eval config must be a mapping: {src}")
+    if seed_override is not None:
+        seed_override = parse_seed(seed_override)
+        tasks_raw = _require(raw, "tasks", src, dict)
+        for name, spec in tasks_raw.items():
+            if isinstance(spec, dict) and spec.get("batch_plan"):
+                raise ValueError(
+                    f"task {name!r}: --seed is incompatible with `batch_plan`"
+                )
+        override = (
+            {"seed": seed_override, "seeds_file": None}
+            if isinstance(seed_override, int)
+            else {"seeds_file": str(seed_override)}
+        )
+        # Remove superseded paths before environment expansion or file IO.
+        for spec in [raw.get("defaults"), *tasks_raw.values()]:
+            if isinstance(spec, dict):
+                spec.update(override)
     raw = _expand_env(raw, src=src)
 
     unknown_top = set(raw) - _TOP_LEVEL_FIELDS
@@ -394,20 +429,61 @@ def _parse_task(*, name: str, raw: dict, defaults: dict, src: Path) -> TaskCfg:
                 f"task {name!r}: `shards` must be >= 1, got {shards} ({src})"
             )
 
+    episode_num = int(merged.get("episode_num", 20))
+    swap = _parse_swap(name, merged.get("swap"))
+    seeds_file = merged.get("seeds_file")
+    scene_seeds = None
+    if seeds_file is not None:
+        if not isinstance(seeds_file, str) or not seeds_file:
+            raise ValueError(f"task {name!r}: `seeds_file` must be a path")
+        if merged.get("batch_plan"):
+            raise ValueError(
+                f"task {name!r}: `seeds_file` is incompatible "
+                "with `batch_plan`"
+            )
+        if episode_num < 1:
+            raise ValueError(f"task {name!r}: `episode_num` must be positive")
+        seed_path = (src.parent / seeds_file).resolve()
+        seeds_file = str(seed_path)
+        seeds = json.loads(seed_path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(seeds, list)
+            or not seeds
+            or any(
+                type(seed) is not int or not 0 <= seed < 2**32
+                for seed in seeds
+            )
+            or len(set(seeds)) != len(seeds)
+        ):
+            raise ValueError(
+                f"task {name!r}: {seed_path} must contain a non-empty JSON "
+                "array of unique unsigned 32-bit integers (no booleans)"
+            )
+        per_scene = swap.swap_per_scene if swap.enabled else 1
+        required = -(-episode_num // per_scene)
+        if len(seeds) < required:
+            raise ValueError(
+                f"task {name!r}: seeds_file requires {required} seeds, "
+                f"got {len(seeds)} ({seed_path})"
+            )
+        scene_seeds = tuple(seeds[:required])
+
     return TaskCfg(
         name=name,
         task_type=str(raw["task_type"]),
         asset_root=str(merged["asset_root"]),
         seed=int(merged.get("seed", 0)),
-        episode_num=int(merged.get("episode_num", 20)),
+        episode_num=episode_num,
         shards=shards,
-        swap=_parse_swap(name, merged.get("swap")),
+        swap=swap,
         max_steps=int(merged.get("max_steps", 1000)),
         splits=_opt_str(merged.get("splits")),
         split_type=_opt_str(merged.get("split_type")),
         snapshot=_opt_str(merged.get("snapshot")),
         yaml=_opt_str(merged.get("yaml")),
         batch_plan=_opt_str(merged.get("batch_plan")),
+        seeds_file=seeds_file,
+        scene_seeds=scene_seeds,
     )
 
 
@@ -446,9 +522,29 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--seed",
+        metavar="VALUE",
+        help=(
+            "Override seeds for all tasks: a decimal integer "
+            "(0 <= seed < 2**32) or a file containing a non-empty JSON array "
+            "of unique unsigned 32-bit integers. "
+            "File paths are relative to the working directory and support ~; "
+            "use ./123 for a numeric filename. Defaults to YAML settings. "
+            "episode_num and swap still come from YAML; incompatible with "
+            "batch_plan."
+        ),
+    )
+    p.add_argument(
         "--enable-recording",
         action="store_true",
-        help="Enable MCAP recording for every task in this run.",
+        help="Record episode MCAPs.",
+    )
+    p.add_argument(
+        "--num-record",
+        type=int,
+        default=None,
+        help="Record only the first N episodes per task; defaults to all. "
+        "Requires --enable-recording to take effect; 0 records none.",
     )
     p.add_argument(
         "--export-video",
@@ -741,6 +837,8 @@ def _build_shard_worker_cmd(
     manifest_path: Path,
     shard_id: str,
     enable_recording: bool,
+    num_record: int | None = None,
+    seed_override: int | Path | None = None,
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -756,6 +854,10 @@ def _build_shard_worker_cmd(
     ]
     if enable_recording:
         cmd.append("--enable-recording")
+    if num_record is not None:
+        cmd.extend(["--num-record", str(num_record)])
+    if seed_override is not None:
+        cmd.extend(["--seed", str(seed_override)])
     return cmd
 
 
@@ -769,6 +871,8 @@ def _run_shard_worker(
     enable_recording: bool,
     gpu_q: Queue,
     cancelled: threading.Event,
+    num_record: int | None = None,
+    seed_override: int | Path | None = None,
 ) -> tuple[str, str, int, str | None]:
     """Run one shard subprocess on the next available GPU worker slot."""
     gpu = gpu_q.get()
@@ -788,6 +892,8 @@ def _run_shard_worker(
             manifest_path=manifest_path,
             shard_id=shard_id,
             enable_recording=enable_recording,
+            num_record=num_record,
+            seed_override=seed_override,
         )
         print(
             f"[dispatch] task={task_name} shard={shard_id} "
@@ -1130,14 +1236,18 @@ def _write_summary(
             )
             else "failed"
         ),
+        "eval_average_score": (
+            math.fsum(task["score"] for task in task_results.values())
+            / len(task_results)
+        ),
+        "eval_average_success_rate": (
+            math.fsum(task["success_rate"] for task in task_results.values())
+            / len(task_results)
+        ),
         "task_results": {
             name: {key: task[key] for key in task_fields}
             for name, task in task_results.items()
         },
-        "overall_score": (
-            math.fsum(task["score"] for task in task_results.values())
-            / len(task_results)
-        ),
     }
     path = output_dir / "summary.json"
     path.write_text(_format_summary_json(payload) + "\n", encoding="utf-8")
@@ -1173,6 +1283,8 @@ def _dispatch_work_items(
     gpus: list[str],
     started_at: float,
     enable_recording: bool,
+    num_record: int | None = None,
+    seed_override: int | Path | None = None,
 ) -> int:
     from robo_orchard_sim.pipeline.evaluator.distributed import (
         EvaluationExecutionConfig,
@@ -1216,6 +1328,7 @@ def _dispatch_work_items(
             episodes_per_scene=(
                 task.swap.swap_per_scene if task.swap.enabled else 1
             ),
+            scene_seeds=task.scene_seeds,
         )
         manifest = EvaluationManifest(
             run_id=output_dir.name,
@@ -1263,8 +1376,10 @@ def _dispatch_work_items(
                 eval_config_path=eval_cfg.source_path,
                 output_dir=output_dir,
                 enable_recording=enable_recording,
+                num_record=num_record,
                 gpu_q=gpu_q,
                 cancelled=cancelled,
+                seed_override=seed_override,
             )
             for task_name, shard_id, manifest_path in jobs
         ]
@@ -1325,15 +1440,24 @@ def _dispatch(eval_cfg: EvalConfig, args: argparse.Namespace) -> int:
         gpus=gpus,
         started_at=started_at,
         enable_recording=args.enable_recording,
+        num_record=args.num_record,
+        seed_override=args.seed,
     )
 
 
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+    if args.num_record is not None and args.num_record < 0:
+        parser.error("--num-record must be non-negative")
     if args.export_video and not args.enable_recording:
         parser.error("--export-video requires --enable-recording")
-    eval_cfg = load_eval_config(args.eval_config)
+    if args.seed is not None:
+        try:
+            args.seed = parse_seed(args.seed)
+        except ValueError as exc:
+            parser.error(str(exc))
+    eval_cfg = load_eval_config(args.eval_config, seed_override=args.seed)
     if args._shard_id is not None:
         if args._shard_manifest is None:
             raise SystemExit(f"{_SHARD_MANIFEST_FLAG} is required")
@@ -1360,6 +1484,7 @@ def main() -> None:
                 policy_config=policy_config,
                 output_dir=output_dir,
                 enable_recording=args.enable_recording,
+                num_record=args.num_record,
             )
         )
 

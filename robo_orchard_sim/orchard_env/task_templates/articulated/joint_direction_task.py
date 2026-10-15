@@ -149,12 +149,6 @@ class JointOperationTask(ArticulatedTaskBase):
             role_id=PRIMARY_ROLE,
             metric="reached",
         )
-        grasp = BoundRoleInteractionBodyMetricSelector(
-            metric_store=metric_store,
-            context=context,
-            role_id=PRIMARY_ROLE,
-            metric="grasped",
-        )
         contact = BoundRoleInteractionBodyMetricSelector(
             metric_store=metric_store,
             context=context,
@@ -190,6 +184,7 @@ class JointOperationTask(ArticulatedTaskBase):
             role_id=PRIMARY_ROLE,
             metric="stationary",
         )
+
         return Validator(
             context=context,
             checker_suite=SceneCheckerSuite(
@@ -215,7 +210,6 @@ class JointOperationTask(ArticulatedTaskBase):
             criteria=[
                 DwellMetricSelector(reach, validation.reach_dwell_steps),
                 contact,
-                grasp,
                 moved,
                 DwellMetricSelector(
                     target_joint_state, validation.dwell_steps
@@ -228,7 +222,6 @@ class JointOperationTask(ArticulatedTaskBase):
             independent_criteria=[
                 DwellMetricSelector(reach, validation.reach_dwell_steps),
                 contact,
-                grasp,
                 moved,
                 DwellMetricSelector(
                     target_joint_state, validation.dwell_steps
@@ -241,13 +234,12 @@ class JointOperationTask(ArticulatedTaskBase):
             criteria_name=[
                 "reach",
                 "contact",
-                "grasp",
                 "moved",
                 "target_joint_state",
                 "settled_at_target",
             ],
-            success_criteria=[5],
-            progress_criteria=[0, 1, 3, 4, 5],
+            success_criteria=[4],
+            progress_criteria=[0, 1, 2, 3, 4],
         )
 
 
@@ -259,7 +251,6 @@ class JointDirectionTask(JointOperationTask):
     """
 
     OPERATION_START_MODE: ClassVar[OperationStartMode] = "opposing_midpoint"
-
     ALLOWED_OPERATIONS: ClassVar[frozenset[ArticulatedOperation]] = frozenset(
         {"open", "close", "pull", "push"}
     )

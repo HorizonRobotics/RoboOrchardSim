@@ -106,11 +106,14 @@ class AssetFilter:
     ``tags`` is an AND-match against ``meta.tags``: an asset is kept only
     if every tag in ``self.tags`` appears in the asset's tag set. An
     empty ``tags`` frozenset means "no tag constraint".
+
+    ``exclude_categories`` removes assets whose category is in the set.
     """
 
     tags: frozenset[str] = field(default_factory=frozenset)
     super_category: str | None = None
     category: str | None = None
+    exclude_categories: frozenset[str] = field(default_factory=frozenset)
     color: str | None = None
     shape: str | None = None
     material: str | None = None
@@ -125,6 +128,12 @@ class AssetFilter:
         # Accept list/tuple/set for convenience; normalize to frozenset.
         if not isinstance(self.tags, frozenset):
             object.__setattr__(self, "tags", frozenset(self.tags))
+        if not isinstance(self.exclude_categories, frozenset):
+            object.__setattr__(
+                self,
+                "exclude_categories",
+                frozenset(self.exclude_categories),
+            )
         if self.color is not None:
             object.__setattr__(self, "color", self.color.strip().lower())
         if self.shape is not None:
@@ -137,6 +146,10 @@ class AssetFilter:
         parts = []
         if self.tags:
             parts.append(f"tags={sorted(self.tags)}")
+        if self.exclude_categories:
+            parts.append(
+                f"exclude_categories={sorted(self.exclude_categories)}"
+            )
         for name in (
             "super_category",
             "category",
@@ -164,6 +177,8 @@ class AssetFilter:
         ):
             return False
         if self.category is not None and meta.category != self.category:
+            return False
+        if meta.category in self.exclude_categories:
             return False
         if self.color is not None and (
             meta.color is None or self.color not in meta.color

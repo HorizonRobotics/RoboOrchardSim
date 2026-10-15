@@ -580,19 +580,14 @@ class PolicyWebsocketServer:
         self,
         uri: str,
         *,
-        team_id: str,
-        evaluation_id: str,
+        team_id: str | None = None,
+        evaluation_id: str | None = None,
     ) -> None:
-        """Authenticate one socket and serve sessions-v1 requests serially."""
+        """Negotiate one socket and serve sessions-v1 requests serially."""
         if urlsplit(uri).scheme not in {"ws", "wss"}:
             raise ValueError("Expected a supervisor WebSocket URL")
-        if any(
-            not isinstance(value, str) or not value.strip()
-            for value in (team_id, evaluation_id)
-        ):
-            raise ValueError("Nonempty team_id and evaluation_id are required")
 
-        def receive_control(websocket: Connection, expected: dict) -> None:
+        def receive_control(websocket: Connection) -> dict:
             message = websocket.recv()
             if not isinstance(message, str) or len(message.encode()) > 4096:
                 raise ValueError("Invalid supervisor control message")
@@ -600,35 +595,47 @@ class PolicyWebsocketServer:
                 payload = json.loads(message)
             except (ValueError, RecursionError):
                 raise ValueError("Invalid supervisor control JSON") from None
-            if payload != expected:
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid supervisor control message")
+            return payload
+
+        def expect_control(websocket: Connection, expected: dict) -> None:
+            if receive_control(websocket) != expected:
                 raise ValueError("Unsupported supervisor control message")
 
         with connect(
             uri,
             max_size=MAX_MESSAGE_BYTES,
             compression=None,
+            ping_timeout=None,
             open_timeout=10,
             close_timeout=1,
         ) as websocket:
             try:
-                receive_control(websocket, {"type": "authenticate"})
-                websocket.send(
-                    json.dumps(
-                        {
-                            "type": "authenticate",
-                            "team_id": team_id,
-                            "evaluation_id": evaluation_id,
-                        }
+                first = receive_control(websocket)
+                if first == {"type": "authenticate"}:
+                    # Compatibility with workers predating gateway admission.
+                    if any(
+                        not isinstance(value, str) or not value.strip()
+                        for value in (team_id, evaluation_id)
+                    ):
+                        raise ValueError(
+                            "Legacy supervisor requires "
+                            "team_id and evaluation_id"
+                        )
+                    websocket.send(
+                        json.dumps(
+                            {
+                                "type": "authenticate",
+                                "team_id": team_id,
+                                "evaluation_id": evaluation_id,
+                            }
+                        )
                     )
-                )
-                receive_control(websocket, {"type": "authenticated"})
-                receive_control(
-                    websocket,
-                    {
-                        "type": "policy_protocol",
-                        "protocol": PROTOCOL,
-                    },
-                )
+                    expect_control(websocket, {"type": "authenticated"})
+                    first = receive_control(websocket)
+                if first != {"type": "policy_protocol", "protocol": PROTOCOL}:
+                    raise ValueError("Unsupported supervisor control message")
                 websocket.send(
                     json.dumps(
                         {
@@ -652,6 +659,7 @@ class PolicyWebsocketServer:
             self.port,
             max_size=MAX_MESSAGE_BYTES,
             compression=None,
+            ping_timeout=None,
         ) as server:
             LOGGER.info("Listening on ws://%s:%s", self.host, self.port)
             try:
