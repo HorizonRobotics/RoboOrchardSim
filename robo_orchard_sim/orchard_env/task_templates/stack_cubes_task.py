@@ -80,7 +80,7 @@ class StackCubesTaskParams(Config):
     """Task and validation parameters for four-cube stacking."""
 
     cube_size: float = 0.05
-    alignment_eps: tuple[float, float, float] = (0.012, 0.012, 0.006)
+    alignment_eps: tuple[float, float, float] = (0.01, 0.01, 0.006)
     stationary_linear_threshold: float = 0.01
     stationary_angular_threshold: float = 0.1
     contact_force_threshold: float = 0.1
@@ -295,9 +295,15 @@ class StackCubesTask(TaskBase):
             for name in names
         )
 
-        first_pair = adjacent[0]
-        first_three = AllMetricSelector(adjacent[:2])
-        full_order = AllMetricSelector(adjacent)
+        first_pair = DwellMetricSelector(
+            adjacent[0], self.params.success_dwell_steps
+        )
+        first_three = DwellMetricSelector(
+            AllMetricSelector(adjacent[:2]), self.params.success_dwell_steps
+        )
+        full_order = DwellMetricSelector(
+            AllMetricSelector(adjacent), self.params.success_dwell_steps
+        )
         settled_stack = DwellMetricSelector(
             AllMetricSelector(
                 (

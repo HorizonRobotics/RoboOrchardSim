@@ -18,13 +18,7 @@ instruction:
 
 task:
   params:
-    # Only the height rise identifies a cube stack. A cube's footprint
-    # equals its height, so any orientation other than a face lying flat
-    # raises the centre past the z tolerance, and with four cubes the
-    # rise chain also pins the layer order. The x/y bounds are therefore
-    # opened wide on purpose: which face points up, and how far the tower
-    # leans, is not what this task grades.
-    alignment_eps: [1.0, 1.0, 0.006]
+    alignment_eps: [0.01, 0.01, 0.006]
     stationary_linear_threshold: 0.01
     stationary_angular_threshold: 0.1
     contact_force_threshold: 0.1

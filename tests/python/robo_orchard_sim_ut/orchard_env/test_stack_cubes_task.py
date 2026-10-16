@@ -225,7 +225,7 @@ def test_stack_validator_complete_stack_reaches_success_after_dwell() -> None:
     first = validator.evaluate(cast(Any, env))
     second = validator.evaluate(cast(Any, env))
 
-    assert (first.progress, first.success) == (0.75, False)
+    assert (first.progress, first.success) == (0.0, False)
     assert (second.progress, second.success) == (1.0, True)
 
 
@@ -290,6 +290,82 @@ def test_stack_validator_correct_prefix_returns_incremental_progress(
     order = ("red", "blue", "green", "yellow")
     validator = _task(dwell_steps=2).build_validator(_context(order))
 
-    result = validator.evaluate(cast(Any, _env_from_positions(positions)))
+    env = cast(Any, _env_from_positions(positions))
+    validator.evaluate(env)
+    result = validator.evaluate(env)
+
+    assert result.progress == expected_progress
+
+
+@pytest.mark.parametrize("prefix_size", [2, 3, 4])
+def test_stack_validator_interrupted_alignment_requires_fifteen_steps(
+    prefix_size: int,
+) -> None:
+    order = ("red", "blue", "green", "yellow")
+    validator = _task(dwell_steps=15).build_validator(_context(order))
+    positions = {
+        color: (
+            (0.0, 0.0, 0.025 + index * 0.05)
+            if index < prefix_size
+            else (0.2 * index, 0.0, 0.025)
+        )
+        for index, color in enumerate(order)
+    }
+    aligned = cast(Any, _env_from_positions(positions, contact_force=1.0))
+
+    def move_cubes(stacked: bool) -> None:
+        for index, color in enumerate(order):
+            position = (
+                positions[color] if stacked else (0.2 * index, 0.0, 0.025)
+            )
+            aligned.scene[f"objects/{color}_cube"].data.root_pos_w.copy_(
+                torch.tensor([position], dtype=torch.float32)
+            )
+
+    for _ in range(14):
+        validator.evaluate(aligned)
+    move_cubes(False)
+    interrupted = validator.evaluate(aligned)
+    move_cubes(True)
+    for _ in range(14):
+        pending = validator.evaluate(aligned)
+    reached = validator.evaluate(aligned)
+    move_cubes(False)
+    collapsed = validator.evaluate(aligned)
+
+    assert (
+        interrupted.progress,
+        pending.progress,
+        reached.progress,
+        collapsed.progress,
+    ) == (0.0, 0.0, (prefix_size - 1) / 4, (prefix_size - 1) / 4)
+
+
+@pytest.mark.parametrize("axis", [0, 1])
+@pytest.mark.parametrize(
+    ("offset", "expected_progress"), [(0.009, 0.25), (0.011, 0.0)]
+)
+def test_stack_validator_horizontal_offset_respects_one_centimeter(
+    axis: int,
+    offset: float,
+    expected_progress: float,
+) -> None:
+    order = ("red", "blue", "green", "yellow")
+    validator = _task(dwell_steps=15).build_validator(_context(order))
+    upper = [0.0, 0.0, 0.075]
+    upper[axis] = offset
+    env = cast(
+        Any,
+        _env_from_positions(
+            {
+                "red": (0.0, 0.0, 0.025),
+                "blue": tuple(upper),
+                "green": (0.3, 0.0, 0.025),
+                "yellow": (0.5, 0.0, 0.025),
+            }
+        ),
+    )
+    for _ in range(15):
+        result = validator.evaluate(env)
 
     assert result.progress == expected_progress
