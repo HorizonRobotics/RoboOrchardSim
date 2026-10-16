@@ -33,8 +33,8 @@ Installation has two steps:
 
 #### Step 1: Prepare Assets
 
-Download the `instructmove_v1` branch of
-`HorizonRobotics/robo_orchard_sim_assets` from Hugging Face:
+Download the v2 assets from Hugging Face dataset
+`HorizonRobotics/robo_orchard_sim_assets` (branch `instructmove_v2`):
 
 ```bash
 export ORCHARD_ASSET=/absolute/path/to/robo_orchard_sim_assets
@@ -42,14 +42,14 @@ mkdir -p "${ORCHARD_ASSET}"
 python3 -m pip install -U huggingface_hub
 hf download HorizonRobotics/robo_orchard_sim_assets \
   --repo-type dataset \
-  --revision instructmove_v1 \
+  --revision instructmove_v2 \
   --local-dir "${ORCHARD_ASSET}"
 ```
 
 Configure the runtime asset paths:
 
 ```bash
-export ASSETS_DIR="${ORCHARD_ASSET}/OBJECTS"
+export ASSETS_DIR="${ORCHARD_ASSET}/OBJECTS_v2"
 export NV_ASSET_ROOT_DIR="${ORCHARD_ASSET}/NVIDIA/Assets/Isaac/4.1"
 ```
 
@@ -85,6 +85,11 @@ For an editable installation, use the following command instead:
 ```bash
 make install-editable PIP_ARGS="--extra-index-url https://pypi.nvidia.com"
 ```
+
+Install cuRobo separately in the same virtual environment. A compatible CUDA
+toolkit with `nvcc`, a C++ compiler, and Git LFS are required. See the
+[cuRobo v0.7.6 guide](https://github.com/NVlabs/curobo/tree/v0.7.6)
+for prerequisites.
 
 ##### Option 2: Docker (Recommended)
 
