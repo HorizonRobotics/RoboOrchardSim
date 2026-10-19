@@ -4,6 +4,79 @@ Release Notes
 This document provides an overview of the main changes in this release.
 
 
+Version 2.0
+===========
+
+Highlights
+----------
+
+* Published the stable 2.0 release, building on the Python 3.11 and Isaac Sim
+  5.1.0 runtime introduced in 2.0-alpha.
+* Added fixed scene-seed schedules for reproducible multi-task and multi-GPU
+  evaluation.
+* Updated the standalone policy server with HoloBrain 0.5 support.
+* Improved recording controls, evaluation summaries, and benchmark scoring.
+
+
+New Features
+------------
+
+Evaluation Workflow
+~~~~~~~~~~~~~~~~~~~
+
+* Added ``seeds_file`` to evaluation YAML defaults and task settings. It loads
+  a JSON array of unique unsigned 32-bit scene seeds and preserves the fixed
+  schedule across shards without resampling skipped scenes.
+* Added ``--seed`` to override all task seeds with either an integer or a JSON
+  seed file. CLI overrides take precedence over task settings and defaults.
+* Added ``--num-record`` to limit MCAP recording to the first N episodes per
+  task when ``--enable-recording`` is set.
+* Added ``eval_average_score`` and ``eval_average_success_rate`` to the
+  multi-task ``summary.json`` output.
+
+
+Policy Server
+~~~~~~~~~~~~~
+
+* Updated the standalone HoloBrain entry point to use HoloBrain 0.5 model
+  exports and inference configuration.
+* Added ``panda_droid`` support to the simulation-side HoloBrain adapter.
+* Added configurable action-sequence lengths to the dummy policy server.
+* Updated reverse connections to support supervisor WSS URLs without
+  mandatory team and evaluation identifiers unless authentication is requested.
+
+
+Improvements
+------------
+
+* Added ``open_drawer.yaml`` and ``pick_color.yaml`` task configurations and
+  an HoloBrain multi-task evaluation configuration in ``hbot.yaml``.
+* Added ``exclude_categories`` to asset filters.
+* Added environment-variable expansion for task asset ``usd_path`` values,
+  with explicit errors for unresolved variables.
+* Updated the stack-cubes asset paths to use ``${ORCHARD_ASSET}/OBJECTS_v2``.
+* Tightened stack-cubes alignment tolerances and required sustained alignment
+  before awarding intermediate stage scores.
+* Consolidated standalone policy-server tests in its package and refreshed
+  the installation and minimal evaluation guides.
+
+
+Migration Notes
+---------------
+
+* Replace consumers of ``summary.json``'s ``overall_score`` field with
+  ``eval_average_score``; use ``eval_average_success_rate`` for average task
+  success rate.
+* ``seeds_file`` and the ``--seed`` override cannot be combined with
+  ``batch_plan``. YAML seed-file paths are relative to the evaluation YAML;
+  CLI seed-file paths are relative to the working directory.
+* The standalone HoloBrain server requires HoloBrain 0.5 dependencies and
+  matching model exports; legacy exports are no longer supported by that
+  entry point.
+* Set ``ORCHARD_ASSET`` to the asset root containing ``OBJECTS_v2`` when using
+  the updated stack-cubes configuration.
+
+
 Version 2.0-alpha
 =================
 
