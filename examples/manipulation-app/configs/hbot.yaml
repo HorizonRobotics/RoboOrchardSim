@@ -9,7 +9,7 @@ policy:
 
 defaults:
   asset_root: ${ORCHARD_ASSET}/OBJECTS_v2
-  splits: ${ORCHARD_ASSET}/OBJECTS_v2/splits/hbot_panda_droid_split.yaml
+  splits: ${ORCHARD_ASSET}/OBJECTS_v2/splits/hbot_panda_droid_split_seen.yaml
   episode_num: 100
   seed: 100000
   # Optional JSON seed list; overrides seed. Paths are relative to this YAML.
@@ -22,13 +22,13 @@ tasks:
   pick_color:
     task_type: pick_attribute
     yaml: robo_orchard_sim/benchmark/manipulation/semantic_pick/configs/pick_color.yaml
-    split_type: unseen_instance
+    split_type: seen
     max_steps: 200
 
   pick_spatial:
     task_type: spatial_directions
     yaml: robo_orchard_sim/benchmark/manipulation/spatial_relation/configs/spatial_directions.yaml
-    split_type: unseen_instance
+    split_type: seen
     max_steps: 200
     swap:
       enabled: true
@@ -36,7 +36,7 @@ tasks:
   place_a2b:
     task_type: place_a2b
     yaml: robo_orchard_sim/benchmark/manipulation/place_a2b/configs/place_a2b.yaml
-    split_type: unseen_instance
+    split_type: seen
     max_steps: 300
 
   stack_cubes:
@@ -47,7 +47,7 @@ tasks:
   open_drawer:
     task_type: open
     yaml: robo_orchard_sim/benchmark/manipulation/open/configs/open_drawer.yaml
-    split_type: unseen_instance
+    split_type: seen
     max_steps: 300
     swap:
       enabled: true
@@ -55,7 +55,7 @@ tasks:
   joint_direction:
     task_type: joint_direction
     yaml: robo_orchard_sim/benchmark/manipulation/joint_direction/configs/joint_direction.yaml
-    split_type: unseen_instance
+    split_type: seen
     max_steps: 300
     swap:
       enabled: true
